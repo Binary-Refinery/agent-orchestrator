@@ -1262,11 +1262,47 @@ function CreateProjectSourceDialog({
 }
 
 /**
+ * Local | Cloud segmented choice, shown whenever this deployment offers cloud.
+ * A caption below spells out what each choice means (sessions on this machine
+ * vs. each session in its own cloud sandbox) so the decision is explicit rather
+ * than a subtle toggle that is easy to miss.
+ */
+export function ProjectOfferingTabs({
+	disabled,
+	offering,
+	onOfferingChange,
+}: {
+	disabled: boolean;
+	offering: ProjectOffering;
+	onOfferingChange: (offering: ProjectOffering) => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex w-full flex-col items-center gap-1.5">
+			<Tabs value={offering} onValueChange={(value) => onOfferingChange(value === "cloud" ? "cloud" : "local")}>
+				<TabsList aria-label={t("createProject.kindChoice")}>
+					<TabsTrigger disabled={disabled} value="local">
+						{t("createProject.kindLocal")}
+					</TabsTrigger>
+					<TabsTrigger disabled={disabled} value="cloud">
+						<Cloud className="size-3.5" aria-hidden="true" />
+						{t("createProject.kindCloud")}
+					</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			<p className="text-caption leading-body text-secondary text-center" role="status">
+				{offering === "cloud" ? t("createProject.kindCloudHint") : t("createProject.kindLocalHint")}
+			</p>
+		</div>
+	);
+}
+
+/**
  * Shown when the user picks Cloud but is not signed in yet. Keeps the Cloud
  * option discoverable and actionable from the create-project flow instead of
  * silently hiding it: a single button starts the WorkOS sign-in.
  */
-function CloudSignInPanel({
+export function CloudSignInPanel({
 	disabled,
 	onBack,
 	onSignIn,
@@ -1323,7 +1359,6 @@ function isHttpsRepositoryUrl(raw: string): boolean {
 // Cloud project creation goes straight to the control plane
 // (client.createProject) instead of the daemon POST the local flow uses; the
 // repository is cloned in a cloud sandbox, so no folder picker or agent sheet.
-
 /** Second half of cloud project creation: which agent runs the worker and
  * which plans as orchestrator. Reuses the exact field local's own agent
  * sheet uses (RequiredAgentField) against cloud provider-connection state
@@ -1426,7 +1461,7 @@ function CloudAgentSetupStep({
 	);
 }
 
-function CloudProjectCard({
+export function CloudProjectCard({
 	dialog = false,
 	onAuthRequired,
 	onBack,
