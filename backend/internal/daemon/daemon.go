@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/accountsmanager"
 	claudecodeagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
@@ -295,6 +296,17 @@ func Run() error {
 	// graceful shutdown inside Server.Run and stops the background goroutines.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	accountsManager := accountsmanager.New(accountsmanager.Config{
+		StateDir: cfg.StateDir,
+		Binary:   os.Getenv("AO_ACCOUNTS_MANAGER_BINARY"),
+		Logger:   log,
+	})
+	// Accounts Manager is an optional supervised capability. Start it outside
+	// the daemon readiness boundary: missing or unhealthy runner binaries must
+	// never prevent AO, unrelated agents, or the existing account flows from
+	// becoming available. Cancelling ctx stops lease renewal without killing a
+	// healthy runner, allowing a replacement daemon to reattach.
+	accountsManager.Start(ctx)
 	policyCoordinator.StartWatcher(ctx)
 	defer func() { _ = policyCoordinator.CloseAndDrain(context.Background()) }()
 	// Constructing the synchronous sender performs no I/O. The hard production
