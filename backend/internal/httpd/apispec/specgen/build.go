@@ -240,6 +240,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersPreviewServerStatusResponse":              "PreviewServerStatusResponse",
 	"ControllersBrowserStatusQuery":                       "BrowserStatusQuery",
 	"ControllersBrowserStatusResponse":                    "BrowserStatusResponse",
+	"ControllersAccountsManagerStatusResponse":            "AccountsManagerStatusResponse",
 	"ControllersBrowserCommandRequest":                    "BrowserCommandRequest",
 	"ControllersBrowserCommandResponse":                   "BrowserCommandResponse",
 	"ControllersSetSessionMergePolicyRequest":             "SetSessionMergePolicyRequest",
@@ -595,6 +596,7 @@ func operations() []operation {
 	ops = append(ops, identityOperations()...)
 	ops = append(ops, endpointsOperations()...)
 	ops = append(ops, linkPreviewOperations()...)
+	ops = append(ops, accountsManagerOperations()...)
 	return ops
 }
 
@@ -616,6 +618,20 @@ func linkPreviewOperations() []operation {
 			},
 		},
 	}
+}
+
+func accountsManagerOperations() []operation {
+	return []operation{{
+		method:  http.MethodGet,
+		path:    "/api/v1/accounts-manager/status",
+		id:      "getAccountsManagerStatus",
+		tag:     "system",
+		summary: "Return the safe status of the private Accounts Manager runner",
+		resps: []respUnit{
+			{http.StatusOK, controllers.AccountsManagerStatusResponse{}},
+			{http.StatusNotImplemented, envelope.APIError{}},
+		},
+	}}
 }
 
 // endpointsOperations declares the phone's endpoint refresh. Not under
