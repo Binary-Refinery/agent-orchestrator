@@ -1486,7 +1486,10 @@ function ChatWorkspaceContent({
 									commandError={queueDraftError ?? (queueEdit && !queueEdit.clientMessageId && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId) ? "chat.draft.queueMissing" : commandError)}
 									settings={<><ContextMeter usage={snapshot.usage} />{composerSettings}</>}
 									busy={busy}
-									willQueue={Boolean(turn) || session?.provisionState === "provisioning"}
+									// Queueing is what happens behind a turn in flight. With the
+									// queue held after a failure the daemon dispatches the next
+									// message straight away, so promising otherwise is a lie.
+									willQueue={turn?.state === "running" || session?.provisionState === "provisioning"}
 									disabled={(snapshot.controller.state === "stopped" || controllerTransitioning || newWorkDisabled) && !queueEdit?.clientMessageId}
 									// Switch/reconnect status is the topbar spinner beside ⋮ — not composer text.
 									disabledPlaceholder={
@@ -3000,6 +3003,9 @@ function Timeline({
 							</div>
 						);
 					})}
+					{/* Only a running turn is working. A queue held behind a failed turn
+					    keeps an active turn in the snapshot with nothing in flight, and a
+					    Working bar there counts up forever against work nobody is doing. */}
 					{turn?.state === "running" && !groups.some((group) => group.turnId === turn.id) ? (
 						<TurnLiveStatus startedAt={turn.startedAt ?? turn.requestedAt} />
 					) : null}
