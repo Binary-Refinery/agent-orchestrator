@@ -59,6 +59,7 @@ import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, RequiredAgentField, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
 // GitHubTokenField is used via inline Input components in CloudProjectCard
+import { DetectedHarnesses } from "./DetectedHarnesses";
 import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -510,13 +511,15 @@ export function CreateProjectFlow({
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-		// Workspace imports can adopt an existing local Git root. Preserve its
-		// checked-out branch as the workspace default (child defaults stay
-		// separate); the daemon resolves it at spawn time. Single-repo imports
-		// skip this lookup entirely — the daemon resolves their base branch
-		// itself, saving a blocking IPC round-trip on the critical path.
+		// Workspace roots and remoteless single-repo imports need an explicit
+		// default branch so spawn can create worktrees without a remote HEAD.
+		// Repos with an origin keep automatic remote-default resolution so a
+		// feature-branch checkout is not silently recorded as the default.
+		const remoteless = projectValidation?.root.hasOrigin === false;
 		const defaultBranch =
-			selectedKind === "workspace" ? await aoBridge.app.getRepositoryBranch(selectedPath) : undefined;
+			selectedKind === "workspace" || remoteless
+				? await aoBridge.app.getRepositoryBranch(selectedPath)
+				: undefined;
 		await onCreateProject({
 			path: selectedPath,
 			asWorkspace: selectedKind === "workspace",
@@ -1176,7 +1179,10 @@ function CreateProjectSourceDialog({
 								<CloudSignInPanel dialog disabled={disabled} onBack={onCloudBack} onSignIn={onSignIn} />
 							)
 						) : (
-							<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={disabled} onCloudSelect={onCloudSelect} onClose={() => onOpenChange(false)} onSelect={onSelect} onCreateStandaloneAgent={onCreateStandaloneAgent} dialog />
+							<>
+								<DetectedHarnesses />
+								<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={disabled} onCloudSelect={onCloudSelect} onClose={() => onOpenChange(false)} onSelect={onSelect} onCreateStandaloneAgent={onCreateStandaloneAgent} dialog />
+							</>
 						)}
 					</div>
 				</Dialog.Content>
