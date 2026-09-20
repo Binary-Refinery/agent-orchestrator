@@ -24,6 +24,7 @@ export type GlobalSettingsSection =
 	| "general"
 	| "harness"
 	| "agents"
+	| "accounts"
 	| "cloud"
 	| "mobile"
 	| "shortcuts"

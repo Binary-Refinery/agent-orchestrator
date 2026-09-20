@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
+	accountsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/accountsmanager"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
@@ -23,24 +24,25 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	AccountsManagerStatus controllers.AccountsManagerStatusSource
-	Agents                controllers.AgentCatalog
-	CodexAccounts         controllers.CodexAccountService
-	Projects              projectsvc.Manager
-	Sessions              controllers.SessionService
-	DesktopWorkspaces     controllers.DesktopWorkspaceService
-	Activity              controllers.ActivityRecorder
-	UsageHooks            controllers.UsageHookRecorder
-	UsageSummary          controllers.UsageSummaryService
-	PRs                   prsvc.ActionManager
-	Reviews               reviewsvc.Manager
-	Notifications         controllers.NotificationService
-	Reports               controllers.ReportService
-	NotificationStream    controllers.NotificationStream
-	Push                  controllers.PushRegistry
-	Import                controllers.ImportService
-	Directories           controllers.DirectoryBrowserService
-	ShellTerminals        controllers.ShellTerminalService
+	AccountsManagerStatus  controllers.AccountsManagerStatusSource
+	AccountsManagerService *accountsvc.Service
+	Agents                 controllers.AgentCatalog
+	CodexAccounts          controllers.CodexAccountService
+	Projects               projectsvc.Manager
+	Sessions               controllers.SessionService
+	DesktopWorkspaces      controllers.DesktopWorkspaceService
+	Activity               controllers.ActivityRecorder
+	UsageHooks             controllers.UsageHookRecorder
+	UsageSummary           controllers.UsageSummaryService
+	PRs                    prsvc.ActionManager
+	Reviews                reviewsvc.Manager
+	Notifications          controllers.NotificationService
+	Reports                controllers.ReportService
+	NotificationStream     controllers.NotificationStream
+	Push                   controllers.PushRegistry
+	Import                 controllers.ImportService
+	Directories            controllers.DirectoryBrowserService
+	ShellTerminals         controllers.ShellTerminalService
 	// Conversations is nil until a Chat driver is wired; the controller then
 	// answers 501 rather than panicking, matching the other optional surfaces.
 	Conversations controllers.ConversationService
@@ -110,9 +112,9 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	accountsManager *controllers.AccountsManagerController
 	cfg             config.Config
 	deps            APIDeps
+	accountsManager *controllers.AccountsManagerController
 	agents          *controllers.AgentsController
 	codexAccounts   *controllers.CodexAccountsController
 	projects        *controllers.ProjectsController
@@ -154,7 +156,7 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 	return &API{
 		cfg:             cfg,
 		deps:            deps,
-		accountsManager: &controllers.AccountsManagerController{Status: deps.AccountsManagerStatus},
+		accountsManager: &controllers.AccountsManagerController{Status: deps.AccountsManagerStatus, Service: deps.AccountsManagerService},
 		agents: &controllers.AgentsController{
 			Catalog: deps.Agents,
 		},
@@ -254,6 +256,7 @@ func (a *API) Register(root chi.Router) {
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
+		a.accountsManager.RegisterStreams(r)
 		a.codexAccounts.RegisterStreams(r)
 		a.sessions.RegisterStreams(r)
 		a.events.Register(r)

@@ -50,6 +50,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	accountsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/accountsmanager"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agentauth"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
@@ -307,6 +308,8 @@ func Run() error {
 	// becoming available. Cancelling ctx stops lease renewal without killing a
 	// healthy runner, allowing a replacement daemon to reattach.
 	accountsManager.Start(ctx)
+	accountsManagerService := accountsvc.New(accountsmanager.NewManagementClient(accountsManager, nil))
+	accountsManagerService.Start(ctx)
 	policyCoordinator.StartWatcher(ctx)
 	defer func() { _ = policyCoordinator.CloseAndDrain(context.Background()) }()
 	// Constructing the synchronous sender performs no I/O. The hard production
@@ -855,39 +858,40 @@ func Run() error {
 	bs.HostID = hostIdentity.HostID
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		AccountsManagerStatus: accountsManager,
-		Projects:              projectSvc,
-		HostID:                hostIdentity.HostID,
-		Endpoints:             bs,
-		Agents:                agentSvc,
-		CodexAccounts:         agentSvc,
-		SystemChecks:          systemChecks,
-		Installer:             systemInstall,
-		Sessions:              sessionSvc,
-		DesktopWorkspaces:     sessionSvc,
-		PRs:                   prActions,
-		Reviews:               reviewSvc,
-		Notifications:         notifier,
-		Reports:               reportSvc,
-		NotificationStream:    notificationHub,
-		Push:                  pushRegistry,
-		Presence:              presenceTracker,
-		DeviceRoster:          deviceRoster,
-		DeviceLive:            presenceTracker,
-		Import:                importsvc.New(importsvc.Deps{Store: store}),
-		Directories:           fsbrowsersvc.New(),
-		ShellTerminals:        shellTermSvc,
-		AgentAuth:             agentAuthSvc,
-		GitHub:                githubpat.New(cfg.DataDir),
-		Conversations:         chatSvc,
-		Settings:              settingsSvc,
-		CDC:                   store,
-		Events:                cdcPipe.Broadcaster,
-		Activity:              lcStack.LCM,
-		UsageHooks:            usageCollector,
-		UsageSummary:          usagesvc.NewSummaryReader(store),
-		Telemetry:             telemetrySink,
-		Mobile:                mc,
+		AccountsManagerStatus:  accountsManager,
+		AccountsManagerService: accountsManagerService,
+		Projects:               projectSvc,
+		HostID:                 hostIdentity.HostID,
+		Endpoints:              bs,
+		Agents:                 agentSvc,
+		CodexAccounts:          agentSvc,
+		SystemChecks:           systemChecks,
+		Installer:              systemInstall,
+		Sessions:               sessionSvc,
+		DesktopWorkspaces:      sessionSvc,
+		PRs:                    prActions,
+		Reviews:                reviewSvc,
+		Notifications:          notifier,
+		Reports:                reportSvc,
+		NotificationStream:     notificationHub,
+		Push:                   pushRegistry,
+		Presence:               presenceTracker,
+		DeviceRoster:           deviceRoster,
+		DeviceLive:             presenceTracker,
+		Import:                 importsvc.New(importsvc.Deps{Store: store}),
+		Directories:            fsbrowsersvc.New(),
+		ShellTerminals:         shellTermSvc,
+		AgentAuth:              agentAuthSvc,
+		GitHub:                 githubpat.New(cfg.DataDir),
+		Conversations:          chatSvc,
+		Settings:               settingsSvc,
+		CDC:                    store,
+		Events:                 cdcPipe.Broadcaster,
+		Activity:               lcStack.LCM,
+		UsageHooks:             usageCollector,
+		UsageSummary:           usagesvc.NewSummaryReader(store),
+		Telemetry:              telemetrySink,
+		Mobile:                 mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{
 			Store:         store,
 			TargetDataDir: cfg.DataDir,
