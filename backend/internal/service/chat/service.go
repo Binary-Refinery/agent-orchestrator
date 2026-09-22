@@ -52,6 +52,7 @@ type Service struct {
 	onModelChanged   func(domain.SessionID, string)
 	stopProviderHost func(context.Context, domain.SessionID) error
 	reports          *reportsvc.Coordinator
+	accountsManager  ports.AccountsManagerLaunchRouter
 
 	mu               sync.RWMutex
 	controllers      map[domain.SessionID]*Controller
@@ -120,6 +121,9 @@ type Options struct {
 	// StopProviderHost destroys current session ownership on explicit teardown,
 	// even if its daemon attachment already failed. Never used by StopAll.
 	StopProviderHost func(context.Context, domain.SessionID) error
+	// AccountsManager routes Claude ACP provider processes through the embedded
+	// gateway. Codex app-server Chat intentionally remains native.
+	AccountsManager ports.AccountsManagerLaunchRouter
 }
 
 // New builds a Chat service.
@@ -146,6 +150,7 @@ func New(opts Options) *Service {
 		onCodexCapacityChanged: opts.OnCodexCapacityChanged,
 		onModelChanged:         opts.OnModelChanged,
 		stopProviderHost:       opts.StopProviderHost,
+		accountsManager:        opts.AccountsManager,
 		controllers:            make(map[domain.SessionID]*Controller),
 		ownerControllers:       make(map[domain.ConversationOwner]*Controller),
 		startConfigs:           make(map[domain.ConversationOwner]StartConfig),
@@ -594,12 +599,35 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		}
 	}
 
+	var route *ports.AgentProviderRoute
+	launchEnv := cfg.Env
+	if owner.Kind == domain.ConversationOwnerSession && cfg.Harness == domain.HarnessClaudeCode && s.accountsManager != nil {
+		prepared, routeErr := s.accountsManager.PrepareAgentLaunchRoute(ctx, cfg.SessionID, domain.AccountsManagerProviderClaude, cfg.Model)
+		if routeErr != nil {
+			return nil, fmt.Errorf("prepare Accounts Manager route: %w", routeErr)
+		}
+		if prepared != nil {
+			launchEnv = applyClaudeAccountsManagerEnv(cfg.Env, prepared)
+			route = &ports.AgentProviderRoute{BaseURL: strings.TrimRight(strings.TrimSpace(prepared.BaseURL), "/"), TokenEnv: "ANTHROPIC_AUTH_TOKEN"}
+		}
+	}
+
 	var prepareEnv func(context.Context) (map[string]string, error)
 	if cfg.PrepareControllerEnv != nil {
 		prepareEnv = func(prepareCtx context.Context) (map[string]string, error) {
 			env, prepareErr := cfg.PrepareControllerEnv(prepareCtx, cfg.ExpectedControllerOwner)
 			if prepareErr != nil {
 				return nil, fmt.Errorf("prepare chat controller environment: %w", prepareErr)
+			}
+			if cfg.Harness == domain.HarnessClaudeCode && route != nil {
+				prepared, routeErr := s.accountsManager.PrepareAgentLaunchRoute(prepareCtx, cfg.SessionID, domain.AccountsManagerProviderClaude, cfg.Model)
+				if routeErr != nil {
+					return nil, fmt.Errorf("prepare Accounts Manager route: %w", routeErr)
+				}
+				if prepared == nil {
+					return nil, errors.New("Accounts Manager route became unavailable")
+				}
+				env = applyClaudeAccountsManagerEnv(env, prepared)
 			}
 			return env, nil
 		}
@@ -613,7 +641,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
-			Env:                    cfg.Env,
+			Env:                    launchEnv,
 			PrepareEnv:             prepareEnv,
 			Model:                  cfg.Model,
 			Effort:                 cfg.Effort,
@@ -624,6 +652,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderIDsScoped:      providerBoundaryID != "" || activeBranch.ProviderIDsScoped,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
 			MCPServers:             cfg.MCPServers,
+			Route:                  route,
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
@@ -631,7 +660,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			SessionID:             hostID,
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
-			Env:                   cfg.Env,
+			Env:                   launchEnv,
 			PrepareEnv:            prepareEnv,
 			Model:                 cfg.Model,
 			Effort:                cfg.Effort,
@@ -641,6 +670,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderScopeID:       providerScopeID,
 			AdditionalDirectories: cfg.AdditionalDirectories,
 			MCPServers:            cfg.MCPServers,
+			Route:                 route,
 		})
 	}
 	if err != nil {

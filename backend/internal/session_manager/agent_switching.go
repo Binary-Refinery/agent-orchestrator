@@ -1330,18 +1330,19 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	// Claude may select a different effective provider from project settings,
 	// which these device-global probes cannot see. Its launch is authoritative.
 	unscopedAuthCanReject := harness != domain.HarnessClaudeCode
+	routedTarget := m.accountsManagerRoutingEnabled(ctx, harness)
 	if m.agentReadiness != nil {
 		readiness, readinessErr := m.agentReadiness.EnsureAgentReadiness(ctx, string(harness), domain.AgentReadinessPurposeLaunch)
 		if readinessErr != nil {
 			m.logger.Warn("agent switch: target readiness check failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", readinessErr)
-		} else if unscopedAuthCanReject && readiness.Authentication.State == domain.AgentAuthenticationUnauthorized {
+		} else if unscopedAuthCanReject && readiness.Authentication.State == domain.AgentAuthenticationUnauthorized && !routedTarget {
 			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
 		}
 	} else if checker, ok := agent.(ports.AgentAuthChecker); ok {
 		status, authErr := checker.AuthStatus(ctx)
 		if authErr != nil {
 			m.logger.Warn("agent switch: target auth probe failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", authErr)
-		} else if unscopedAuthCanReject && status == ports.AgentAuthStatusUnauthorized {
+		} else if unscopedAuthCanReject && status == ports.AgentAuthStatusUnauthorized && !routedTarget {
 			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
 		}
 	}
@@ -1368,6 +1369,10 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
+	route, err := m.prepareAccountsManagerRoute(ctx, rec.ID, harness, config.Model, env)
+	if err != nil {
+		return preparedTargetActivation{}, err
+	}
 	if validator, ok := agent.(ports.AgentLaunchAuthValidator); ok {
 		status, authErr := validator.ValidateLaunchAuth(ctx, rec.Metadata.WorkspacePath, env)
 		if authErr != nil {
@@ -1388,7 +1393,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	launch := ports.LaunchConfig{
 		DataDir: m.dataDir, SessionID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
 		Kind: rec.Kind, SystemPrompt: systemPrompt, SystemPromptFile: systemFile,
-		Config: config, Permissions: config.Permissions,
+		Config: config, Permissions: config.Permissions, Route: route,
 	}
 	promptDelivery, err := agent.GetPromptDeliveryStrategy(ctx, launch)
 	if err != nil {
@@ -1403,7 +1408,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		cmd, ok, restoreErr := agent.GetRestoreCommand(ctx, ports.RestoreConfig{
 			Session: ports.SessionRef{ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath, Metadata: map[string]string{ports.MetadataKeyAgentSessionID: candidate.NativeSessionID}},
 			Kind:    rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemFile,
-			Config: config, Permissions: config.Permissions,
+			Config: config, Permissions: config.Permissions, Route: route,
 		})
 		if restoreErr != nil {
 			return preparedTargetActivation{}, fmt.Errorf("restore command: %w", restoreErr)
@@ -1549,7 +1554,7 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 			},
 			Kind: rec.Kind, DataDir: m.dataDir, Prompt: prompt,
 			SystemPrompt: launch.SystemPrompt, SystemPromptFile: launch.SystemPromptFile,
-			Config: launch.Config, Permissions: launch.Config.Permissions,
+			Config: launch.Config, Permissions: launch.Config.Permissions, Route: launch.Route,
 		})
 		if buildErr != nil {
 			return fmt.Errorf("restore command: %w", buildErr)

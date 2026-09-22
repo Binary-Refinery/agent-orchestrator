@@ -245,6 +245,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersAccountsManagerAccountResponse":           "AccountsManagerAccountResponse",
 	"ControllersAccountsManagerOAuthSessionResponse":      "AccountsManagerOAuthSessionResponse",
 	"ControllersAccountsManagerAccountsResponse":          "AccountsManagerAccountsResponse",
+	"ControllersAccountsManagerRoutingResponse":           "AccountsManagerRoutingResponse",
+	"ControllersUpdateAccountsManagerRoutingRequest":      "UpdateAccountsManagerRoutingRequest",
 	"ControllersStartAccountsManagerOAuthRequest":         "StartAccountsManagerOAuthRequest",
 	"ControllersAccountsManagerAPIKeyRequest":             "AccountsManagerAPIKeyRequest",
 	"ControllersAccountsManagerImportRequest":             "AccountsManagerImportRequest",
@@ -254,6 +256,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersAccountsManagerQuotaResponse":             "AccountsManagerQuotaResponse",
 	"ControllersAccountsManagerAccountIDParam":            "AccountsManagerAccountIDParam",
 	"ControllersAccountsManagerOAuthOperationIDParam":     "AccountsManagerOAuthOperationIDParam",
+	"ControllersAccountsManagerProviderParam":             "AccountsManagerProviderParam",
 	"AccountsmanagerQuotaSubscription":                    "AccountsManagerQuotaSubscription",
 	"AccountsmanagerQuotaMetric":                          "AccountsManagerQuotaMetric",
 	"AccountsmanagerQuotaGroup":                           "AccountsManagerQuotaGroup",
@@ -639,6 +642,7 @@ func linkPreviewOperations() []operation {
 
 func accountsManagerOperations() []operation {
 	accountID := []any{controllers.AccountsManagerAccountIDParam{}}
+	provider := []any{controllers.AccountsManagerProviderParam{}}
 	return []operation{{
 		method:  http.MethodGet,
 		path:    "/api/v1/accounts-manager/status",
@@ -662,6 +666,7 @@ func accountsManagerOperations() []operation {
 		{method: http.MethodGet, path: "/api/v1/accounts-manager/accounts/{accountId}/models", id: "getAccountsManagerAccountModels", tag: "system", summary: "List account models", pathParams: accountID, resps: []respUnit{{http.StatusOK, controllers.AccountsManagerModelsResponse{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusUnprocessableEntity, envelope.APIError{}}}},
 		{method: http.MethodGet, path: "/api/v1/accounts-manager/accounts/{accountId}/quota", id: "getAccountsManagerAccountQuota", tag: "system", summary: "Get account quota", pathParams: accountID, resps: []respUnit{{http.StatusOK, controllers.AccountsManagerQuotaResponse{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusUnprocessableEntity, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/accounts-manager/accounts/{accountId}/quota/reset", id: "resetAccountsManagerAccountQuota", tag: "system", summary: "Reset account quota", pathParams: accountID, resps: []respUnit{{http.StatusNoContent, struct{}{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusUnprocessableEntity, envelope.APIError{}}}},
+		{method: http.MethodPut, path: "/api/v1/accounts-manager/routing/{provider}", id: "updateAccountsManagerRouting", tag: "system", summary: "Update routing for new sessions", pathParams: provider, reqBody: controllers.UpdateAccountsManagerRoutingRequest{}, resps: []respUnit{{http.StatusOK, controllers.AccountsManagerAccountsResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}, {http.StatusServiceUnavailable, envelope.APIError{}}}},
 	}
 }
 

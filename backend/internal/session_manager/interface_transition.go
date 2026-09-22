@@ -819,6 +819,10 @@ func (m *Manager) preflightInterfaceTarget(
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
+	route, err := m.prepareAccountsManagerRoute(ctx, rec.ID, rec.Harness, config.Model, env)
+	if err != nil {
+		return err
+	}
 	if validator, ok := agent.(ports.AgentLaunchAuthValidator); ok {
 		status, authErr := validator.ValidateLaunchAuth(ctx, rec.Metadata.WorkspacePath, env)
 		if authErr != nil {
@@ -831,7 +835,7 @@ func (m *Manager) preflightInterfaceTarget(
 	var cmd []string
 	if transition.NativeConversationID == "" {
 		cmd, _, _, err = freshLaunchArgv(ctx, agent, rec.ID, rec.Metadata.WorkspacePath,
-			rec.Metadata, systemPrompt, "", config, rec.Kind, m.dataDir, true)
+			rec.Metadata, systemPrompt, "", config, rec.Kind, m.dataDir, route, true)
 	} else {
 		var resumable bool
 		cmd, resumable, err = agent.GetRestoreCommand(ctx, ports.RestoreConfig{
@@ -840,7 +844,7 @@ func (m *Manager) preflightInterfaceTarget(
 				Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
 			},
 			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
-			Config: config, Permissions: config.Permissions,
+			Config: config, Permissions: config.Permissions, Route: route,
 		})
 		if err == nil && !resumable {
 			return ErrNativeConversationMissing
