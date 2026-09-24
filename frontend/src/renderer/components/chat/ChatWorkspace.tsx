@@ -128,7 +128,6 @@ import {
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
-	type ConversationTurn,
 	type ControllerState,
 	type ChatConfigOption,
 	type ChatConfigOptionValue,
