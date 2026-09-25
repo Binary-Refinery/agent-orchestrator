@@ -1524,7 +1524,7 @@ function ChatWorkspaceContent({
 									draftSessionIncarnation={draftScope.incarnation}
 									acceptedClientMessageIds={acceptedClientMessageIds}
 								/>
-								<McpServerBanner servers={brokenServers} />
+								{!conversationEmpty ? <McpServerBanner servers={brokenServers} /> : null}
 							</div>
 						</div>
 					</div>
