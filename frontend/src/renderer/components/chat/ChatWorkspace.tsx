@@ -1495,6 +1495,7 @@ function ChatWorkspaceContent({
 								<div className="relative">
 									<McpServerBanner
 										key={snapshot.sessionId}
+										sessionId={snapshot.sessionId}
 										servers={brokenServers}
 										placement={conversationEmpty ? "below" : "above"}
 									/>
