@@ -3542,7 +3542,7 @@ function TimelineItem({
 					sessionId={sessionId}
 					apiBaseUrl={apiBaseUrl}
 					queued={queued}
-					animateIn={newHumanMessageIds.has(item.id)}
+					animateIn={newHumanMessageIds.has(item.id) || item.delivery === "sending"}
 					onEdit={editAvailable ? (_turnID, text) => onSubmitMessageEdit(text) : undefined}
 					editing={editing}
 					editText={editing ? messageEdit?.text : undefined}
