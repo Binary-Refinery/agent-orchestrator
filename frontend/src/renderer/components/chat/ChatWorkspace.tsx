@@ -1119,9 +1119,9 @@ function ChatWorkspaceContent({
 		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
 	}, [activeWorkspaceTab, onCloseShellTerminal, shellTarget]);
 
-	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
-	// and a control that exists to be refused is worse than one that waits.
-	const rollbackTarget = onRollback && !turn && !newWorkDisabled ? (id: string) => setConfirming(id) : undefined;
+	// Keep the rollback affordance mounted while a new turn runs; disable it until
+	// the daemon can safely accept it so the action row never shifts.
+	const rollbackTarget = onRollback && !newWorkDisabled ? (id: string) => setConfirming(id) : undefined;
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
@@ -1456,6 +1456,7 @@ function ChatWorkspaceContent({
 									activateBranchPending={activateBranchPending}
 									activateBranchError={activateBranchError}
 									newWorkDisabled={newWorkDisabled}
+									rollbackDisabled={Boolean(turn || rollbackPending || newWorkDisabled)}
 									localEchos={localEchos}
 								/>
 							</ChatImageSourceProvider>
@@ -2075,6 +2076,7 @@ function Timeline({
 	activateBranchPending,
 	activateBranchError,
 	newWorkDisabled,
+	rollbackDisabled = false,
 	localEchos = [],
 }: {
 	snapshot: ConversationSnapshot;
@@ -2096,6 +2098,7 @@ function Timeline({
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
 	newWorkDisabled?: boolean;
+	rollbackDisabled?: boolean;
 	localEchos?: ConversationLocalEcho[];
 }) {
 	const translateDraft = useChatDraftTranslation();
@@ -3022,6 +3025,7 @@ function Timeline({
 									// never saw holds no history to discard, and the daemon refuses it
 									// rather than hiding rows the agent still remembers.
 									canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
+									rollbackDisabled={rollbackDisabled}
 									busy={busy}
 									queued={Boolean(group.turnId && queued.has(group.turnId))}
 								/>
@@ -3206,6 +3210,7 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchPending,
 	activateBranchError,
 	canRollback,
+	rollbackDisabled,
 	retry,
 	busy,
 	queued,
@@ -3237,6 +3242,8 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchError?: string;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
+	/** Keep rollback mounted but inert while another turn is active. */
+	rollbackDisabled: boolean;
 	/** Present only when this failed turn is eligible for a new attempt. */
 	retry?: TurnOutcomeRetryControl;
 	busy?: boolean;
@@ -3304,12 +3311,13 @@ const TurnGroup = memo(function TurnGroup({
 						busy={busy}
 						queued={queued}
 						newHumanMessageIds={newHumanMessageIds}
-						showCopy={run.items[0]?.id === copyableMessageId}
+					showCopy={run.items[0]?.id === copyableMessageId}
 						onRollback={
 							canRollback && run.items[0]?.id === copyableMessageId
 								? () => onRollback(group.turnId as string)
 								: undefined
 						}
+						rollbackDisabled={rollbackDisabled}
 						durationMs={
 							run.items[0]?.id === copyableMessageId ? group.outcome?.durationMs : undefined
 						}
@@ -3348,9 +3356,10 @@ const TurnGroup = memo(function TurnGroup({
 						<button
 							type="button"
 							onClick={() => onRollback(group.turnId as string)}
+							disabled={rollbackDisabled}
 							aria-label="Roll back to here"
 							title="Roll back to here"
-							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
 						>
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
@@ -3472,6 +3481,7 @@ function TimelineItem({
 	newHumanMessageIds,
 	showCopy,
 	onRollback,
+	rollbackDisabled,
 	durationMs,
 }: {
 	item: ConversationItem;
@@ -3506,6 +3516,8 @@ function TimelineItem({
 	showCopy?: boolean;
 	/** Undo this finished turn from the answer that owns its copy action. */
 	onRollback?: () => void;
+	/** Keep the action row mounted while another turn is running. */
+	rollbackDisabled?: boolean;
 	/** Finished-turn duration; shown next to rollback on the final answer. */
 	durationMs?: number;
 	/** This message is the live edge of its turn, rather than an earlier fragment
@@ -3518,6 +3530,7 @@ function TimelineItem({
 					message={item}
 					showCopy={showCopy}
 					onRollback={onRollback}
+					rollbackDisabled={rollbackDisabled}
 					durationMs={durationMs}
 				/>
 			);
