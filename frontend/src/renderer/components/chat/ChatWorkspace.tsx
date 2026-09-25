@@ -457,10 +457,6 @@ export interface ChatWorkspaceProps {
 	promoteQueuedTurnPendingTurnId?: string;
 	cancelQueuedTurnPendingTurnId?: string;
 	editQueuedTurnPendingTurnId?: string;
-	/** Start the tool servers again. Absent when the harness cannot. */
-	onReloadMcpServers?: () => void;
-	reloadingMcpServers?: boolean;
-	mcpReloadError?: string;
 }
 
 type ChatWorkspaceActivation =
@@ -635,9 +631,6 @@ function ChatWorkspaceContent({
 	promoteQueuedTurnPendingTurnId,
 	cancelQueuedTurnPendingTurnId,
 	editQueuedTurnPendingTurnId,
-	onReloadMcpServers,
-	reloadingMcpServers,
-	mcpReloadError,
 	draftScope,
 }: ChatWorkspaceProps & { draftScope: ChatDraftScope }) {
 	const draftScopeKey = chatDraftScopeKey(draftScope);
@@ -1436,14 +1429,6 @@ function ChatWorkspaceContent({
 						shellError={shellError}
 					/>
 					{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
-					<McpServerBanner
-						sessionId={snapshot.sessionId}
-						servers={brokenServers}
-						onReload={newWorkDisabled ? undefined : onReloadMcpServers}
-						reloading={reloadingMcpServers}
-						turnInFlight={Boolean(turn)}
-						error={mcpReloadError}
-					/>
 					<div
 						className={cn("flex min-h-0 flex-1 flex-col", conversationEmpty && "justify-center")}
 						data-composer-placement={conversationEmpty ? "center" : "dock"}
@@ -1539,6 +1524,7 @@ function ChatWorkspaceContent({
 									draftSessionIncarnation={draftScope.incarnation}
 									acceptedClientMessageIds={acceptedClientMessageIds}
 								/>
+								<McpServerBanner servers={brokenServers} />
 							</div>
 						</div>
 					</div>
