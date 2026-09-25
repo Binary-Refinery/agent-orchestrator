@@ -2630,6 +2630,12 @@ function Timeline({
 	const seenHumanMessageIds = useRef<Set<string> | undefined>(undefined);
 	const lastSeenLatestSequence = useRef<number | undefined>(undefined);
 	const [newHumanMessageIds, setNewHumanMessageIds] = useState<ReadonlySet<string>>(new Set());
+	const previousLocalEchoCount = useRef(localEchos.length);
+	const smoothScrollRequested = useRef(false);
+	useEffect(() => {
+		if (localEchos.length > previousLocalEchoCount.current) smoothScrollRequested.current = true;
+		previousLocalEchoCount.current = localEchos.length;
+	}, [localEchos.length]);
 	const editedMessageVisible = Boolean(
 		messageEdit &&
 		items.some(
@@ -2651,16 +2657,23 @@ function Timeline({
 		const added = new Set(
 			humanMessages
 				.filter(
-					(item) =>
-						!seenHumanMessageIds.current?.has(item.id) &&
-						item.sequence > (lastSeenLatestSequence.current ?? -Infinity),
-				)
+						(item) =>
+							!seenHumanMessageIds.current?.has(item.id) &&
+							item.sequence > (lastSeenLatestSequence.current ?? -Infinity) &&
+							// The durable row replaces an optimistic local echo. It already
+							// animated on send, so do not animate reconciliation a second time.
+							!localEchos.some(
+								(echo) =>
+									(echo.turnId && echo.turnId === item.turnId) ||
+									(echo.text === item.text && echo.createdAt <= item.createdAt),
+							),
+					)
 				.map((item) => item.id),
 		);
 		seenHumanMessageIds.current = humanMessageIds;
 		lastSeenLatestSequence.current = snapshot.latestSequence;
 		if (added.size > 0) setNewHumanMessageIds(added);
-	}, [items, snapshot.latestSequence]);
+	}, [items, localEchos, snapshot.latestSequence]);
 	const localItems = useMemo(() => {
 		return localEchos
 			.filter(
@@ -2804,7 +2817,9 @@ function Timeline({
 		syncPromptSpacer();
 		const node = scroller.current;
 		if (node && pinnedRef.current) {
-			node.scrollTop = node.scrollHeight;
+			const behavior = smoothScrollRequested.current ? "smooth" : "auto";
+			smoothScrollRequested.current = false;
+			node.scrollTo({ top: node.scrollHeight, behavior });
 		}
 		updateScrollbar();
 	}, [syncPromptSpacer, updateScrollbar]);
