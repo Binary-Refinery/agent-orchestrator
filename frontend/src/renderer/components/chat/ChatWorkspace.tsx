@@ -3346,8 +3346,9 @@ const TurnGroup = memo(function TurnGroup({
 			    way back or a record of how long it took. */}
 			{!copyableMessageId &&
 			(group.live || canRollback || (group.outcome?.durationMs !== undefined && group.outcome.durationMs > 0)) ? (
-				<>
-				{group.live ? <LiveResponseStatus /> : null}
+				group.live ? (
+					<LiveResponseStatus />
+				) : (
 				<div className="flex h-7 items-center gap-0.5">
 					{canRollback ? (
 						<button
@@ -3365,7 +3366,7 @@ const TurnGroup = memo(function TurnGroup({
 						<TurnDuration durationMs={group.outcome.durationMs} />
 					) : null}
 				</div>
-				</>
+				)
 			) : null}
 			{group.outcome && group.outcome.state !== "completed" ? (
 				<TurnOutcome
