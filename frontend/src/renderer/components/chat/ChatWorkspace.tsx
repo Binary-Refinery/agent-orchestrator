@@ -3314,7 +3314,7 @@ const TurnGroup = memo(function TurnGroup({
 						queued={queued}
 						newHumanMessageIds={newHumanMessageIds}
 						showCopy={run.items[0]?.id === copyableMessageId}
-						showWorking={group.live && run.items[0]?.id === copyableMessageId}
+						showWorking={run.items[0]?.id === copyableMessageId}
 						onRollback={
 							canRollback && run.items[0]?.id === copyableMessageId
 								? () => onRollback(group.turnId as string)
