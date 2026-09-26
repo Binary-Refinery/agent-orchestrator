@@ -3421,6 +3421,7 @@ const TurnGroup = memo(function TurnGroup({
 		);
 	return (
 		<div className="flex min-w-0 flex-col gap-2.5">
+			{group.live ? <LiveResponseStatus /> : null}
 			{!group.outcome && runs.map((run) =>
 				run.kind === "activities" ? (
 					<ActivityRun
@@ -3472,7 +3473,6 @@ const TurnGroup = memo(function TurnGroup({
 				),
 			)}
 			{group.outcome ? humanRuns.map(renderRun) : null}
-			{group.live ? <LiveResponseStatus /> : null}
 			{group.outcome && workedRuns.length > 0 ? (
 				<Accordion type="single" collapsible className="-mx-1 border-b border-border" defaultValue="">
 					<AccordionItem value="worked" className="border-0">
