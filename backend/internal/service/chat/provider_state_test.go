@@ -639,7 +639,10 @@ func TestReloadMCPServersUnavailableInventoryRetainsKnownState(t *testing.T) {
 func TestReloadMCPServersKeepsStartupNotificationsFromCurrentReload(t *testing.T) {
 	reloader := &mcpReloadRecorder{
 		fakeConversation: newFakeConversation(),
-		result:           ports.ChatMCPReloadResult{Authoritative: true},
+		result: ports.ChatMCPReloadResult{
+			Servers:       []ports.ChatMCPServer{{Name: "still-enabled", Status: "ready"}},
+			Authoritative: true,
+		},
 	}
 	h := newHarnessWithConversation(t, reloader)
 	reloader.onReload = func() {

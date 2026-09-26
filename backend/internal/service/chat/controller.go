@@ -3451,7 +3451,14 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 		if server.Name == "" {
 			continue
 		}
-		if _, seen := fresh[server.Name]; !seen {
+		current, seen := fresh[server.Name]
+		if seen && current.Status != "ready" {
+			// The status list is a snapshot, while this non-ready state came from
+			// a startup notification observed after the reload began. Keep the
+			// newer failure/transition instead of promoting it back to ready.
+			continue
+		}
+		if !seen {
 			freshOrder = append(freshOrder, server.Name)
 		}
 		fresh[server.Name] = domain.ConversationMCPServer{
