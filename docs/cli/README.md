@@ -37,9 +37,9 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 On a headless box, run `ao daemon` under the OS service manager, then run
 `ao remote-host enable` on that box. It prints the stable host ID, available
-addresses, and a new pairing password. `status` shows the current password
+addresses, and a pairing password. `status` shows the current password
 from the host's local shell, so another client can pair without rotating it.
-Running `enable` again rotates the password and disconnects existing clients.
+Running `enable` again prints the current details without rotating the password.
 The listener uses plain HTTP on
 the LAN. Use a trusted network or an encrypted tunnel, and do not publish its
 port directly to the internet.
