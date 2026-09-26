@@ -164,8 +164,14 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 					)}
 					onOpenAutoFocus={(event) => event.preventDefault()}
 					onEscapeKeyDown={(event) => {
-						if (contentRef.current?.contains(event.target as Node)) return;
 						const target = event.target instanceof Element ? event.target : null;
+						// An in-place edit (a profile rename) takes Escape to cancel itself,
+						// not to close Settings around it.
+						if (target?.closest("[data-settings-inline-edit]")) {
+							event.preventDefault();
+							return;
+						}
+						if (contentRef.current?.contains(event.target as Node)) return;
 						const activeElement = document.activeElement instanceof Element ? document.activeElement : null;
 						const nestedPopup = [target, activeElement].some((element) => element?.closest('[role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'));
 						if (nestedPopup) event.preventDefault();

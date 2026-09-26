@@ -220,6 +220,23 @@ describe("SettingsDialog", () => {
 		await vi.waitFor(() => expect(useUiStore.getState().settingsModal).toBeNull());
 	});
 
+	it("stays open when Escape cancels an inline edit inside it", async () => {
+		useUiStore.getState().openGlobalSettings("browserProfiles");
+		renderSettingsDialog();
+
+		const dialog = await screen.findByRole("dialog");
+		const inlineEdit = document.createElement("input");
+		inlineEdit.setAttribute("data-settings-inline-edit", "");
+		dialog.append(inlineEdit);
+		inlineEdit.focus();
+		fireEvent.keyDown(inlineEdit, { key: "Escape" });
+		expect(useUiStore.getState().settingsModal).not.toBeNull();
+		inlineEdit.remove();
+
+		fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+		await vi.waitFor(() => expect(useUiStore.getState().settingsModal).toBeNull());
+	});
+
 	it("closes from Escape when a Harness focus target has not moved focus inside", async () => {
 		useUiStore.getState().openGlobalSettings("harness", { focusAgentId: "stale-agent" });
 		renderSettingsDialog();
