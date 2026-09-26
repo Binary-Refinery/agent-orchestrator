@@ -51,34 +51,14 @@ func appendOpenCodePermissionFlags(cmd *[]string, policy agentruntime.Permission
 	}
 }
 
-// openCodeAgentName derives a deterministic, filesystem-safe opencode agent name
-// from the AO session id. The launch argv (--agent) and writeOpenCodeConfig must
-// agree, so both derive it here (kept identical to the desktop opencode adapter).
-func openCodeAgentName(sessionID string) string {
-	const fallback = "ao-system-prompt"
-	trimmed := strings.TrimSpace(sessionID)
-	if trimmed == "" {
-		return fallback
-	}
-	var b strings.Builder
-	for _, r := range trimmed {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '-',
-			r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	name := strings.Trim(b.String(), "-_")
-	if name == "" {
-		return fallback
-	}
-	return "ao-" + name
-}
+// openCodeAgentName is the AO agent's name inside the per-session OPENCODE_CONFIG.
+// The launch argv (--agent) and writeOpenCodeConfig must agree, so both derive it
+// here. It is intentionally a short, stable constant: opencode renders the agent
+// name in its TUI status bar, and the previous per-session id ("ao-<uuid>")
+// overflowed there, crowding out the mode ("...a1e1auto"). There is exactly one
+// AO agent per session config, so the name only has to be unambiguous within that
+// file — a constant is, and it renders cleanly.
+func openCodeAgentName(string) string { return "ao" }
 
 type openCodeInlineConfig struct {
 	Schema     string                           `json:"$schema,omitempty"`

@@ -12,34 +12,29 @@ import (
 )
 
 func TestOpenCodeAgentName(t *testing.T) {
-	cases := map[string]string{
-		"":            "ao-system-prompt",
-		"   ":         "ao-system-prompt",
-		"abc123":      "ao-abc123",
-		"a/b c":       "ao-a-b-c",
-		"--weird--":   "ao-weird",
-		"sess_01-XYZ": "ao-sess_01-XYZ",
-	}
-	for in, want := range cases {
-		if got := openCodeAgentName(in); got != want {
-			t.Errorf("openCodeAgentName(%q) = %q, want %q", in, got, want)
+	// A short, stable constant regardless of session id: opencode renders it in
+	// the TUI status bar, where a long per-session name overflowed. One AO agent
+	// per session config, so the name only has to be unambiguous within that file.
+	for _, in := range []string{"", "   ", "abc123", "a/b c", "sess_01-XYZ"} {
+		if got := openCodeAgentName(in); got != "ao" {
+			t.Errorf("openCodeAgentName(%q) = %q, want %q", in, got, "ao")
 		}
 	}
 }
 
 func TestOpenCodeLaunchArgs(t *testing.T) {
 	got := openCodeLaunchArgs("opencode", "s1", nil, agentruntime.PermissionBypassPermissions, "do it")
-	want := []string{"opencode", "--dangerously-skip-permissions", "--agent", "ao-s1", "--prompt", "do it"}
+	want := []string{"opencode", "--dangerously-skip-permissions", "--agent", "ao", "--prompt", "do it"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("launch argv = %v, want %v", got, want)
 	}
 	got = openCodeLaunchArgs("opencode", "s2", nil, agentruntime.PermissionAuto, "")
-	want = []string{"opencode", "--auto", "--agent", "ao-s2"}
+	want = []string{"opencode", "--auto", "--agent", "ao"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("auto launch argv = %v, want %v", got, want)
 	}
 	got = openCodeRestoreArgs("opencode", "s1", nil, agentruntime.PermissionDefault, "", "native-9")
-	want = []string{"opencode", "--agent", "ao-s1", "--session", "native-9"}
+	want = []string{"opencode", "--agent", "ao", "--session", "native-9"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("restore argv = %v, want %v", got, want)
 	}
