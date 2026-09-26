@@ -19,10 +19,15 @@ import (
 // document that defines a primary "AO agent" carrying the prompt and selects it
 // with --agent. Mirrors the desktop opencode adapter.
 
-func openCodeLaunchArgs(binary, sessionID string, providerArgs []string, policy agentruntime.PermissionPolicy, prompt string) []string {
+func openCodeLaunchArgs(binary, sessionID, model string, providerArgs []string, policy agentruntime.PermissionPolicy, prompt string) []string {
 	cmd := []string{binary}
 	appendOpenCodePermissionFlags(&cmd, policy)
 	cmd = append(cmd, providerArgs...)
+	// opencode's -m/--model takes a provider/model id. Empty leaves opencode on
+	// its configured default, so a session with no explicit model is unchanged.
+	if m := strings.TrimSpace(model); m != "" {
+		cmd = append(cmd, "--model", m)
+	}
 	cmd = append(cmd, "--agent", openCodeAgentName(sessionID))
 	if prompt != "" {
 		cmd = append(cmd, "--prompt", prompt)
@@ -30,8 +35,8 @@ func openCodeLaunchArgs(binary, sessionID string, providerArgs []string, policy 
 	return cmd
 }
 
-func openCodeRestoreArgs(binary, sessionID string, providerArgs []string, policy agentruntime.PermissionPolicy, prompt, identity string) []string {
-	cmd := openCodeLaunchArgs(binary, sessionID, providerArgs, policy, "")
+func openCodeRestoreArgs(binary, sessionID, model string, providerArgs []string, policy agentruntime.PermissionPolicy, prompt, identity string) []string {
+	cmd := openCodeLaunchArgs(binary, sessionID, model, providerArgs, policy, "")
 	cmd = append(cmd, "--session", identity)
 	if prompt != "" {
 		cmd = append(cmd, "--prompt", prompt)

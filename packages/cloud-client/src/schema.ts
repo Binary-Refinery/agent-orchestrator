@@ -1210,6 +1210,8 @@ export interface components {
             prompt: string;
             agentSessionId?: string;
             mode: components["schemas"]["SessionMode"];
+            /** @description Coding-agent model to launch with; empty uses the harness default. */
+            model?: string;
             deniedCommands: string[];
             /** Format: uri */
             repositoryUrl: string;
@@ -1554,6 +1556,8 @@ export interface components {
             displayName: string;
             branch: string;
             mode: components["schemas"]["SessionMode"];
+            /** @description Coding-agent model the session launched with; empty means the harness default. */
+            model?: string;
             deniedCommands: string[];
             activityState: components["schemas"]["SessionActivityState"];
             status: components["schemas"]["SessionStatus"];
@@ -1577,6 +1581,8 @@ export interface components {
             prompt: string;
             /** @default trusted */
             mode: components["schemas"]["SessionMode"];
+            /** @description Coding-agent model the session launches with (harness-native id, e.g. "anthropic/claude-opus-4-8"). Optional; empty uses the harness default. */
+            model?: string;
             /** @default [] */
             deniedCommands: string[];
             /** Format: uuid */

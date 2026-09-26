@@ -145,9 +145,9 @@ func (b HarnessBuilder) BuildInteractive(
 		// opencode's launch logic lives in the cloud module (self-contained), so
 		// the worker builds its argv directly rather than through agentruntime.
 		if identity != "" {
-			argv = openCodeRestoreArgs(binary, launch.SessionID, providerArgs, permission, launch.Prompt, identity)
+			argv = openCodeRestoreArgs(binary, launch.SessionID, launch.Model, providerArgs, permission, launch.Prompt, identity)
 		} else {
-			argv = openCodeLaunchArgs(binary, launch.SessionID, providerArgs, permission, launch.Prompt)
+			argv = openCodeLaunchArgs(binary, launch.SessionID, launch.Model, providerArgs, permission, launch.Prompt)
 		}
 	} else if identity != "" {
 		var ok bool
@@ -155,6 +155,7 @@ func (b HarnessBuilder) BuildInteractive(
 			Harness:          harness,
 			Binary:           binary,
 			SessionID:        launch.SessionID,
+			Model:            launch.Model,
 			Metadata:         map[string]string{agentruntime.MetadataKeyAgentSessionID: identity},
 			WorkspacePath:    workspace,
 			SystemPrompt:     systemPrompt,
@@ -170,6 +171,7 @@ func (b HarnessBuilder) BuildInteractive(
 			Harness:          harness,
 			Binary:           binary,
 			SessionID:        launch.SessionID,
+			Model:            launch.Model,
 			WorkspacePath:    workspace,
 			Prompt:           launch.Prompt,
 			SystemPrompt:     systemPrompt,

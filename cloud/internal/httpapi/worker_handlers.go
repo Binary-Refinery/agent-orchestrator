@@ -276,6 +276,7 @@ func launchContextFrom(launch domain.WorkerLaunch) (worker.LaunchContext, error)
 		AgentSessionID:  launch.AgentSessionID,
 		ParentSessionID: launch.ParentSessionID,
 		Mode:            launch.Mode,
+		Model:           launch.Model,
 		DeniedCommands:  launch.DeniedCommands,
 		RepositoryURL:   launch.RepositoryURL,
 		DefaultBranch:   launch.DefaultBranch,

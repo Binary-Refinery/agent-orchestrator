@@ -23,20 +23,26 @@ func TestOpenCodeAgentName(t *testing.T) {
 }
 
 func TestOpenCodeLaunchArgs(t *testing.T) {
-	got := openCodeLaunchArgs("opencode", "s1", nil, agentruntime.PermissionBypassPermissions, "do it")
+	got := openCodeLaunchArgs("opencode", "s1", "", nil, agentruntime.PermissionBypassPermissions, "do it")
 	want := []string{"opencode", "--dangerously-skip-permissions", "--agent", "ao", "--prompt", "do it"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("launch argv = %v, want %v", got, want)
 	}
-	got = openCodeLaunchArgs("opencode", "s2", nil, agentruntime.PermissionAuto, "")
+	got = openCodeLaunchArgs("opencode", "s2", "", nil, agentruntime.PermissionAuto, "")
 	want = []string{"opencode", "--auto", "--agent", "ao"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("auto launch argv = %v, want %v", got, want)
 	}
-	got = openCodeRestoreArgs("opencode", "s1", nil, agentruntime.PermissionDefault, "", "native-9")
+	got = openCodeRestoreArgs("opencode", "s1", "", nil, agentruntime.PermissionDefault, "", "native-9")
 	want = []string{"opencode", "--agent", "ao", "--session", "native-9"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("restore argv = %v, want %v", got, want)
+	}
+	// A selected model becomes opencode's --model; empty leaves it on its default.
+	got = openCodeLaunchArgs("opencode", "s3", "anthropic/claude-opus-4-8", nil, agentruntime.PermissionDefault, "")
+	want = []string{"opencode", "--model", "anthropic/claude-opus-4-8", "--agent", "ao"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("model launch argv = %v, want %v", got, want)
 	}
 }
 
