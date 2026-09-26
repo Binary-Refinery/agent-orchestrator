@@ -26,6 +26,7 @@
 	"board.empty.body": "Describe a task and the orchestrator plans it, spawns worker sessions, and tracks them here as work moves forward.",
 	"board.empty.title": "No worker sessions yet",
 	"home.folderMissing": "Folder missing",
+	"home.getStarted": "Get started",
 	"home.jumpBack": "Jump back right in",
 	"home.recentProjects": "Recent projects",
 	"home.currentProjects": "Current projects",

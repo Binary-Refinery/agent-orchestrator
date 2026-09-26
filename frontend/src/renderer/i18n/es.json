@@ -63,6 +63,7 @@
 	"board.empty.body": "Describe una tarea y el orquestador la planifica, crea sesiones de trabajo y las sigue aquí a medida que avanza el trabajo.",
 	"board.empty.title": "Aún no hay sesiones de trabajo",
 	"home.folderMissing": "Carpeta no encontrada",
+	"home.getStarted": "Empieza",
 	"home.jumpBack": "Vuelve a entrar",
 	"home.recentProjects": "Proyectos recientes",
 	"home.currentProjects": "Proyectos actuales",

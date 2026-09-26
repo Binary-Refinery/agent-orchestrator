@@ -63,6 +63,7 @@
 	"board.empty.body": "Descreva uma tarefa e o orchestrator a planeja, inicia sessões de worker e as acompanha aqui conforme o trabalho avança.",
 	"board.empty.title": "Nenhuma sessão de worker ainda",
 	"home.folderMissing": "Pasta não encontrada",
+	"home.getStarted": "Começar",
 	"home.jumpBack": "Volte de onde parou",
 	"home.recentProjects": "Projetos recentes",
 	"home.currentProjects": "Projetos atuais",

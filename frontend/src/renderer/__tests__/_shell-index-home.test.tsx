@@ -91,7 +91,8 @@ describe("shell index route", () => {
 	it("shows the home actions when no projects exist", () => {
 		render(<HomePage />);
 
-		expect(screen.getByText("Jump back right in")).toBeInTheDocument();
+		expect(screen.getByText("Get started")).toBeInTheDocument();
+		expect(screen.queryByText("Jump back right in")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();

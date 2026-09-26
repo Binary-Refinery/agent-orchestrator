@@ -32,8 +32,9 @@ import { Badge } from "./ui/badge";
  *   full-width accent CTA above). Connect Mobile is settings-only — not here.
  * - Recent rows use shared {@link NavRowHighlight} (same as sidebar), not a
  *   flat `hover:bg-interactive-hover` wash.
- * - Section titles share {@link HOME_SECTION_TITLE_CLASS}; keep Jump back /
- *   Recent projects visually paired.
+ * - Section titles share {@link HOME_SECTION_TITLE_CLASS}. With no projects the
+ *   heading is Get started and Recent projects stays hidden; otherwise keep
+ *   Jump back paired with Recent projects.
  */
 const GITHUB_REPOSITORY_URL = "https://github.com/Untrivial-ai/agent-orchestrator";
 const RECENT_PROJECT_LIMIT = 3;
@@ -201,7 +202,7 @@ export function HomePage() {
 				<div className="space-y-6">
 					<section className="space-y-3 px-3">
 						<div className="flex items-baseline justify-between gap-4">
-							<h1 className={HOME_SECTION_TITLE_CLASS}>{t("home.jumpBack")}</h1>
+							<h1 className={HOME_SECTION_TITLE_CLASS}>{projects.length === 0 ? t("home.getStarted") : t("home.jumpBack")}</h1>
 							{/* Quiet text link — not TopbarButton / accent. Dashed underline only on hover. */}
 							<button
 								className="inline-flex shrink-0 items-center gap-1.5 border-b border-dashed border-transparent pb-px text-sm text-muted-foreground hover:border-current hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
