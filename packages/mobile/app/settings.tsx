@@ -376,9 +376,16 @@ function NotificationsRow() {
 	const t = useTheme();
 	const { scheme } = useThemeState();
 	const { config, connection } = useApp();
-	const [status, setStatus] = useState<PushStatus | null>(null);
+	const [snapshot, setSnapshot] = useState<{ config: ServerConfig | null; status: PushStatus } | null>(null);
+	const status = snapshot?.config === config ? snapshot.status : null;
+	const refreshId = useRef(0);
 	const [busy, setBusy] = useState(false);
-	const refresh = useCallback(() => { getPushStatus().then(setStatus).catch(() => {}); }, []);
+	const refresh = useCallback(() => {
+		const id = ++refreshId.current;
+		getPushStatus(config).then((status) => {
+			if (id === refreshId.current) setSnapshot({ config, status });
+		}).catch(() => {});
+	}, [config]);
 
 	useFocusEffect(useCallback(() => refresh(), [refresh]));
 	useEffect(() => refresh(), [connection, refresh]);
@@ -395,7 +402,7 @@ function NotificationsRow() {
 		setBusy(true);
 		try {
 			if (!next) {
-				await unregisterFromPush();
+				await unregisterFromPush(config);
 				haptics.tap();
 			} else if (config) {
 				const registered = await registerForPush(config, { ask: true });

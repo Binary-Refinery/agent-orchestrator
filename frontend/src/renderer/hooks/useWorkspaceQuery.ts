@@ -433,7 +433,10 @@ export function useRemoteWorkspaces(options: WorkspaceSubscriptionOptions = {}) 
 			subscribed: options.subscribed,
 		})),
 	});
-	return { data: remote.flatMap((query) => query.data ?? []) };
+	return {
+		data: remote.flatMap((query) => query.isError ? [] : query.data ?? []),
+		failedHostIds: connected.filter((_, index) => remote[index]?.isError),
+	};
 }
 
 export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {

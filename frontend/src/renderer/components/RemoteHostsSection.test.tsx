@@ -35,3 +35,17 @@ it("keeps offline hosts visible and opens a same-ID session on the selected host
 	fireEvent.click(screen.getByRole("button", { name: "Fix login" }));
 	expect(open).toHaveBeenCalledWith("box-b", "project-1", "session-1");
 });
+
+it("shows a retry action when a connected host cannot load its sessions", () => {
+	const retry = vi.fn();
+	render(<RemoteHostsSection
+		hosts={[{ hostId: "box-a", label: "Box A", url: "http://box-a:3001", status: "connected" }]}
+		workspaces={[]}
+		failedHostIds={["box-a"]}
+		onOpenSession={vi.fn()}
+		onStart={vi.fn()}
+		onRetry={retry}
+	/>);
+	fireEvent.click(screen.getByRole("button", { name: "Could not load sessions. Retry" }));
+	expect(retry).toHaveBeenCalledOnce();
+});

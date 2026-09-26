@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { baseUrlForHost, clientForHost, subscribeConnectedHosts } from "../lib/host-clients";
 import { useWorkspaceSession, remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RemoteTerminalView } from "./RemoteTerminalView";
 
 /** A safe remote surface until native desktop actions have host-aware implementations. */
 export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessionId: string }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const session = useWorkspaceSession(sessionId, hostId);
 	const [message, setMessage] = useState("");
@@ -58,32 +60,32 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 	return <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-6" data-testid="remote-session-view" data-host-id={hostId}>
 		<header className="flex items-start justify-between gap-4">
 			<div>
-				<p className="text-xs text-muted-foreground">Remote host: {hostId}</p>
+				<p className="text-xs text-muted-foreground">{t("remote.hostLabel", { hostId })}</p>
 				<h1 className="text-xl font-semibold">{title}</h1>
-				<p className="text-sm text-muted-foreground">{session.data?.status ?? "Loading session"}</p>
+				<p className="text-sm text-muted-foreground">{session.data?.status ?? t("remote.loadingSession")}</p>
 			</div>
 			<button type="button" className="rounded-md border px-3 py-1.5 text-sm" disabled={!session.data || session.data.isTerminated || stop.isPending} onClick={() => {
-			if (window.confirm(`Stop ${title} on ${hostId}?`)) stop.mutate();
-			}}>Stop session</button>
+			if (window.confirm(t("remote.confirmStop", { title, hostId }))) stop.mutate();
+			}}>{t("remote.stopSession")}</button>
 		</header>
-		{session.isError && <p role="alert">Could not load this remote session.</p>}
-		{stop.isError && <p role="alert">Could not stop this remote session.</p>}
+		{session.isError && <p role="alert">{t("remote.loadSessionFailed")}</p>}
+		{stop.isError && <p role="alert">{t("remote.stopSessionFailed")}</p>}
 		{session.data?.mode === "chat" ? <>
-			<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto" aria-label="Conversation">
+			<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto" aria-label={t("remote.conversation")}>
 				{conversation.data?.messages.map((item) => <div key={item.id} className="rounded-lg border p-3">
 					<p className="text-xs text-muted-foreground">{item.role}</p>
 					<p className="whitespace-pre-wrap">{item.text}</p>
 				</div>)}
-				{conversation.isError && <p role="alert">Could not load this remote conversation.</p>}
+				{conversation.isError && <p role="alert">{t("remote.loadConversationFailed")}</p>}
 			</div>
 			<form className="flex gap-2" onSubmit={onSubmit}>
-				<input className="min-w-0 flex-1 rounded-md border bg-background p-2" aria-label="Message" value={message} onChange={(event) => { deliveryId.current = null; setMessage(event.target.value); }} />
-				<button type="submit" className="rounded-md border px-4" disabled={!message.trim() || send.isPending || session.data.isTerminated}>Send</button>
+				<input className="min-w-0 flex-1 rounded-md border bg-background p-2" aria-label={t("remote.message")} value={message} onChange={(event) => { deliveryId.current = null; setMessage(event.target.value); }} />
+				<button type="submit" className="rounded-md border px-4" disabled={!message.trim() || send.isPending || session.data.isTerminated}>{t("browser.annotationSend")}</button>
 			</form>
-			{send.isError && <p role="alert">Could not send the message.</p>}
+			{send.isError && <p role="alert">{t("remote.sendFailed")}</p>}
 		</> : session.data && proxyBase ? (
 			<RemoteTerminalView hostId={hostId} proxyBase={proxyBase} terminalHandleId={session.data.terminalHandleId ?? sessionId} />
 		) : null}
-		<p className="text-xs text-muted-foreground">Remote preview supports Chat, terminal, and stop. Editor, files, browser, and approvals stay on the host for now.</p>
+		<p className="text-xs text-muted-foreground">{t("remote.limitations")}</p>
 	</div>;
 }

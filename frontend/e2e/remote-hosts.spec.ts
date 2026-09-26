@@ -35,6 +35,7 @@ async function setupClient(page: Page, state: RemoteState): Promise<void> {
 				...state.spawned[host.hostId].map((id) => ({ id, displayName: "Started remotely", harness: "codex", status: "working", mode: "chat", prs: [] })),
 			] };
 			else if (path === "/api/v1/agents/readiness/ensure") body = { agents: [{ id: "codex", label: "Codex", effectiveReadiness: "ready" }] };
+			else if (path === "/api/v1/settings") body = { chatHarnesses: ["codex"] };
 			else if (path === "/api/v1/sessions" && request.method() === "POST") {
 				state.actions.push(`${host.hostId}:spawn`);
 				const id = `started-${host.hostId}`;

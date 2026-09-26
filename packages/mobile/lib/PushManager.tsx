@@ -10,7 +10,7 @@ import { AppState, Platform } from "react-native";
 import { announceDevice, markNotificationRead } from "./api";
 import { getInstallId } from "./installId";
 import { notificationTarget } from "./notificationView";
-import { configurePushHandler, ensureAndroidChannel, registerForPush, unpairFromServer } from "./push";
+import { configurePushHandler, ensureAndroidChannel, registerForPush } from "./push";
 import { useApp } from "./store";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry } from "./telemetry/runtime";
@@ -28,27 +28,16 @@ type PushData = {
 };
 
 export function PushManager(): null {
-	const { config, configured, connection } = useApp();
+	const { config, connection } = useApp();
 	const router = useRouter();
 	const navState = useRootNavigationState();
 
 	const handledColdStart = useRef(false);
-	const wasConfigured = useRef(false);
 
 	// Create the Android channel once at startup.
 	useEffect(() => {
 		void ensureAndroidChannel();
 	}, []);
-
-	// When the user clears the server config, this phone has unpaired: tell that
-	// daemon to drop the row entirely, not merely clear the token, so the old
-	// desktop stops listing a phone that has moved on. Uses the persisted creds.
-	useEffect(() => {
-		if (wasConfigured.current && !configured) {
-			void unpairFromServer();
-		}
-		wasConfigured.current = configured;
-	}, [configured]);
 
 	// Announce this device's identity as soon as it connects, and again on every
 	// foreground while connected — with NO permission gate. This is what lets the

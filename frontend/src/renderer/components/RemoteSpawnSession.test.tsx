@@ -25,6 +25,8 @@ it("starts a worker on Box B, not the local daemon, even when the session ID ove
 				{ id: "codex", label: "Codex", effectiveReadiness: "ready" },
 				{ id: "claude-code", label: "Claude Code", effectiveReadiness: "not_ready" },
 			] }
+			: request.url.endsWith("/settings")
+				? { chatHarnesses: ["codex"] }
 			: request.url.endsWith("/agents/readiness")
 				? { agents: [{ id: "codex", label: "Codex", effectiveReadiness: "unknown" }] }
 			: request.url.endsWith("/projects")
@@ -43,14 +45,44 @@ it("starts a worker on Box B, not the local daemon, even when the session ID ove
 	fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Fix the login test" } });
 	fireEvent.click(screen.getByRole("button", { name: "Start on remote host" }));
 	await waitFor(() => expect(onCreated).toHaveBeenCalledWith("same-id"));
-	expect(requests.map(({ url }) => url)).toEqual([
+	expect(requests.map(({ url }) => url).sort()).toEqual([
 		"http://127.0.0.1:4400/api/v1/projects",
 		"http://127.0.0.1:4400/api/v1/agents/readiness/ensure",
+		"http://127.0.0.1:4400/api/v1/settings",
 		"http://127.0.0.1:4400/api/v1/sessions",
-	]);
-	expect(requests[2]).toMatchObject({ method: "POST", body: {
+	].sort());
+	expect(requests.find(({ url }) => url.endsWith("/sessions"))).toMatchObject({ method: "POST", body: {
 		kind: "worker", projectId: "project-1", harness: "codex", mode: "chat", prompt: "Fix the login test",
 	} });
+});
+
+it("uses Terminal for a ready agent that cannot run Chat", async () => {
+	const requests: Array<{ url: string; body?: unknown }> = [];
+	remoteConnect.mockResolvedValue({ hostId: "box-b", label: "Box B", url: "http://box-b:3001", base: "http://127.0.0.1:4400" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		requests.push({ url: request.url, body: request.method === "POST" && request.url.endsWith("/sessions") ? await request.json() : undefined });
+		const payload = request.url.endsWith("/agents/readiness/ensure")
+			? { agents: [{ id: "unreal-agent", label: "Unreal Agent", effectiveReadiness: "ready" }] }
+			: request.url.endsWith("/settings")
+				? { chatHarnesses: [] }
+				: request.url.endsWith("/projects")
+					? { projects: [] }
+					: { session: { id: "tui-session" } };
+		return new Response(JSON.stringify(payload), { status: request.url.endsWith("/sessions") ? 201 : 200, headers: { "content-type": "application/json" } });
+	}));
+	await connectHost("http://box-b:3001");
+	const onCreated = vi.fn();
+	render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+		<RemoteSpawnSession hostId="box-b" onCreated={onCreated} />
+	</QueryClientProvider>);
+	await screen.findByRole("option", { name: "Unreal Agent" });
+	expect(screen.getByRole("combobox", { name: "Interface" })).toHaveValue("tui");
+	expect(screen.getByRole("option", { name: "Chat" })).toBeDisabled();
+	fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Inspect logs" } });
+	fireEvent.click(screen.getByRole("button", { name: "Start on remote host" }));
+	await waitFor(() => expect(onCreated).toHaveBeenCalledWith("tui-session"));
+	expect(requests.find(({ url }) => url.endsWith("/sessions"))?.body).toMatchObject({ harness: "unreal-agent", mode: "tui" });
 });
 
 it("does not carry Box B's selected project into Box C when both have the same project ID", async () => {
@@ -61,6 +93,8 @@ it("does not carry Box B's selected project into Box C when both have the same p
 		const request = input instanceof Request ? input : new Request(input);
 		const payload = request.url.endsWith("/agents/readiness/ensure")
 			? { agents: [{ id: "codex", label: "Codex", effectiveReadiness: "ready" }] }
+			: request.url.endsWith("/settings")
+				? { chatHarnesses: ["codex"] }
 			: { projects: [{ id: "project-1", name: request.url.includes(":4400") ? "Box B project" : "Box C project", folderMissing: false }] };
 		return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
 	}));

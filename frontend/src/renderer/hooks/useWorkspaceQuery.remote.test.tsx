@@ -51,3 +51,15 @@ it("opens the remote session when local and remote use the same session ID", asy
 	const { result } = renderHook(() => useWorkspaceSession("session-1", "box-a"), { wrapper });
 	await waitFor(() => expect(result.current.data?.workspaceName).toBe("Remote"));
 });
+
+it("reports a failed remote query instead of treating the host as empty and healthy", async () => {
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":"unavailable"}', {
+		status: 500,
+		headers: { "content-type": "application/json" },
+	})));
+	await connectHost("http://box-a:3001");
+	const { result } = renderHook(() => useRemoteWorkspaces(), { wrapper });
+	await waitFor(() => expect(result.current.failedHostIds).toEqual(["box-a"]), { timeout: 3000 });
+	expect(result.current.data).toEqual([]);
+});

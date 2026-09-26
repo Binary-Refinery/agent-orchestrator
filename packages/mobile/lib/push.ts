@@ -8,27 +8,29 @@ import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
 import { ApiError, registerPushDevice, unpairFromDaemon, unregisterPushDevice } from "./api";
+import { configForEndpoint } from "./connect";
+import { probeEndpoint } from "./connectRuntime";
 import { getInstallId } from "./installId";
 import type { ServerConfig } from "./config";
+import { findHost, type HostMetadata } from "./hosts";
 import { classifyServerFailure, hasServer, type PushRegisterResult, type PushStatus } from "./pushStatus";
+import { raceEndpoints } from "./race";
 
 export type { PushRegisterResult, PushStatus } from "./pushStatus";
 
-// The last successful registration: the Expo token AND the daemon it was
-// registered with (host/port/TLS/password). Persisting the daemon — not just the
-// token — is what lets us unregister from the *right* daemon after an app restart
-// or a config change, so an old daemon can't keep pushing to this device (D7).
-// It lives in SecureStore because it contains the connection password.
+// The last successful registration, including its daemon identity and bearer.
+// Stored in SecureStore so a verified old daemon can be unregistered after a
+// restart or host switch without putting the bearer in plaintext storage.
 const REGISTRATION_KEY = "ao.pushRegistration";
-// Registrations we still owe an unregister to (the daemon was unreachable when we
-// tried). Retried on the next register/foreground so a failed unregister is never
-// silently lost — otherwise an old daemon could keep pushing to this device.
+// Known-host registrations still owed an unregister (offline or wrong identity
+// at the saved URL). Retried on the next register/foreground.
 const PENDING_UNREG_KEY = "ao.pushPendingUnregister";
 // Bound the pending list so a permanently-dead daemon can't grow it forever.
 const MAX_PENDING_UNREG = 10;
 
 type Registration = {
 	token: string;
+	hostId?: string;
 	host: string;
 	httpPort: string;
 	secure: boolean;
@@ -77,17 +79,31 @@ async function queuePendingUnregister(reg: Registration): Promise<void> {
 	await savePendingUnregisters(list);
 }
 
-// Retry every queued unregister; keep the ones that still fail. Best-effort.
+// A saved URL can now point at another machine. Probe before presenting the
+// saved bearer, and keep known-ID failures for a later retry.
+async function unregisterIfVerified(reg: Registration): Promise<boolean> {
+	if (!reg.hostId) return false;
+	try {
+		const answer = await probeEndpoint(
+			{ kind: "lan", host: reg.host, port: Number(reg.httpPort), secure: reg.secure },
+			new AbortController().signal,
+		);
+		if (answer.hostId !== reg.hostId) return false;
+		await unregisterPushDevice(configOf(reg), reg.token);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Retry every queued unregister; keep only known-ID failures. A legacy entry
+// has no identity to verify, so replaying it could leak its bearer to a new host.
 async function flushPendingUnregisters(): Promise<void> {
 	const list = await loadPendingUnregisters();
 	if (list.length === 0) return;
 	const stillPending: Registration[] = [];
 	for (const reg of list) {
-		try {
-			await unregisterPushDevice(configOf(reg), reg.token);
-		} catch {
-			stillPending.push(reg);
-		}
+		if (reg.hostId && !(await unregisterIfVerified(reg))) stillPending.push(reg);
 	}
 	await savePendingUnregisters(stillPending);
 }
@@ -95,12 +111,15 @@ async function flushPendingUnregisters(): Promise<void> {
 // Rebuild a minimal ServerConfig for talking to the daemon a registration names.
 // muxPort is unused by the REST calls (register/unregister) so it's left empty.
 function configOf(reg: Registration): ServerConfig {
-	return { host: reg.host, httpPort: reg.httpPort, muxPort: "", secure: reg.secure, password: reg.password };
+	return { hostId: reg.hostId, host: reg.host, httpPort: reg.httpPort, muxPort: "", secure: reg.secure, password: reg.password };
 }
 
-// Same daemon? Keyed on the fields that address it — host/port/TLS. (The password
-// can change without it being a different daemon, so it's not part of identity.)
+// A stable id survives address changes and distinguishes hosts that reuse an
+// address. Only two legacy records use the address fallback; a mixed pair
+// cannot be proven to be the same machine.
 function sameDaemon(reg: Registration, cfg: ServerConfig): boolean {
+	if (reg.hostId && cfg.hostId) return reg.hostId === cfg.hostId;
+	if (reg.hostId || cfg.hostId) return false;
 	return reg.host === cfg.host && reg.httpPort === cfg.httpPort && !!reg.secure === !!cfg.secure;
 }
 
@@ -186,18 +205,14 @@ export async function registerForPush(
 	// Retry any unregisters we still owe from a previous failure.
 	await flushPendingUnregisters();
 
-	// If we're now pointed at a different daemon than we last registered with,
-	// unregister the token from the OLD daemon first so it stops pushing to this
-	// device. This survives app restarts because the old daemon's address +
-	// credentials are persisted. If that unregister fails (daemon unreachable),
-	// queue it for retry rather than dropping it.
+	// Revoke the old registration only after its URL reports the saved host ID.
+	// Otherwise retain a known-ID entry for retry; a legacy entry has no safe
+	// way to prove who now owns its URL.
 	const prior = await loadRegistration();
 	if (prior && !sameDaemon(prior, cfg)) {
-		try {
-			await unregisterPushDevice(configOf(prior), prior.token);
-		} catch {
-			await queuePendingUnregister(prior);
-		}
+		// A pre-host-ID registration cannot be authenticated to its old URL.
+		// Replace it locally without sending its bearer to an unknown machine.
+		if (prior.hostId && !(await unregisterIfVerified(prior))) await queuePendingUnregister(prior);
 	}
 
 	// Step 1 — mint the token. This throws when the build itself can't do push:
@@ -229,6 +244,7 @@ export async function registerForPush(
 
 	await saveRegistration({
 		token,
+		hostId: cfg.hostId,
 		host: cfg.host,
 		httpPort: cfg.httpPort,
 		secure: !!cfg.secure,
@@ -238,14 +254,14 @@ export async function registerForPush(
 }
 
 // Reads the live permission + registration state without prompting.
-export async function getPushStatus(): Promise<PushStatus> {
+export async function getPushStatus(cfg: ServerConfig | null): Promise<PushStatus> {
 	const perm = await Notifications.getPermissionsAsync();
 	const reg = await loadRegistration();
 	return {
 		supported: Device.isDevice,
 		granted: perm.status === "granted",
 		canAskAgain: perm.canAskAgain ?? true,
-		registered: !!reg,
+		registered: !!reg && !!cfg && sameDaemon(reg, cfg),
 	};
 }
 
@@ -259,33 +275,35 @@ export async function openNotificationSettings(): Promise<void> {
 	}
 }
 
-// Best-effort unregister of the last-registered token from the daemon it was
-// registered with (D7, disconnect/unpair). Uses the persisted daemon address +
-// credentials, so it reaches the correct daemon even after a restart. If the
-// unregister fails (daemon unreachable), the target is queued for retry instead
-// of being dropped — so the old daemon can't keep pushing to this device. Never
-// throws — the caller must not be blocked.
-// Tell the daemon this phone has unpaired, so it drops the row rather than just
-// clearing the token. Used by "Disconnect & forget server" and by the unpair
-// effect in PushManager — the two places where the phone is genuinely leaving,
-// as opposed to merely switching notifications off.
-//
-// Sends the install id when we have one and the token otherwise, so a daemon can
-// find the row either way. Best-effort like unregisterFromPush: local state is
-// cleared regardless, since a phone that cannot reach the old daemon must still
-// be able to disconnect from it.
-export async function unpairFromServer(): Promise<void> {
+// Forget only the selected machine's pairing. Its endpoint must report its host
+// id before its credential is sent; another machine's saved push registration
+// is left alone. Network failure cannot prevent local disconnection.
+export async function unpairFromServer(target: HostMetadata | null): Promise<void> {
+	if (!target) return;
 	const reg = await loadRegistration();
-	await clearRegistration();
-	if (!reg) return;
-	let id = reg.token;
+	// A legacy registration can only match the selected pairing by its saved
+	// address. That comparison clears local state; it never authorizes a DELETE.
+	const registeredHere = !!reg && (reg.hostId
+		? !!target.id && reg.hostId === target.id
+		: target.endpoints.some((endpoint) => sameDaemon(reg, configForEndpoint(endpoint, ""))));
+	if (registeredHere) await clearRegistration();
+
+	// The last push registration may belong to another selected machine. Use
+	// this host's own credential, after checking the endpoint's identity.
+	const host = await findHost(target.id);
+	if (!host) return;
+	const outcome = await raceEndpoints(host.endpoints, host.id, probeEndpoint);
+	if (!outcome.ok) return;
+
+	let id = registeredHere ? reg?.token ?? "" : "";
 	try {
-		id = (await getInstallId()) || reg.token;
+		id = (await getInstallId()) || id;
 	} catch {
-		// Fall back to the token; an unreadable install id must not block unpairing.
+		// Fall back to this host's token if the install id is unreadable.
 	}
+	if (!id) return;
 	try {
-		await unpairFromDaemon(configOf(reg), id);
+		await unpairFromDaemon(configForEndpoint(outcome.endpoint, host.token, host.id), id);
 	} catch {
 		// The daemon may be unreachable (that is often *why* the user is
 		// disconnecting). Nothing to retry against: the phone is forgetting this
@@ -294,17 +312,12 @@ export async function unpairFromServer(): Promise<void> {
 	}
 }
 
-export async function unregisterFromPush(): Promise<void> {
+export async function unregisterFromPush(cfg: ServerConfig | null): Promise<void> {
 	const reg = await loadRegistration();
-	// Clear the active registration up front: the device is disconnecting, so it
-	// is no longer "currently registered" regardless of whether the network call
-	// below succeeds. The retry is tracked separately in the pending queue.
+	if (!reg || !cfg || !sameDaemon(reg, cfg)) return;
+	// Turning off push for this machine clears its local status even if the
+	// daemon is offline; the pending queue retries the network call later.
 	await clearRegistration();
-	if (!reg) return;
-	try {
-		await unregisterPushDevice(configOf(reg), reg.token);
-	} catch {
-		await queuePendingUnregister(reg);
-	}
 	await flushPendingUnregisters();
+	if (reg.hostId && !(await unregisterIfVerified(reg))) await queuePendingUnregister(reg);
 }

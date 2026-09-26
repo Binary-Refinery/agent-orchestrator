@@ -184,7 +184,7 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { hosts: remoteHosts, refresh: refreshRemoteHosts } = useRemoteHosts();
-	const { data: remoteWorkspaces } = useRemoteWorkspaces();
+	const { data: remoteWorkspaces, failedHostIds: remoteFailedHostIds } = useRemoteWorkspaces();
 	const [remoteStartHostId, setRemoteStartHostId] = useState<string | null>(null);
 	// Global shortcut listeners need the latest workspace list, but recreating
 	// those subscriptions for every streamed activity update is avoidable.
@@ -1026,8 +1026,8 @@ function ShellLayout() {
 					<Dialog.Portal>
 						<Dialog.Overlay className="dialog-overlay" />
 						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl">
-							<Dialog.Title className="mb-2 text-lg font-semibold">Start on remote host</Dialog.Title>
-							<Dialog.Description className="mb-4 text-sm text-muted-foreground">The worker runs on the selected machine.</Dialog.Description>
+							<Dialog.Title className="mb-2 text-lg font-semibold">{t("remote.startTitle")}</Dialog.Title>
+							<Dialog.Description className="mb-4 text-sm text-muted-foreground">{t("remote.startDescription")}</Dialog.Description>
 							{remoteStartHostId && <RemoteSpawnSession key={remoteStartHostId} hostId={remoteStartHostId} onCreated={(sessionId) => {
 								void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteStartHostId) });
 								void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: remoteStartHostId, sessionId } });
@@ -1116,8 +1116,12 @@ function ShellLayout() {
 						workspaces={workspaces}
 						remoteHosts={remoteHosts}
 						onStartRemoteHost={setRemoteStartHostId}
-						onRetryRemoteHosts={() => { void refreshRemoteHosts(); }}
+						onRetryRemoteHosts={() => {
+							void refreshRemoteHosts();
+							void queryClient.invalidateQueries({ queryKey: ["remote-workspaces"] });
+						}}
 						remoteWorkspaces={remoteWorkspaces}
+						remoteFailedHostIds={remoteFailedHostIds}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">

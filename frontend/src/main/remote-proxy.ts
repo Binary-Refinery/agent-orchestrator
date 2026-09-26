@@ -153,6 +153,15 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 				headers: forwardHeaders(req.headers),
 			},
 			(upstreamRes) => {
+				let dropped = false;
+				const closeDroppedStream = () => {
+					if (dropped) return;
+					dropped = true;
+					warn(`upstream ${upstream.host} stream ended on ${req.method} ${path}`);
+					res.destroy();
+				};
+				upstreamRes.on("aborted", closeDroppedStream);
+				upstreamRes.on("error", closeDroppedStream);
 				const headers: NodeJS.Dict<string | string[] | number> = {
 					...upstreamRes.headers,
 					...corsHeaders,
@@ -172,11 +181,14 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 		proxied.setTimeout(0);
 		proxied.on("error", (error: Error) => {
 			warn(`upstream ${upstream.host} failed on ${req.method} ${path} (${error.message}); answering 502`);
-			if (!res.headersSent)
-				res.writeHead(502, {
-					"content-type": "application/json",
-					...corsHeaders,
-				});
+			if (res.headersSent) {
+				res.destroy();
+				return;
+			}
+			res.writeHead(502, {
+				"content-type": "application/json",
+				...corsHeaders,
+			});
 			res.end('{"error":"remote daemon unreachable"}');
 		});
 		req.pipe(proxied);

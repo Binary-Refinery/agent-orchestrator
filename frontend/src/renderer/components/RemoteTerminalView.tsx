@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useTerminalSession, type AttachableTerminal } from "../hooks/useTerminalSession";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { createTerminalMux, muxUrlFromApiBase } from "../lib/terminal-mux";
@@ -17,6 +18,7 @@ export function RemoteTerminalView({ hostId, proxyBase, terminalHandleId }: Prop
 }
 
 function RemoteTerminalAttachment({ proxyBase, terminalHandleId }: Omit<Props, "hostId">) {
+	const { t } = useTranslation();
 	const theme = useResolvedTheme();
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
 	const [initError, setInitError] = useState(false);
@@ -40,16 +42,16 @@ function RemoteTerminalAttachment({ proxyBase, terminalHandleId }: Omit<Props, "
 
 	return <div className="terminal-surface relative h-full min-h-0 pl-2" data-testid="remote-terminal-view">
 		<XtermTerminal
-			ariaLabel="Remote session terminal"
+			ariaLabel={t("remote.terminalAria")}
 			fontSize={TERMINAL_FONT_SIZE_DEFAULT}
 			onError={() => setInitError(true)}
 			onReady={setTerminal}
 			onVisibleSize={syncVisibleSize}
 			theme={theme}
 		/>
-		{!terminalHandleId && <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">Starting terminal…</p>}
+		{!terminalHandleId && <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">{t("remote.startingTerminal")}</p>}
 		{terminalHandleId && state === "connecting" && !replaySettled && <div className="bg-terminal-opaque absolute inset-0" aria-hidden="true" />}
-		{state === "reattaching" && <p className="absolute inset-x-2 top-2 rounded bg-surface px-2 py-1 text-xs text-muted-foreground">Reconnecting to remote terminal…</p>}
-		{(state === "error" || initError) && <p role="alert" className="absolute inset-x-2 top-2 rounded bg-surface px-2 py-1 text-xs text-destructive">{error ?? "Could not open the remote terminal."}</p>}
+		{state === "reattaching" && <p className="absolute inset-x-2 top-2 rounded bg-surface px-2 py-1 text-xs text-muted-foreground">{t("remote.reconnectingTerminal")}</p>}
+		{(state === "error" || initError) && <p role="alert" className="absolute inset-x-2 top-2 rounded bg-surface px-2 py-1 text-xs text-destructive">{error ?? t("remote.openTerminalFailed")}</p>}
 	</div>;
 }

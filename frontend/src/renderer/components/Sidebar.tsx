@@ -435,6 +435,7 @@ type SidebarProps = {
 	onStartRemoteHost?: (hostId: string) => void;
 	onRetryRemoteHosts?: () => void;
 	remoteWorkspaces?: WorkspaceSummary[];
+	remoteFailedHostIds?: string[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
@@ -532,6 +533,7 @@ export function Sidebar({
 	onStartRemoteHost = () => undefined,
 	onRetryRemoteHosts = () => undefined,
 	remoteWorkspaces = [],
+	remoteFailedHostIds = [],
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -1043,7 +1045,7 @@ export function Sidebar({
 					</SidebarGroupContent>
 				</SidebarGroup>
 				<div className="group-data-[collapsible=icon]:hidden">
-					<RemoteHostsSection hosts={remoteHosts} workspaces={remoteWorkspaces} onStart={onStartRemoteHost} onRetry={onRetryRemoteHosts} onOpenSession={(hostId, projectId, sessionId) => {
+						<RemoteHostsSection hosts={remoteHosts} workspaces={remoteWorkspaces} failedHostIds={remoteFailedHostIds} onStart={onStartRemoteHost} onRetry={onRetryRemoteHosts} onOpenSession={(hostId, projectId, sessionId) => {
 						void remoteNavigate(sessionNavigateTarget(projectId, sessionId, hostId));
 					}} />
 				</div>

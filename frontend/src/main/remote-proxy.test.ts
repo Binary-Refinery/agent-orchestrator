@@ -339,6 +339,22 @@ describe("startRemoteProxy", () => {
 });
 
 describe("startRemoteProxy streams", () => {
+	it("closes a stream when the remote daemon drops it after headers", async () => {
+		upstream = createServer((_req, res) => {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write("data: first\n\n");
+			setTimeout(() => res.destroy(), 20);
+		});
+		await new Promise<void>((resolve) => upstream?.listen(0, "127.0.0.1", resolve));
+		const port = (upstream.address() as AddressInfo).port;
+		proxy = await startRemoteProxy({ label: "workbox", url: `http://127.0.0.1:${port}`, password: "pw" });
+
+		const response = await fetch(`${proxy.base}/api/v1/events`);
+		expect(response.status).toBe(200);
+		await expect(response.text()).rejects.toThrow();
+		expect(warned.some((line) => line.includes("stream ended"))).toBe(true);
+	});
+
 	it("refuses a WebSocket when the host identity changed", async () => {
 		let sawUpgrade = false;
 		upstream = createServer((request, response) => {
