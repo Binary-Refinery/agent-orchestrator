@@ -75,13 +75,18 @@ type openCodeAgentSettings struct {
 	Mode       string `json:"mode,omitempty"`
 	Prompt     string `json:"prompt,omitempty"`
 	Permission any    `json:"permission,omitempty"`
+	// Model pins the agent's model. The agent config is opencode's authoritative
+	// layer, so setting it here makes the TUI adopt the selected model instead of
+	// its persisted/default one (which the launch --model flag alone does not
+	// override in the interactive TUI). Empty leaves the harness default.
+	Model string `json:"model,omitempty"`
 }
 
 // writeOpenCodeConfig writes the OPENCODE_CONFIG document beside the system-prompt
 // file: an AO agent that carries the prompt (via opencode's {file:./...} include)
 // plus the permission overlay for the mode. Returns the config path to export as
 // OPENCODE_CONFIG, or "" when there is no system prompt to inject.
-func writeOpenCodeConfig(promptFile string, policy agentruntime.PermissionPolicy, sessionID string) (string, error) {
+func writeOpenCodeConfig(promptFile string, policy agentruntime.PermissionPolicy, sessionID, model string) (string, error) {
 	if strings.TrimSpace(promptFile) == "" {
 		return "", nil
 	}
@@ -103,6 +108,7 @@ func writeOpenCodeConfig(promptFile string, policy agentruntime.PermissionPolicy
 				Mode:       "primary",
 				Prompt:     "{file:./" + filepath.Base(promptFile) + "}",
 				Permission: agentPermission,
+				Model:      strings.TrimSpace(model),
 			},
 		},
 	}

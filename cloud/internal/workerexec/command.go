@@ -215,7 +215,7 @@ func (b HarnessBuilder) BuildInteractive(
 		// opencode has no system-prompt flag; the argv (built above) selects the AO
 		// agent name, and the matching OPENCODE_CONFIG document carries the prompt.
 		// Write it beside the prompt file and export the env var.
-		configPath, err := writeOpenCodeConfig(systemPromptFile, permission, launch.SessionID)
+		configPath, err := writeOpenCodeConfig(systemPromptFile, permission, launch.SessionID, launch.Model)
 		if err != nil {
 			if command.Cleanup != nil {
 				command.Cleanup()

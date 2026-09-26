@@ -52,10 +52,10 @@ func TestWriteOpenCodeConfig(t *testing.T) {
 	if err := os.WriteFile(promptFile, []byte("be helpful"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if path, err := writeOpenCodeConfig("", agentruntime.PermissionDefault, "s1"); err != nil || path != "" {
+	if path, err := writeOpenCodeConfig("", agentruntime.PermissionDefault, "s1", ""); err != nil || path != "" {
 		t.Fatalf("no prompt file: got %q, %v; want \"\", nil", path, err)
 	}
-	path, err := writeOpenCodeConfig(promptFile, agentruntime.PermissionAcceptEdits, "s1")
+	path, err := writeOpenCodeConfig(promptFile, agentruntime.PermissionAcceptEdits, "s1", "opencode/space-bunny-free")
 	if err != nil {
 		t.Fatalf("writeOpenCodeConfig: %v", err)
 	}
@@ -70,6 +70,22 @@ func TestWriteOpenCodeConfig(t *testing.T) {
 	agent, ok := doc.Agent[openCodeAgentName("s1")]
 	if !ok || agent.Mode != "primary" || agent.Prompt != "{file:./system.md}" {
 		t.Errorf("agent config wrong: ok=%v agent=%+v", ok, agent)
+	}
+	// The selected model is pinned on the agent (opencode's authoritative layer)
+	// so the TUI adopts it rather than its persisted default.
+	if agent.Model != "opencode/space-bunny-free" {
+		t.Errorf("agent model = %q, want opencode/space-bunny-free", agent.Model)
+	}
+	// Empty model leaves the agent model unset (harness default).
+	pathNoModel, err := writeOpenCodeConfig(promptFile, agentruntime.PermissionDefault, "s2", "")
+	if err != nil {
+		t.Fatalf("writeOpenCodeConfig (no model): %v", err)
+	}
+	var doc2 openCodeInlineConfig
+	data2, _ := os.ReadFile(pathNoModel)
+	_ = json.Unmarshal(data2, &doc2)
+	if m := doc2.Agent[openCodeAgentName("s2")].Model; m != "" {
+		t.Errorf("empty model should leave agent model unset; got %q", m)
 	}
 }
 
