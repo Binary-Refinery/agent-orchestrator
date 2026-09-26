@@ -66,6 +66,30 @@ describe("AgentModelCombobox", () => {
 		expect(picker).toHaveTextContent("Low");
 	});
 
+	it("hands a custom trigger only a resolved effort", () => {
+		const models = [
+			{ id: "capable", label: "Capable", efforts: ["low", "high"] },
+			{ id: "plain", label: "Plain", efforts: ["low", "high"], defaultEffort: "low" },
+		];
+		const picker = (value: string, tuning?: { effort: string; onEffortChange: () => void }) => (
+			<AgentModelCombobox aria-label="Worker model" value={value} models={models}
+				onChange={vi.fn()} onCustom={vi.fn()} compact tuning={tuning}
+				renderTrigger={(label, effort) => <span>{effort ? `${label} / ${effort}` : label}</span>} />
+		);
+		const { rerender } = render(picker("capable", { effort: "", onEffortChange: vi.fn() }));
+		const trigger = screen.getByRole("button", { name: "Worker model" });
+		expect(trigger).toHaveTextContent(/^Capable$/);
+
+		rerender(picker("plain", { effort: "", onEffortChange: vi.fn() }));
+		expect(trigger).toHaveTextContent(/^Plain \/ Low$/);
+
+		rerender(picker("capable", { effort: "high", onEffortChange: vi.fn() }));
+		expect(trigger).toHaveTextContent(/^Capable \/ High$/);
+
+		rerender(picker("plain"));
+		expect(trigger).toHaveTextContent(/^Plain$/);
+	});
+
 	it("closes only the effort submenu on Escape", async () => {
 		renderCombobox(
 			[{ id: "capable", label: "Capable", efforts: ["low", "high"] }],
@@ -209,7 +233,7 @@ describe("AgentModelCombobox", () => {
 		// The first 50 catalog models. The custom-model action appears
 		// only after the user types a value that does not match the catalog.
 		expect(screen.getAllByRole("menuitem")).toHaveLength(50);
-		expect(screen.getByText("Showing 50 of 1,397 matching models — type to narrow")).toBeInTheDocument();
+		expect(screen.getByText("Showing 50 of 1,397 matching models — type to narrow")).not.toHaveClass("sr-only");
 		expect(screen.queryByRole("menuitem", { name: /Model 1000/ })).not.toBeInTheDocument();
 	});
 
@@ -297,7 +321,6 @@ describe("AgentModelCombobox", () => {
 		const onRefresh = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
 		renderCombobox(Array.from({ length: 10 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` })), {
 			onRefresh,
-			lastSuccessAt: "2026-09-07T08:00:00Z",
 		});
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
 		const search = screen.getByRole("searchbox", { name: "Search worker model" });
@@ -305,7 +328,6 @@ describe("AgentModelCombobox", () => {
 		await userEvent.type(search, "missing-model");
 		const refresh = screen.getByRole("button", { name: "Refresh models" });
 		expect(search.parentElement?.parentElement).toContainElement(refresh);
-		expect(screen.getByText(/Last updated/)).toBeInTheDocument();
 		await userEvent.click(refresh);
 		const busy = screen.getByRole("button", { name: /Refreshing/ });
 		expect(busy).toBeDisabled();
@@ -420,7 +442,8 @@ describe("AgentModelCombobox", () => {
 		await userEvent.type(search, "provider-1/model-99");
 
 		expect(screen.getByText("provider-1", { selector: "div" })).toBeInTheDocument();
-		expect(screen.getByText("Showing 1 of 1 matching models")).toBeInTheDocument();
+		// Nothing is capped, so the count only announces the result.
+		expect(screen.getByText("Showing 1 of 1 matching models")).toHaveClass("sr-only");
 		await userEvent.click(screen.getByRole("menuitem", { name: /Model 99/ }));
 		expect(onChange).toHaveBeenCalledWith("provider-1/model-99");
 	});

@@ -64,7 +64,6 @@ export function AgentModelCombobox({
 	agentLabel,
 	onRefresh,
 	refreshing = false,
-	lastSuccessAt,
 	refreshError,
 	retryAt,
 	onChange,
@@ -88,7 +87,6 @@ export function AgentModelCombobox({
 	agentLabel?: string;
 	onRefresh?: () => void | Promise<void>;
 	refreshing?: boolean;
-	lastSuccessAt?: string | null;
 	refreshError?: string;
 	retryAt?: string | null;
 	onChange: (value: string) => void;
@@ -99,7 +97,9 @@ export function AgentModelCombobox({
 	triggerLabel?: string;
 	triggerClassName?: string;
 	menuAlign?: "start" | "center" | "end";
-	renderTrigger?: (label: string) => ReactNode;
+	/** A custom trigger owns the effort suffix: `effortLabel` is the resolved
+	 *  reasoning effort under `tuning`, or undefined when no level resolves. */
+	renderTrigger?: (label: string, effortLabel?: string) => ReactNode;
 	/** Persists explicit model choices for this agent and pins them below the current model. */
 	recentScope?: string;
 	/** Flat model names with no groups or badges.
@@ -257,11 +257,13 @@ export function AgentModelCombobox({
 					disabled={disabled}
 				>
 					{renderTrigger ? (
-						renderTrigger(currentLabel)
+						renderTrigger(currentLabel, showEffort && effectiveEffort ? effortLabel(effectiveEffort) : undefined)
 					) : (
-						<span className="min-w-0 truncate">{currentLabel}</span>
+						<>
+							<span className="min-w-0 truncate">{currentLabel}</span>
+							{showEffort && <span className="shrink-0 text-settings-muted"> · {currentEffortLabel}</span>}
+						</>
 					)}
-					{showEffort && <span className="shrink-0 text-settings-muted"> · {currentEffortLabel}</span>}
 					<ChevronDown
 						className="size-icon-sm shrink-0 opacity-70 transition-transform duration-300 ease-out group-data-[state=open]/agent-model-trigger:rotate-180"
 						aria-hidden="true"
@@ -315,32 +317,23 @@ export function AgentModelCombobox({
 						)}
 					</div>
 				)}
-				{(lastSuccessAt || refreshError || refreshFailed) && (
+				{(refreshError || refreshFailed) && (
 					<div className="flex items-center gap-2 px-2 pb-1 text-xs text-settings-muted" aria-live="polite">
-						{lastSuccessAt && (
-							<span>
-								{t("settings.models.lastSuccess", {
-									time: new Date(lastSuccessAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-								})}
-							</span>
-						)}
-						{(refreshError || refreshFailed) && (
-							<button
-								type="button"
-								className="truncate text-warning underline underline-offset-2"
-								title={refreshError}
-								onClick={(event) => {
-									event.stopPropagation();
-									runRefresh();
-								}}
-								disabled={refreshBusy}
-							>
-								{t("settings.models.retry")}
-								{retryAt
-									? ` · ${new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-									: ""}
-							</button>
-						)}
+						<button
+							type="button"
+							className="truncate text-warning underline underline-offset-2"
+							title={refreshError}
+							onClick={(event) => {
+								event.stopPropagation();
+								runRefresh();
+							}}
+							disabled={refreshBusy}
+						>
+							{t("settings.models.retry")}
+							{retryAt
+								? ` · ${new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+								: ""}
+						</button>
 					</div>
 				)}
 
@@ -430,7 +423,14 @@ export function AgentModelCombobox({
 							</>
 						)}
 						{showSearch && (
-							<p className="px-2 py-1.5 text-xs text-settings-muted" aria-live="polite">
+							// Shown only when the list is capped; otherwise it just announces search results.
+							<p
+								className={cn(
+									"px-2 py-1.5 text-xs text-settings-muted",
+									visibleModels.length === rankedModels.length && "sr-only",
+								)}
+								aria-live="polite"
+							>
 								{t("settings.models.matchingCount", {
 									visible: visibleModels.length.toLocaleString(),
 									total: rankedModels.length.toLocaleString(),
