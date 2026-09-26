@@ -1,4 +1,4 @@
-import { Eraser, MoreHorizontal, Pencil, Plus, Trash2, UserRound } from "lucide-react";
+import { Eraser, Import, MoreHorizontal, Pencil, Plus, Trash2, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AoBridge } from "../../../preload";
@@ -122,13 +122,14 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 			>
 				<SettingsRow label={t("settings.browserImport.rowLabel")}>
 					<Button disabled={!bridge} onClick={() => setImportOpen(true)} type="button" variant="secondary">
+						<Import aria-hidden="true" className="size-icon-base" />
 						{t("settings.browserImport.action")}
 					</Button>
 				</SettingsRow>
 				<SettingsRow label={t("settings.browserProfiles.create")}>
 					{/* One field with its submit embedded at the trailing edge. */}
 					<form
-						className="flex h-control-form w-56 min-w-0 items-center gap-1 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) pl-3 pr-1"
+						className="flex h-control-form w-52 min-w-0 items-center gap-1 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) pl-3 pr-1"
 						onSubmit={(event) => {
 							event.preventDefault();
 							void create();
@@ -260,7 +261,7 @@ function BrowserProfileRow({
 				{renaming ? (
 					<input
 						aria-label={t("settings.browserProfiles.renameInput", { profile: profile.name })}
-						className="-ml-2 h-control-md w-full max-w-72 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2 text-sm text-settings-label outline-none"
+						className="-ml-2 h-control-md w-full max-w-52 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2 text-sm text-settings-label outline-none"
 						data-settings-inline-edit=""
 						maxLength={64}
 						onBlur={() => {
