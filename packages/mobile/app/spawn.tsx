@@ -20,6 +20,7 @@ import { ApiError, getAgentModels, getAgents, getProject, getSettings, type Agen
 import { classifyConnectionFailure, describeConnectionFailure } from "../lib/connectionError";
 import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
+import { openingHostId, spawnHostMatches } from "../lib/hostRoute";
 import { resolveSpawnProject } from "../lib/projectFilter";
 import { modelOverride, resolveSpawnAgent, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
 import { appendSpawnAttachments, readSpawnAttachments, type SpawnAttachment } from "../lib/spawn-attachments";
@@ -39,8 +40,13 @@ export default function SpawnModal() {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
-	const { projectId: routeProjectId } = useLocalSearchParams<{ projectId?: string }>();
+	const { projectId: routeProjectId, hostId: routeHostId } = useLocalSearchParams<{ projectId?: string; hostId?: string }>();
 	const { projects, projectsKnown, activeProjectId, config, spawn } = useApp();
+	const [openedHostId, setOpenedHostId] = useState(() => openingHostId(routeHostId, config?.hostId));
+	const hostMatches = spawnHostMatches({ openedHostId, currentHostId: config?.hostId, routeProjectId, routeHostId });
+	useEffect(() => {
+		if (!openedHostId && config?.hostId) setOpenedHostId(config.hostId);
+	}, [openedHostId, config?.hostId]);
 
 	const [projectId, setProjectId] = useState<string | null>(null);
 	const [harness, setHarness] = useState("");
@@ -82,6 +88,7 @@ export default function SpawnModal() {
 	// `targetProject()`; kept here because the screen needs it as UI state to
 	// drive the picker's value and the button's disabled state.
 	useEffect(() => {
+		if (!hostMatches) return;
 		const nextProjectId = resolveSpawnProject(
 			projectId,
 			routeProjectId,
@@ -90,10 +97,10 @@ export default function SpawnModal() {
 			projectsKnown,
 		);
 		if (nextProjectId !== projectId) changeProject(nextProjectId);
-	}, [activeProjectId, projects, projectsKnown, projectId, routeProjectId]);
+	}, [activeProjectId, hostMatches, projects, projectsKnown, projectId, routeProjectId]);
 
 	useEffect(() => {
-		if (!config) return;
+		if (!config || !hostMatches) return;
 		let cancelled = false;
 		setLoading(true);
 		Promise.all([getAgents(config), getSettings(config)])
@@ -114,7 +121,7 @@ export default function SpawnModal() {
 		return () => {
 			cancelled = true;
 		};
-	}, [config]);
+	}, [config, hostMatches]);
 
 	// Refreshing the catalog moved into the agent sheet route, which owns its own
 	// copy of it — see app/sheets/agent.tsx.
@@ -137,11 +144,12 @@ export default function SpawnModal() {
 		|| (Platform.OS === "android" && listening)
 		|| voice.error
 		|| error
-		|| offerTUI,
+		|| offerTUI
+		|| (Boolean(openedHostId) && !hostMatches),
 	);
 
 	useEffect(() => {
-		if (!config || !projectId) { setProjectDetail(undefined); setProjectDetailLoadedFor(null); return; }
+		if (!config || !hostMatches || !projectId) { setProjectDetail(undefined); setProjectDetailLoadedFor(null); return; }
 		let cancelled = false;
 		setProjectDetailLoadedFor(null);
 		getProject(config, projectId)
@@ -149,7 +157,7 @@ export default function SpawnModal() {
 			.catch((cause) => { if (!cancelled) setModelError(cause instanceof Error ? cause.message : String(cause)); })
 			.finally(() => { if (!cancelled) setProjectDetailLoadedFor(projectId); });
 		return () => { cancelled = true; };
-	}, [config, projectId]);
+	}, [config, hostMatches, projectId]);
 
 	useEffect(() => {
 		if (agentTouched || loading || !catalog) return;
@@ -163,7 +171,7 @@ export default function SpawnModal() {
 	}, [agentTouched, agents, catalog, loading, projectDetail, projectDetailLoadedFor, projectId]);
 
 	useEffect(() => {
-		if (!config || !projectId || !harness) { setModelCatalog(undefined); return; }
+		if (!config || !hostMatches || !projectId || !harness) { setModelCatalog(undefined); return; }
 		let cancelled = false;
 		setModelLoading(true);
 		getAgentModels(config, harness, projectId)
@@ -171,7 +179,7 @@ export default function SpawnModal() {
 			.catch((cause) => { if (!cancelled) setModelError(cause instanceof Error ? cause.message : String(cause)); })
 			.finally(() => { if (!cancelled) setModelLoading(false); });
 		return () => { cancelled = true; };
-	}, [config, harness, projectId]);
+	}, [config, hostMatches, harness, projectId]);
 
 	const clearModelOverride = () => { setModel(""); setModelTouched(false); };
 	const resetModelSource = () => { clearModelOverride(); setModelCatalog(undefined); setModelError(undefined); };
@@ -252,6 +260,10 @@ export default function SpawnModal() {
 	};
 
 	const onSpawn = async () => {
+		if (!openedHostId || !spawnHostMatches({ openedHostId, currentHostId: config?.hostId, routeProjectId, routeHostId })) {
+			setError("Machine changed. Close and reopen this task composer.");
+			return;
+		}
 		if (pickingAttachments.current) {
 			setAttachmentError("Wait for attachments to finish loading.");
 			return;
@@ -264,6 +276,7 @@ export default function SpawnModal() {
 		setOfferTUI(false);
 		try {
 			const session = await spawn({
+				hostId: openedHostId,
 				projectId: projectId ?? undefined,
 				prompt: prompt.trim() || undefined,
 				harness: harness || undefined,
@@ -283,7 +296,7 @@ export default function SpawnModal() {
 			InteractionManager.runAfterInteractions(() => {
 				router.push({
 					pathname: "/session/[id]",
-					params: { id: session.id, projectId: session.projectId },
+					params: { id: session.id, projectId: session.projectId, hostId: openedHostId },
 				});
 			});
 		} catch (e) {
@@ -329,6 +342,7 @@ export default function SpawnModal() {
 				) : null}
 
 		{hasComposerMessage ? <View style={styles.messages}>
+					{openedHostId && !hostMatches ? <Text accessibilityRole="alert" style={styles.warn}>Machine changed or disconnected. Close and reopen this task composer.</Text> : null}
 					{mode === "chat" && !loading && agents.length === 0 ? <Text style={styles.warn}>No installed agent on this AO host currently supports Chat. Choose Terminal UI or install/authenticate a Chat-capable agent.</Text> : null}
 					{catalogError ? <Text style={styles.warn}>{catalogError}</Text> : null}
 					{modelError ? <Text style={styles.warn}>{modelError}</Text> : null}
@@ -371,7 +385,7 @@ export default function SpawnModal() {
 					voice={{ state: voice.state, mode: voice.mode, onPressIn: voice.pressIn, onPressOut: voice.pressOut }}
 					onSpawn={() => { void onSpawn(); }}
 					busy={busy}
-					disabled={!projectId || !harness || busy || modelLoading || loading || listening || voice.state === "transcribing"}
+					disabled={!hostMatches || !projectId || !harness || busy || modelLoading || loading || listening || voice.state === "transcribing"}
 				/>
 				</KeyboardStickyView>
 		</View>

@@ -20,6 +20,10 @@ export type NotificationSection<T> = {
 	data: T[];
 };
 
+export function notificationRowsForHost<T>(items: readonly T[], itemsHostId: string | undefined, activeHostId: string | undefined): readonly T[] {
+	return activeHostId && itemsHostId === activeHostId ? items : [];
+}
+
 /**
  * Keeps actionable unread history ahead of settled items without disturbing
  * the daemon's newest-first order inside either group.
@@ -59,8 +63,13 @@ export function notificationVisual(t: Theme, type: string): NotificationVisual {
  * opening it from the tray agree — the rule lives here rather than being written
  * twice.
  */
-export function notificationTarget(n: { type: string; sessionId?: string }): string {
-	return n.type === "needs_input" && n.sessionId ? `/session/${n.sessionId}` : "/prs";
+export function notificationTarget(n: { type: string; sessionId?: string; hostId?: string }, activeHostId: string | undefined): string {
+	// An older push has no machine identity. It cannot safely open (or mark read)
+	// a same-ID session on whichever machine is currently selected.
+	if (!n.hostId || n.hostId !== activeHostId) return "/";
+	return n.type === "needs_input" && n.sessionId
+		? `/session/${encodeURIComponent(n.sessionId)}?hostId=${encodeURIComponent(n.hostId)}`
+		: "/prs";
 }
 
 /** Compact "3m" / "4h" / "2d" stamp. Returns "" for an unparseable timestamp. */

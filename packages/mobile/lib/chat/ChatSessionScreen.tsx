@@ -275,7 +275,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		try {
 			const shell = await openSessionShell(config, session.id, session.projectId);
 			setMenuOpen(false);
-			router.push({ pathname: "/shell/[handleId]", params: { handleId: shell.handleId, projectId: session.projectId, sessionId: session.id, title: shell.title } });
+			router.push({ pathname: "/shell/[handleId]", params: { handleId: shell.handleId, projectId: session.projectId, sessionId: session.id, title: shell.title, hostId: config.hostId } });
 		} catch (cause) {
 			Alert.alert("Couldn't open shell", cause instanceof Error ? cause.message : String(cause));
 		} finally { setOpeningShell(false); }
@@ -367,7 +367,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			pinned: "projectName" in session ? false : Boolean(session.isPinned),
 			onMap: () => router.push(chatSheetRoute({ kind: "conversation-map", markers: conversationMarkers(actionsEntryRef.current?.snapshot ?? current), onSelect: setJumpToSequence })),
 			onOpenShell: () => void openShell(),
-			onPreview: () => router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined } }),
+			onPreview: () => router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined, hostId: config?.hostId } }),
 			onPullRequests: () => { setActiveProject(session.projectId); router.push("/(tabs)/prs"); },
 			onSettings: () => void openTurnSettings(),
 			onSwitchInterface: requestInterfaceSwitch,

@@ -20,6 +20,7 @@ configurePushHandler();
 
 type PushData = {
 	type?: string;
+	hostId?: string;
 	sessionId?: string;
 	projectId?: string;
 	prUrl?: string;
@@ -117,10 +118,13 @@ export function PushManager(): null {
 	}, [navState?.key, config]);
 
 	function route(data: PushData, coldStart = false) {
-		// Reuse the one routing rule so the reported target can't disagree with
-		// where the tap actually lands: notificationTarget returns /session/:id
-		// only for a needs_input with a sessionId, and /prs for everything else.
-		const destination = notificationTarget({ type: data.type ?? "", sessionId: data.sessionId });
+		const destination = notificationTarget({ type: data.type ?? "", sessionId: data.sessionId, hostId: data.hostId }, config?.hostId);
+		if (destination === "/") {
+			// Legacy or other-machine push: no safe session or notification ID
+			// mapping on this machine. Let the user select the source machine.
+			router.navigate("/");
+			return;
+		}
 		const target = destination.startsWith("/session") ? "session" : "prs";
 		mobileTelemetry()?.capture(MOBILE_EVENTS.notificationOpened, { target, cold_start: coldStart });
 		// Best-effort mark-read so unread counts stay consistent with the dashboard.

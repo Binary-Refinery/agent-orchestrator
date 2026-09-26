@@ -150,8 +150,10 @@ vi.mock("../lib/bridge", () => ({
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
+	useRemoteWorkspaces: () => ({ data: [] }),
 	useWorkspaceTraySessions: () => ({ data: [] }),
 	workspaceQueryKey: ["workspaces"],
+	remoteWorkspaceQueryKey: (hostId: string) => ["remote-workspaces", hostId],
 	workspaceQueryOptions: {},
 }));
 
@@ -373,6 +375,7 @@ beforeEach(() => {
 		globalToast: null,
 		isSidebarOpen: true,
 		newTaskRequest: null,
+		remoteHosts: false,
 		newShellTerminalNonce: 0,
 		activeShellTerminalHandleId: null,
 		settingsModal: null,

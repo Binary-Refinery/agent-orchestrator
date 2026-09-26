@@ -22,6 +22,7 @@ import { OrchestratorReplacementDialog } from "../components/OrchestratorReplace
 import { RestartToUpdateDialog } from "../components/RestartToUpdateDialog";
 import { TelemetryConsentRenewalDialog } from "../components/TelemetryConsentRenewalDialog";
 import { Sidebar } from "../components/Sidebar";
+import { useRemoteHosts } from "../hooks/useRemoteHosts";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -30,7 +31,7 @@ import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { cloudProjectsQueryKey, cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import { cloudProjectsQueryKey, cloudSessionsQueryKey, useRemoteWorkspaces, useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudOrg } from "../hooks/useCloudOrg";
 import { apiClient, apiErrorCode, apiErrorDetails, apiErrorMessage, apiErrorRequestId, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -57,6 +58,9 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { CLOUD_PROJECT_KIND, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
+import * as Dialog from "@radix-ui/react-dialog";
+import { RemoteSpawnSession } from "../components/RemoteSpawnSession";
+import { remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -179,6 +183,9 @@ function ShellLayout() {
 	const { org: cloudOrg } = useCloudOrg();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
+	const { hosts: remoteHosts, refresh: refreshRemoteHosts } = useRemoteHosts();
+	const { data: remoteWorkspaces } = useRemoteWorkspaces();
+	const [remoteStartHostId, setRemoteStartHostId] = useState<string | null>(null);
 	// Global shortcut listeners need the latest workspace list, but recreating
 	// those subscriptions for every streamed activity update is avoidable.
 	const workspacesRef = useRef(workspaces);
@@ -230,8 +237,8 @@ function ShellLayout() {
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
-	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const linkSession = workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeParams.sessionId);
+	const routeParams = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
+	const linkSession = routeParams.hostId ? undefined : workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeParams.sessionId);
 	const openBrowserLink = useSessionBrowserLink(linkSession);
 	const canOpenBrowserLink = linkSession?.kind === "worker" && sessionIsActive(linkSession);
 	useEffect(() => {
@@ -297,12 +304,12 @@ function ShellLayout() {
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
-	const scopedProjectId = routeParams.projectId
+	const scopedProjectId = routeParams.hostId ? undefined : routeParams.projectId
 		? routeParams.projectId
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
-	const scopedSession = routeParams.sessionId
+	const scopedSession = !routeParams.hostId && routeParams.sessionId
 		? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === routeParams.sessionId)
 		: undefined;
 	// Warms the New Task composer's model-catalog cache while the user is just
@@ -335,8 +342,8 @@ function ShellLayout() {
 	// whether projects have already been registered.
 	const isHomeRoute = Boolean(matchRoute({ to: "/" }));
 	useEffect(() => {
-		if (routeParams.projectId) recordProjectOpened(routeParams.projectId);
-	}, [routeParams.projectId]);
+		if (!routeParams.hostId && routeParams.projectId) recordProjectOpened(routeParams.projectId);
+	}, [routeParams.hostId, routeParams.projectId]);
 	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals" }));
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
@@ -363,7 +370,7 @@ function ShellLayout() {
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
-			if (!scopedProjectId) return;
+			if (routeParams.hostId || !scopedProjectId) return;
 			const sessions = (workspacesRef.current.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
 				sessionIsActive,
 			);
@@ -386,7 +393,7 @@ function ShellLayout() {
 				params: { projectId: scopedProjectId, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.sessionId, scopedProjectId],
+		[navigate, routeParams.hostId, routeParams.sessionId, scopedProjectId],
 	);
 
 	const updateWorkspaces = useCallback(
@@ -862,13 +869,17 @@ function ShellLayout() {
 	useEffect(
 		() =>
 			aoBridge.app.onNewSessionShortcut(() => {
+			if (routeParams.hostId) {
+				setRemoteStartHostId(routeParams.hostId);
+				return;
+			}
 				if (scopedProjectId) {
 					requestNewTask(scopedProjectId);
 				} else {
 					requestNewTask(STANDALONE_WORKSPACE_ID);
 				}
 			}),
-		[scopedProjectId, requestNewTask],
+		[routeParams.hostId, scopedProjectId, requestNewTask],
 	);
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
@@ -891,11 +902,11 @@ function ShellLayout() {
 				// users into the standalone /terminals route (#4772). Sessions and the
 				// dedicated terminals view keep the shortcut; explicit UI can still
 				// open shells from the board.
-				if (routeParams.sessionId || isTerminalsRoute) {
+				if (!routeParams.hostId && (routeParams.sessionId || isTerminalsRoute)) {
 					requestNewShellTerminal();
 				}
 			}),
-		[isTerminalsRoute, requestNewShellTerminal, routeParams.sessionId],
+		[isTerminalsRoute, requestNewShellTerminal, routeParams.hostId, routeParams.sessionId],
 	);
 
 	// The shell layout is the single consumer of that signal, because it is the
@@ -910,6 +921,7 @@ function ShellLayout() {
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
+		if (routeParams.hostId) return;
 		const shell = openShellTerminal.open(
 			{ projectId: scopedProjectId, sessionId: routeParams.sessionId, cloud: scopedSession?.cloud },
 			{
@@ -929,6 +941,7 @@ function ShellLayout() {
 		scopedProjectId,
 		scopedSession?.cloud,
 		routeParams.sessionId,
+		routeParams.hostId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -1009,6 +1022,20 @@ function ShellLayout() {
 					</div>
 				) : null}
 				<GlobalNewTaskDialog />
+				<Dialog.Root open={remoteStartHostId !== null} onOpenChange={(open) => { if (!open) setRemoteStartHostId(null); }}>
+					<Dialog.Portal>
+						<Dialog.Overlay className="dialog-overlay" />
+						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl">
+							<Dialog.Title className="mb-2 text-lg font-semibold">Start on remote host</Dialog.Title>
+							<Dialog.Description className="mb-4 text-sm text-muted-foreground">The worker runs on the selected machine.</Dialog.Description>
+							{remoteStartHostId && <RemoteSpawnSession key={remoteStartHostId} hostId={remoteStartHostId} onCreated={(sessionId) => {
+								void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteStartHostId) });
+								void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: remoteStartHostId, sessionId } });
+								setRemoteStartHostId(null);
+							}} />}
+						</Dialog.Content>
+					</Dialog.Portal>
+				</Dialog.Root>
 				<GlobalToast />
 				<SettingsDialog />
 				<RestartToUpdateDialog />
@@ -1087,6 +1114,10 @@ function ShellLayout() {
 						resizeAuxiliaryTargetRef={sidebarDragStripRef}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
+						remoteHosts={remoteHosts}
+						onStartRemoteHost={setRemoteStartHostId}
+						onRetryRemoteHosts={() => { void refreshRemoteHosts(); }}
+						remoteWorkspaces={remoteWorkspaces}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">

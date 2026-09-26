@@ -4,6 +4,7 @@ import { ActivityIndicator, AppState, StyleSheet, View } from "react-native";
 import { shouldPoll } from "../../lib/appStatePoll";
 import { ChatSessionScreen } from "../../lib/chat/ChatSessionScreen";
 import { isConfigured, machineIdentity } from "../../lib/config";
+import { hostRouteMatches } from "../../lib/hostRoute";
 import { lookUpSession } from "../../lib/session/sessionLookup";
 import TerminalSessionScreen from "../../lib/session/TerminalSessionScreen";
 import {
@@ -26,11 +27,12 @@ import { Button, EmptyState } from "../../lib/ui";
  * `sessionRouteView`, and when the route asks is `sessionLookupDue`.
  */
 export default function MobileSessionRoute() {
-	const { id: rawId } = useLocalSearchParams<{ id: string }>();
+	const { id: rawId, hostId: routeHostId } = useLocalSearchParams<{ id: string; hostId?: string }>();
 	const id = String(rawId ?? "");
 	const router = useRouter();
 	const { sessions, orchestrators, config, connection, loading } = useApp();
-	const listed = sessions.find((item) => item.id === id) ?? orchestrators.find((item) => item.id === id);
+	const hostMatches = hostRouteMatches(routeHostId, config?.hostId);
+	const listed = hostMatches ? sessions.find((item) => item.id === id) ?? orchestrators.find((item) => item.id === id) : undefined;
 	const isListed = Boolean(listed);
 	const configured = config === null ? null : isConfigured(config);
 	const machine = config ? machineIdentity(config) : "";
@@ -57,6 +59,11 @@ export default function MobileSessionRoute() {
 	// populated it, and the board never lists an orchestrator it dropped. Ask the
 	// daemon directly instead of reading the miss as "not found".
 	useEffect(() => {
+		if (!hostMatches) {
+			machineRef.current = machine;
+			setStored(null);
+			return;
+		}
 		const machineChanged = machineRef.current !== machine;
 		machineRef.current = machine;
 		if (isListed) {
@@ -94,7 +101,7 @@ export default function MobileSessionRoute() {
 		// `attempt` is read only through this list: bumping it is how Retry asks
 		// again. `connection` turning "open" is how a lookup that failed, or was
 		// rejected, gets asked again once the board has reconnected.
-	}, [attempt, connection, id, isListed, key, machine]);
+	}, [attempt, connection, hostMatches, id, isListed, key, machine]);
 
 	const retry = useCallback(() => {
 		// Clearing first swaps the button for the spinner, so a second tap cannot
@@ -103,7 +110,7 @@ export default function MobileSessionRoute() {
 		setAttempt((n) => n + 1);
 	}, []);
 
-	const view = sessionRouteView({ listed, configured, connection, loading, lookup });
+	const view = sessionRouteView({ listed, configured, connection, loading, lookup, routeHostId, currentHostId: config?.hostId });
 
 	switch (view.kind) {
 		case "screen":
@@ -116,6 +123,17 @@ export default function MobileSessionRoute() {
 			return (
 				<View style={styles.center}>
 					<ActivityIndicator color={t.accent} />
+				</View>
+			);
+		case "wrongHost":
+			return (
+				<View style={styles.center}>
+					<EmptyState
+						icon="server"
+						title="Session belongs to another machine"
+						message="Open it from that machine's session list."
+						action={<Button title="Open board" icon="activity" onPress={() => router.navigate("/")} />}
+					/>
 				</View>
 			);
 		case "unpaired":

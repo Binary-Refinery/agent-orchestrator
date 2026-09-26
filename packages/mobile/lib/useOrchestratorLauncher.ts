@@ -34,8 +34,8 @@ export function useOrchestratorLauncher() {
 	}, []);
 
 	const openSession = useCallback((row: OrchestratorProjectRow, id: string) => {
-		router.push({ pathname: "/session/[id]", params: { id, projectId: row.project.id } });
-	}, [router]);
+		router.push({ pathname: "/session/[id]", params: { id, projectId: row.project.id, hostId: config?.hostId } });
+	}, [config?.hostId, router]);
 
 	const runLaunch = useCallback(async (row: OrchestratorProjectRow, mode: "chat" | "tui" = "chat") => {
 		if (launching.current.has(row.project.id)) return;

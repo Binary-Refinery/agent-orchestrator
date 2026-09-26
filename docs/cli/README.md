@@ -1,12 +1,12 @@
 # AO CLI
 
 The `ao` CLI is a thin Go/Cobra client for the local Agent Orchestrator daemon.
-It starts, discovers, inspects, and stops the daemon through the loopback HTTP
+It discovers, inspects, and stops the daemon through the loopback HTTP
 surface and the `running.json` handshake. It must not open SQLite directly or
 call runtime, workspace, tracker, or agent adapters in-process.
 
 When using the CLI directly from a shell, make sure the daemon is running first
-with `ao start` or by opening the desktop app. Product commands such as
+by opening the desktop app or running `ao daemon` under a service manager. Product commands such as
 `ao agent ls` and `ao spawn` call the loopback daemon and will fail with a
 "daemon is not running" error if no `running.json` points at a live process. From
 a source checkout, build and run the local binary explicitly, for example:
@@ -26,13 +26,23 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 | Command                       | Purpose                                                                                                                           |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                                                        |
+| `ao start`                    | Open the desktop app, downloading it first when necessary.                                                                        |
 | `ao stop`                     | Gracefully stop the daemon via loopback `POST /shutdown` after verifying daemon identity.                                         |
 | `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.                                             |
 | `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, `git`, and (on Darwin/Linux) `tmux`; on Windows conpty is built in. |
 | `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                  |
 | `ao version` / `ao --version` | Print build metadata.                                                                                                             |
-| `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                                                             |
+| `ao daemon`                   | Run the daemon in the foreground (normally supervised by the desktop app or an OS service manager).                               |
+| `ao remote-host status/enable/disable` | Inspect or toggle this machine's authenticated remote listener through the local daemon. |
+
+On a headless box, run `ao daemon` under the OS service manager, then run
+`ao remote-host enable` on that box. It prints the stable host ID, available
+addresses, and a new pairing password. `status` shows the current password
+from the host's local shell, so another client can pair without rotating it.
+Running `enable` again rotates the password and disconnects existing clients.
+The listener uses plain HTTP on
+the LAN. Use a trusted network or an encrypted tunnel, and do not publish its
+port directly to the internet.
 
 ### Product commands
 

@@ -17,6 +17,7 @@ import { WorkerRowInteraction } from "./worker-row-interaction";
 import { WORKER_ACTION_REVEAL_WIDTH } from "./worker-row-swipe-model";
 import { Spinning } from "./ui";
 import { normalizeConversationTitle } from "./chat/conversationMenuModel";
+import { useApp } from "./store";
 import { iconSize, press, space, type } from "./tokens";
 
 export const WorkerListRow = memo(
@@ -61,6 +62,7 @@ export const WorkerListRow = memo(
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
+	const { config } = useApp();
 	const closeActionRailRef = useRef<() => void>(() => {});
 	const [renameTitle, setRenameTitle] = useState("");
 	const [renameSaving, setRenameSaving] = useState(false);
@@ -125,7 +127,7 @@ export const WorkerListRow = memo(
 		haptics.tap();
 		router.push({
 			pathname: "/session/[id]",
-			params: { id: session.id, projectId: session.projectId },
+			params: { id: session.id, projectId: session.projectId, hostId: config?.hostId },
 		});
 	};
 

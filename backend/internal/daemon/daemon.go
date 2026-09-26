@@ -791,15 +791,6 @@ func Run() error {
 	// would silently report offline.
 	presenceTracker := presence.NewTracker()
 
-	// Push dispatcher: an additive notification-hub subscriber that relays each
-	// new notification to every registered device via the Expo Push Service. Runs
-	// for the daemon's lifetime and stops when ctx is cancelled. EXPO_ACCESS_TOKEN
-	// (optional) enables Expo's enforced push security when set.
-	if pushDevices != nil {
-		dispatcher := push.NewDispatcher(notificationHub, pushDevices, push.NewExpoClient(os.Getenv("EXPO_ACCESS_TOKEN")), log)
-		go dispatcher.Run(ctx)
-	}
-
 	// Managed remote-access connector. Reap first: a daemon that died without
 	// stopping its connector leaves a public tunnel to this machine running
 	// with nobody watching it.
@@ -841,6 +832,12 @@ func Run() error {
 	}
 
 	bs.HostID = hostIdentity.HostID
+	// Pushes include the authoritative host identity so a phone can reject
+	// same-numbered sessions on another machine. No identity means no push.
+	if pushDevices != nil && hostIdentity.HostID != "" {
+		dispatcher := push.NewDispatcher(notificationHub, pushDevices, push.NewExpoClient(os.Getenv("EXPO_ACCESS_TOKEN")), hostIdentity.HostID, log)
+		go dispatcher.Run(ctx)
+	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,

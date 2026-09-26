@@ -25,11 +25,8 @@ export type Host = {
 /**
  * Enough for a developer's machines without letting stale pairings pile up.
  *
- * Storage only. There is no host switcher in the UI yet: activeHost() answers
- * with an explicit selection where one exists and the most recent machine
- * otherwise, and the only things that set a selection today are pairing and
- * manual connect. So a second machine is reachable by pairing with it, not by
- * choosing it from a list — the plumbing is here, the picker is not.
+ * activeHost() answers with an explicit selection where one exists and the
+ * most recent machine otherwise. The Settings picker changes that selection.
  */
 export const MAX_HOSTS = 10;
 

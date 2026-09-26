@@ -1,6 +1,6 @@
-import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import type { TraySessionEntry } from "../../shared/tray";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import type { CloudCpProject, CloudCpSession } from "../lib/cloud-cp";
@@ -11,6 +11,7 @@ import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentSwitchVisibility } from "../lib/agent-switch-visibility";
+import { clientForHost, connectedHosts, subscribeConnectedHosts } from "../lib/host-clients";
 import { applyOptimisticSessionKills } from "./optimistic-session-kills";
 import { appI18n } from "../i18n";
 import {
@@ -132,6 +133,7 @@ function toWorkspaceSession(
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
+export const remoteWorkspaceQueryKey = (hostId: string) => ["remote-workspaces", hostId] as const;
 export function workspaceStatusesChecking(workspaces: WorkspaceSummary[] | undefined): boolean {
 	return workspaces?.some((workspace) => workspace.sessions.some((session) => session.statusReadiness === "checking")) ?? false;
 }
@@ -260,6 +262,42 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return applyOptimisticSessionKills(workspaces) ?? workspaces;
 }
 
+async function fetchRemoteWorkspaces(hostId: string): Promise<WorkspaceSummary[]> {
+	const client = clientForHost(hostId);
+	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] = await Promise.all([
+		client.GET("/api/v1/projects"),
+		client.GET("/api/v1/sessions"),
+	]);
+	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
+	const sessions = sessionsData?.sessions ?? [];
+	const projects: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => ({
+		hostId,
+		id: project.id,
+		name: project.name,
+		kind: toProjectKind(project.kind),
+		path: project.path,
+		folderMissing: project.folderMissing,
+		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+		sessions: sessions.filter((session) => session.projectId === project.id).map((session) => ({
+			...toWorkspaceSession(session, project),
+			hostId,
+		})),
+	}));
+	const standalone = sessions.filter((session) => !session.projectId).map((session) => ({
+		...toWorkspaceSession(session, { id: STANDALONE_WORKSPACE_ID, name: standaloneWorkspaceName() }),
+		hostId,
+	}));
+	if (standalone.length > 0) projects.push({
+		hostId,
+		id: STANDALONE_WORKSPACE_ID,
+		name: standaloneWorkspaceName(),
+		kind: STANDALONE_PROJECT_KIND,
+		path: "Not attached to a project",
+		sessions: standalone,
+	});
+	return projects;
+}
+
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
 // with the router's defaultPreload: "intent") and the hook reads the same cache.
 export const workspaceQueryOptions = {
@@ -384,6 +422,20 @@ export function useCloudSessionsQuery(options: WorkspaceSubscriptionOptions = {}
 	});
 }
 
+export function useRemoteWorkspaces(options: WorkspaceSubscriptionOptions = {}) {
+	const connected = useSyncExternalStore(subscribeConnectedHosts, connectedHosts, connectedHosts);
+	const remote = useQueries({
+		queries: connected.map((hostId) => ({
+			queryKey: remoteWorkspaceQueryKey(hostId),
+			queryFn: () => fetchRemoteWorkspaces(hostId),
+			retry: 1,
+			refetchInterval: 15_000,
+			subscribed: options.subscribed,
+		})),
+	});
+	return { data: remote.flatMap((query) => query.data ?? []) };
+}
+
 export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const local = useQuery({ ...workspaceQueryOptions, subscribed: options.subscribed });
 	const cloud = useCloudProjectsQuery(options);
@@ -396,7 +448,8 @@ export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const data = useMemo(() => {
 		// Local stays authoritative for loading/error semantics: cloud items only
 		// render once the local list exists, and never replace it.
-		if (localData === undefined || cloudData === undefined || cloudData.length === 0) return localData;
+		if (localData === undefined) return localData;
+		if (cloudData === undefined || cloudData.length === 0) return localData;
 		// Signing out (or turning the offering off) disables the cloud queries,
 		// but react-query keeps their last data; without this gate the stale
 		// cloud projects would keep rendering for a signed-out user.
@@ -415,18 +468,29 @@ export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
  * tree. TanStack Query applies structural sharing to the selected value, so an
  * activity update elsewhere no longer redraws the open session workspace.
  */
-export function useWorkspaceSession(sessionId: string) {
+export function useWorkspaceSession(sessionId: string, hostId?: string) {
 	const queryClient = useQueryClient();
+	const selectRemoteSession = useMemo(
+		() => (workspaces: WorkspaceSummary[]) => workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
+		[sessionId],
+	);
+	const remote = useQuery({
+		queryKey: remoteWorkspaceQueryKey(hostId ?? ""),
+		queryFn: () => fetchRemoteWorkspaces(hostId ?? ""),
+		select: selectRemoteSession,
+		enabled: Boolean(hostId && sessionId),
+		refetchInterval: 2_000,
+	});
 	const selectLocalSession = useMemo(
 		() => (workspaces: WorkspaceSummary[]) =>
 			workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
 		[sessionId],
 	);
-	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession });
-	const localWorkspaces = useQuery({ ...workspaceQueryOptions, subscribed: false, enabled: Boolean(sessionId) });
+	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession, enabled: !hostId });
+	const localWorkspaces = useQuery({ ...workspaceQueryOptions, subscribed: false, enabled: Boolean(sessionId) && !hostId });
 	const direct = useQuery({
 		queryKey: ["session", sessionId],
-		enabled: Boolean(sessionId) && local.data === undefined,
+		enabled: Boolean(sessionId) && !hostId && local.data === undefined,
 		retry: (attempt, error) => apiErrorCode(error) === "SESSION_NOT_FOUND" && attempt < 4,
 		retryDelay: 250,
 		queryFn: async () => {
@@ -460,6 +524,7 @@ export function useWorkspaceSession(sessionId: string) {
 		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
 	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
 	useEffect(() => {
+		if (hostId) return;
 		if (!resolvedDirectSession) return;
 		queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) => {
 			if (!current) return current;
@@ -472,7 +537,8 @@ export function useWorkspaceSession(sessionId: string) {
 			});
 			return changed ? next : current;
 		});
-	}, [queryClient, resolvedDirectSession]);
+	}, [queryClient, resolvedDirectSession, hostId]);
+	if (hostId) return remote;
 	return {
 		...local,
 		data: local.data ?? resolvedDirectSession ?? cloudSession,

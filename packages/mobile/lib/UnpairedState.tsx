@@ -1,5 +1,6 @@
 import { useRouter } from "expo-router";
 
+import { useApp } from "./store";
 import { Button, EmptyState } from "./ui";
 
 /**
@@ -18,6 +19,17 @@ import { Button, EmptyState } from "./ui";
  */
 export function UnpairedState() {
 	const router = useRouter();
+	const { selectedHostName, loading, reloadConfig } = useApp();
+	if (selectedHostName) {
+		return (
+			<EmptyState
+				icon="server"
+				title={loading ? `Connecting to ${selectedHostName}` : `${selectedHostName} is unavailable`}
+				message={loading ? "Checking saved addresses…" : "This machine is paired but cannot be reached right now."}
+				action={loading ? undefined : <Button title="Retry connection" icon="refresh-cw" onPress={() => { void reloadConfig(); }} />}
+			/>
+		);
+	}
 	return (
 		<EmptyState
 			icon="server"

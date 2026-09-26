@@ -54,7 +54,7 @@ let retainedDrawerOpen = false;
 
 export function SidebarNavigationShell({ children }: { children: ReactNode }) {
 	const styles = useThemedStyles(makeStyles);
-	const { sessions, projects, connection } = useApp();
+	const { sessions, projects, connection, config } = useApp();
 	// See the iOS shell: cached sessions outlive a failed poll by design, so the
 	// drawer has to admit when what it is showing is no longer live.
 	const sessionsStale = connection !== "open";
@@ -166,8 +166,8 @@ export function SidebarNavigationShell({ children }: { children: ReactNode }) {
 	const selectSession = useCallback((session: DashboardSession) => {
 		haptics.select();
 		pendingClosePath.current = `/session/${session.id}`;
-		router.push({ pathname: "/session/[id]", params: { id: session.id, projectId: session.projectId } });
-	}, [router]);
+		router.push({ pathname: "/session/[id]", params: { id: session.id, projectId: session.projectId, hostId: config?.hostId } });
+	}, [config?.hostId, router]);
 
 	const spawnWorker = useCallback(() => {
 		haptics.tap();

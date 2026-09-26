@@ -27,11 +27,11 @@ import {
 	type SessionMode,
 	type SpawnAttachmentInput,
 } from "./api";
-import { isConfigured, loadConfig, machineIdentity, type ServerConfig } from "./config";
+import { isConfigured, machineIdentity, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { pollIntervalFor } from "./pollInterval";
 import type { Endpoint } from "./endpoints";
-import { activeHost, loadHosts } from "./hosts";
+import { activeHost, setActiveHost } from "./hosts";
 import { shouldReRace } from "./reRace";
 import { shouldRaceForUpgrade, UPGRADE_RACE_CHECK_MS } from "./upgradeRace";
 import { pollResultIsCurrent, sameServerConfig } from "./sameConfig";
@@ -39,10 +39,11 @@ import { shouldShowLoading } from "./configLoading";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
-import { ALL_PROJECTS, NO_PROJECTS_KNOWN, projectsForMachine, resolveActiveProject, retainProjects, type KnownProjects } from "./projectFilter";
+import { ALL_PROJECTS, NO_PROJECTS_KNOWN, projectsForMachine, resolveActiveProject, retainProjects, sessionRowsForMachine, type KnownProjects } from "./projectFilter";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 import { useConversationEventTransport } from "./chat/conversationEvents";
+import { hostRouteMatches } from "./hostRoute";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
 
@@ -53,6 +54,8 @@ export type ConnStatus = "closed" | "connecting" | "open";
 // An options object rather than four optional positionals: `spawn(a, b, c, d)`
 // with every argument optional and same-typed is where call-site mistakes live.
 export type SpawnOptions = {
+	/** Prevent a stale composer from posting a same-ID project to a new machine. */
+	hostId: string;
 	/** Falls back to the active project, or the only project. */
 	projectId?: string;
 	prompt?: string;
@@ -66,6 +69,7 @@ export type SpawnOptions = {
 type AppState = {
 	config: ServerConfig | null;
 	configured: boolean;
+	selectedHostName: string | null;
 	/** Every way the active machine says it can be reached, for telling a
 	 *  rotated tunnel hostname apart from being simply out of range. */
 	activeEndpoints: Endpoint[];
@@ -94,6 +98,7 @@ type AppState = {
 	getLastSyncAt: () => number;
 	// actions
 	reloadConfig: () => Promise<void>;
+	switchHost: (id: string) => Promise<void>;
 	refresh: () => Promise<void>;
 	setActiveProject: (id: string) => void;
 	spawn: (opts: SpawnOptions) => Promise<DashboardSession>;
@@ -138,10 +143,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Whether resolution has finished at least once. Distinguishes "no config
 	// yet" from "no machine paired" — identical as state, opposite to the user.
 	const [configResolved, setConfigResolved] = useState(false);
+	const [selectedHostName, setSelectedHostName] = useState<string | null>(null);
 	const [activeEndpoints, setActiveEndpoints] = useState<Endpoint[]>([]);
 	const [knownProjects, setKnownProjects] = useState<KnownProjects>(NO_PROJECTS_KNOWN);
 	const [sessions, setSessions] = useState<DashboardSession[]>([]);
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
+	const [sessionMachine, setSessionMachine] = useState("");
 	const [orchestratorId, setOrchestratorId] = useState<string | null>(null);
 	const [stats, setStats] = useState<DashboardStats>({});
 	const [chosenProjectId, setChosenProjectId] = useState<string>(ALL_PROJECTS);
@@ -155,6 +162,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	useConversationEventTransport(connection === "open" ? config : null);
 
 	const cfgRef = useRef<ServerConfig | null>(null);
+	const configResolution = useRef(0);
 	// Gate for the connected event: emit only on the not-open -> open transition,
 	// never on every poll tick. openRef tracks the current state; everConnectedRef
 	// tells a fresh launch apart from a later reconnect.
@@ -225,15 +233,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const resumedRef = useRef(false);
 
 	const reloadConfig = useCallback(async () => {
+		const resolution = ++configResolution.current;
 		// Races the active machine's endpoints rather than reading one stored
 		// address, so the app lands on LAN at home and the tunnel from anywhere
-		// else without the user choosing. Always resolves to something: every
-		// failure path inside falls back to the last stored config.
+		// else without the user choosing. Failed identity probes leave the
+		// selected machine offline instead of reusing an unverified address.
 		// Marked resolved whatever happens below. An unhandled failure here would
 		// otherwise leave the loader up forever, which is a worse failure than
 		// the blank screen this flag exists to prevent.
 		try {
-			const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
+			const selected = await activeHost();
+			if (resolution !== configResolution.current) return;
+			setSelectedHostName(selected?.name ?? null);
+			if ((selected?.id ?? "") !== (cfgRef.current?.hostId ?? "")) {
+				// Hide the previous machine's board and stop its in-flight polls
+				// before waiting for the newly selected machine to answer.
+				cfgRef.current = null;
+				setConfig(null);
+				setConfigResolved(false);
+				setSessions([]);
+				setOrchestrators([]);
+				setSessionMachine("");
+				setOrchestratorId(null);
+				setStats({});
+				setNotificationsUnread(0);
+				lastSyncAtRef.current = 0;
+			}
+			const c = await resolveActiveConfig(runtimeResolveDeps());
+			if (resolution !== configResolution.current) return;
 		// Keep the previous object when the endpoint has not actually changed.
 		// Resolution builds a fresh one every time, and the live conversation
 		// stream, the poll loop and the terminal mux all key on this value's
@@ -251,11 +278,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// Read alongside the config so a failure can be explained: a stored
 			// tunnel that no longer answers is a rotated hostname, not a machine
 			// that is merely out of range.
-			setActiveEndpoints((await activeHost())?.endpoints ?? []);
+			setActiveEndpoints(selected?.endpoints ?? []);
 		} finally {
-			setConfigResolved(true);
+			if (resolution === configResolution.current) setConfigResolved(true);
 		}
 	}, []);
+
+	const switchHost = useCallback(async (id: string) => {
+		// Stop A's in-flight polls before the persisted selection changes. A
+		// response that lands after this point must not repopulate B's screen.
+		configResolution.current++;
+		cfgRef.current = null;
+		setConfig(null);
+		setConfigResolved(false);
+		try {
+			await setActiveHost(id);
+		} catch (error) {
+			await reloadConfig();
+			throw error;
+		}
+		await reloadConfig();
+	}, [reloadConfig]);
 
 	useEffect(() => {
 		reloadConfig();
@@ -274,8 +317,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			resumedRef.current = false;
 			let known: Endpoint[] = [];
 			try {
-				// Most-recent-first, so the head is the machine in use.
-				known = (await loadHosts())[0]?.endpoints ?? [];
+				known = (await activeHost())?.endpoints ?? [];
 			} catch {
 				return; // Storage unavailable: leave the working connection alone.
 			}
@@ -331,6 +373,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			));
 			setSessions(sess.sessions);
 			setOrchestrators(sess.orchestrators);
+			setSessionMachine(machineIdentity(c));
 			setOrchestratorId(sess.orchestratorId);
 			setStats(sess.stats);
 			setError(null);
@@ -457,9 +500,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	// During a re-pair, the previous machine's retained list is not evidence
 	// about the new machine. Keep it hidden until the active machine answers.
+	const activeMachine = config && isConfigured(config) ? machineIdentity(config) : "";
+	const visibleSessions = useMemo(
+		() => sessionRowsForMachine(sessions, sessionMachine, activeMachine),
+		[sessions, sessionMachine, activeMachine],
+	);
+	const visibleOrchestrators = useMemo(
+		() => sessionRowsForMachine(orchestrators, sessionMachine, activeMachine),
+		[orchestrators, sessionMachine, activeMachine],
+	);
 	const { projects, known: projectsKnown } = projectsForMachine(
 		knownProjects,
-		config && isConfigured(config) ? machineIdentity(config) : "",
+		activeMachine,
 	);
 	const activeProjectId = useMemo(
 		() => resolveActiveProject(chosenProjectId, projects, projectsKnown),
@@ -474,12 +526,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async ({ projectId, prompt, harness, model, mode, attachments }: SpawnOptions) => {
+		async ({ hostId, projectId, prompt, harness, model, mode, attachments }: SpawnOptions) => {
 			const resolvedMode = mode ?? "chat";
 			return trackFeature("spawn", async () => {
 				const c = cfgRef.current;
 				const proj = projectId ?? targetProject();
-				if (!c || !proj) throw new Error("Pick a project first");
+					if (!c || !proj) throw new Error("Pick a project first");
+					if (!hostRouteMatches(hostId, c.hostId)) throw new Error("Machine changed. Reopen the task composer.");
 				const session = await delegateTask(c, {
 					projectId: proj,
 					brief: prompt ?? "",
@@ -578,21 +631,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		() => ({
 			config,
 			configured: !!config && isConfigured(config),
+			selectedHostName,
 			activeEndpoints,
 			projects,
 			projectsKnown,
-			sessions,
-			orchestrators,
-			orchestratorId,
-			stats,
+			sessions: visibleSessions,
+			orchestrators: visibleOrchestrators,
+			orchestratorId: sessionMachine === activeMachine ? orchestratorId : null,
+			stats: sessionMachine === activeMachine ? stats : {},
 			activeProjectId,
 			connection,
-			notificationsUnread,
+			notificationsUnread: sessionMachine === activeMachine ? notificationsUnread : 0,
 			loading,
 			error,
 			errorStatus,
 			getLastSyncAt,
 			reloadConfig,
+			switchHost,
 			refresh,
 			setActiveProject,
 			spawn,
@@ -607,10 +662,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		}),
 		[
 			config,
+			selectedHostName,
 			projects,
 			projectsKnown,
-			sessions,
-			orchestrators,
+			visibleSessions,
+			visibleOrchestrators,
+			sessionMachine,
+			activeMachine,
 			orchestratorId,
 			stats,
 			activeProjectId,
@@ -621,6 +679,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			errorStatus,
 			getLastSyncAt,
 			reloadConfig,
+			switchHost,
 			refresh,
 			setActiveProject,
 			spawn,

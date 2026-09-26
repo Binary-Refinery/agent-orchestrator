@@ -80,6 +80,10 @@ var legacyActorlessSystemCLICommands = map[string]struct{}{
 var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao agent":                  {},
 	"ao agent ls":               {},
+	"ao remote-host":            {},
+	"ao remote-host status":     {},
+	"ao remote-host enable":     {},
+	"ao remote-host disable":    {},
 	"ao browser":                {},
 	"ao browser act":            {},
 	"ao browser check":          {},

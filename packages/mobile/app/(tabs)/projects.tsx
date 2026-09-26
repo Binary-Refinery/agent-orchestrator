@@ -63,7 +63,7 @@ export default function ProjectsScreen() {
 
 	const openProject = (row: OrchestratorProjectRow) => {
 		haptics.select();
-		router.push({ pathname: "/project/[id]", params: { id: row.project.id } });
+		router.push({ pathname: "/project/[id]", params: { id: row.project.id, hostId: config?.hostId } });
 	};
 
 	if (!configured) {

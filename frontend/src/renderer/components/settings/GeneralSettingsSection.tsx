@@ -17,6 +17,7 @@ import { useSettings, useUpdateCloudOffering, useUpdateSessionInterface } from "
 import type { SessionMode } from "../../types/workspace";
 import type { TerminalShellKind } from "../../../shared/ui-locale";
 import { isWindowsPlatform } from "../../lib/platform";
+import { RemoteHostsSettings } from "./RemoteHostsSettings";
 
 /**
  * Default interface for new sessions. Daemon-owned so `ao spawn` and mobile
@@ -261,6 +262,7 @@ export function GeneralSettingsSection({
 						onCheckedChange={setRemoteHosts}
 					/>
 				</SettingsRow>
+				{remoteHosts && <RemoteHostsSettings />}
 				{developerMode && <CloudOfferingRow />}
 			</SettingsSection>
 		</>

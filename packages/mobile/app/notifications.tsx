@@ -1,6 +1,6 @@
 import { Feather } from "../lib/icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
@@ -22,6 +22,7 @@ import { haptics } from "../lib/haptics";
 import { NotificationTypeIcon } from "../lib/notification-type-icon";
 import {
 	notificationSections,
+	notificationRowsForHost,
 	notificationAction,
 	notificationVisual,
 	relativeTime,
@@ -53,13 +54,18 @@ export default function NotificationsScreen() {
 	const [notice, setNotice] = useState<string>();
 	const now = useNow(MINUTE_MS);
 	const [items, setItems] = useState<NotificationRecord[]>([]);
+	const [itemsHostId, setItemsHostId] = useState<string>();
+	const currentConfig = useRef(config);
+	currentConfig.current = config;
 	const [loading, setLoading] = useState(true);
 	const [refreshing, setRefreshing] = useState(false);
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
 	const [unreadCount, setUnreadCount] = useState(0);
 	const [error, setError] = useState<string | null>(null);
-	const sections = useMemo(() => notificationSections(items), [items]);
+	const visibleItems = useMemo(() => notificationRowsForHost(items, itemsHostId, config?.hostId), [items, itemsHostId, config?.hostId]);
+	const sections = useMemo(() => notificationSections(visibleItems), [visibleItems]);
+	const visibleUnreadCount = config?.hostId && itemsHostId === config.hostId ? unreadCount : 0;
 
 	const load = useCallback(
 		async (mode: "initial" | "refresh" | "more") => {
@@ -77,6 +83,8 @@ export default function NotificationsScreen() {
 					limit: PAGE_SIZE,
 					cursor: mode === "more" ? nextCursor : undefined,
 				});
+				if (currentConfig.current !== config) return;
+				setItemsHostId(config.hostId);
 				setItems((previous) => {
 					if (mode !== "more") return page.notifications;
 					const seen = new Set(previous.map((notification) => notification.id));
@@ -88,23 +96,36 @@ export default function NotificationsScreen() {
 				setNextCursor(page.nextCursor);
 				setUnreadCount(page.unreadCount);
 			} catch (cause) {
+				if (currentConfig.current !== config) return;
+				setItemsHostId(config.hostId);
 				setError(cause instanceof Error ? cause.message : "Couldn't load notifications.");
 			} finally {
-				setLoading(false);
-				setRefreshing(false);
-				setLoadingMore(false);
+				if (currentConfig.current === config) {
+					setLoading(false);
+					setRefreshing(false);
+					setLoadingMore(false);
+				}
 			}
 		},
 		[config, nextCursor, loadingMore],
 	);
 
 	useEffect(() => {
+		setItems([]);
+		setItemsHostId(undefined);
+		setNextCursor(undefined);
+		setUnreadCount(0);
+		setError(null);
+		setRefreshing(false);
+		setLoadingMore(false);
+		setLoading(Boolean(config));
 		void load("initial");
 		// Paging state changes must not refetch the first page.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [config]);
 
 	function open(notification: NotificationRecord) {
+		if (!config?.hostId || itemsHostId !== config.hostId) return;
 		haptics.tap();
 		setItems((previous) =>
 			previous.map((item) =>
@@ -118,7 +139,7 @@ export default function NotificationsScreen() {
 		// What a tap does depends on the session behind it, exactly as the renderer
 		// decides: a terminated agent waiting on input is restored, not opened.
 		const action = notificationAction(notification, sessionState(notification.sessionId));
-		if (action.kind === "open") router.navigate(`/session/${action.sessionId}`);
+		if (action.kind === "open") router.navigate({ pathname: "/session/[id]", params: { id: action.sessionId, hostId: config.hostId } });
 		else if (action.kind === "prs") router.navigate("/prs");
 		else if (action.kind === "restore") {
 			haptics.warning();
@@ -140,19 +161,20 @@ export default function NotificationsScreen() {
 	}
 
 	function restoreSession(sessionId: string) {
+		if (!config?.hostId || itemsHostId !== config.hostId) return;
 		haptics.tap();
 		setRestoringId(sessionId);
 		void restore(sessionId)
 			.then(() => {
 				haptics.success();
-				router.navigate(`/session/${sessionId}`);
+				router.navigate({ pathname: "/session/[id]", params: { id: sessionId, hostId: config.hostId } });
 			})
 			.catch((cause) => Alert.alert("Couldn't restore the session", cause instanceof Error ? cause.message : String(cause)))
 			.finally(() => setRestoringId(undefined));
 	}
 
 	async function markAll() {
-		if (!config || unreadCount === 0) return;
+		if (!config?.hostId || itemsHostId !== config.hostId || unreadCount === 0) return;
 		haptics.success();
 		setItems((previous) => previous.map((item) => ({ ...item, status: "read" })));
 		setUnreadCount(0);
@@ -170,8 +192,8 @@ export default function NotificationsScreen() {
 		return () => clearTimeout(timer);
 	}, [notice]);
 
-	const subtitle = unreadCount > 0
-		? `${unreadCount} ${unreadCount === 1 ? "update needs" : "updates need"} you`
+	const subtitle = visibleUnreadCount > 0
+		? `${visibleUnreadCount} ${visibleUnreadCount === 1 ? "update needs" : "updates need"} you`
 		: "You're all caught up";
 
 	return (
@@ -181,13 +203,13 @@ export default function NotificationsScreen() {
 				title="Notifications"
 				left={<HeaderIconButton icon="back" label="Back" onPress={() => backOr(router)} />}
 				right={
-					unreadCount > 0 ? (
+					visibleUnreadCount > 0 ? (
 						<HeaderIconButton icon="check" label="Mark all read" onPress={() => void markAll()} />
 					) : undefined
 				}
 			/>
 
-			{loading ? (
+			{loading || (config && itemsHostId !== config.hostId) ? (
 				<View style={styles.center}>
 					<ActivityIndicator color={t.accent} />
 				</View>
@@ -197,7 +219,7 @@ export default function NotificationsScreen() {
 					keyExtractor={(notification) => notification.id}
 					contentInsetAdjustmentBehavior="automatic"
 					contentContainerStyle={
-						items.length === 0
+						visibleItems.length === 0
 							? { flexGrow: 1 }
 							: { paddingBottom: insets.bottom + 24 }
 					}
@@ -215,7 +237,7 @@ export default function NotificationsScreen() {
 					onEndReached={() => void load("more")}
 					onEndReachedThreshold={0.4}
 					ListHeaderComponent={
-						error && items.length > 0 ? (
+						error && visibleItems.length > 0 ? (
 							<View style={styles.inlineError}>
 								<Feather name="alert-circle" size={15} color={t.red} />
 								<Text selectable style={styles.inlineErrorText}>{error}</Text>

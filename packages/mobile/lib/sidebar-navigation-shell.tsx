@@ -54,7 +54,7 @@ export function SidebarNavigationShell({ children }: { children: ReactNode }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const { scheme } = useThemeState();
-	const { sessions, projects, connection } = useApp();
+	const { sessions, projects, connection, config } = useApp();
 	// The store keeps the last good sessions when a poll fails — that is what lets
 	// the board show rows with a stale banner rather than blanking. The drawer had
 	// no such tell, so a disconnected phone still listed workers as if they were
@@ -152,9 +152,9 @@ export function SidebarNavigationShell({ children }: { children: ReactNode }) {
 		(session: DashboardSession) => {
 			haptics.select();
 			closeSidebar();
-			router.push({ pathname: "/session/[id]", params: { id: session.id, projectId: session.projectId } });
+			router.push({ pathname: "/session/[id]", params: { id: session.id, projectId: session.projectId, hostId: config?.hostId } });
 		},
-		[closeSidebar, router],
+		[closeSidebar, config?.hostId, router],
 	);
 	const spawnWorker = useCallback(() => {
 		haptics.tap();

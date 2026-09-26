@@ -128,6 +128,9 @@ import { ResizeHandle } from "./ResizeHandle";
 import { NAV_ROW_HIGHLIGHT_HOST_CLASS, NavRowHighlight } from "./NavRowHighlight";
 import { isMacPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
+import type { RemoteHost } from "../hooks/useRemoteHosts";
+import { sessionNavigateTarget } from "../lib/navigate-to-session";
+import { RemoteHostsSection } from "./RemoteHostsSection";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -428,6 +431,10 @@ type SidebarProps = {
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
+	remoteHosts?: RemoteHost[];
+	onStartRemoteHost?: (hostId: string) => void;
+	onRetryRemoteHosts?: () => void;
+	remoteWorkspaces?: WorkspaceSummary[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
@@ -443,6 +450,7 @@ function useSelection() {
 	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as {
+		hostId?: string;
 		projectId?: string;
 		sessionId?: string;
 	};
@@ -472,8 +480,8 @@ function useSelection() {
 	);
 	return useMemo(() => ({
 		isHome: pathname === "/",
-		activeProjectId: params.projectId,
-		activeSessionId: params.sessionId,
+		activeProjectId: params.hostId ? undefined : params.projectId,
+		activeSessionId: params.hostId ? undefined : params.sessionId,
 		goHome,
 		// Settings is a modal — open it in place so the current page (session
 		// terminal, board, etc.) stays underneath.
@@ -482,7 +490,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, params.projectId, params.sessionId, pathname]);
+	}), [goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, params.hostId, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -520,6 +528,10 @@ export function Sidebar({
 	topbarOffset = "toolbar",
 	workspaceError,
 	workspaces,
+	remoteHosts = [],
+	onStartRemoteHost = () => undefined,
+	onRetryRemoteHosts = () => undefined,
+	remoteWorkspaces = [],
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -527,6 +539,7 @@ export function Sidebar({
 	resizeAuxiliaryTargetRef,
 }: SidebarProps) {
 	const { t } = useTranslation();
+	const remoteNavigate = useNavigate();
 	const selection = useSelection();
 	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -1029,6 +1042,11 @@ export function Sidebar({
 						)}
 					</SidebarGroupContent>
 				</SidebarGroup>
+				<div className="group-data-[collapsible=icon]:hidden">
+					<RemoteHostsSection hosts={remoteHosts} workspaces={remoteWorkspaces} onStart={onStartRemoteHost} onRetry={onRetryRemoteHosts} onOpenSession={(hostId, projectId, sessionId) => {
+						void remoteNavigate(sessionNavigateTarget(projectId, sessionId, hostId));
+					}} />
+				</div>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.

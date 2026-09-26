@@ -3,7 +3,8 @@ import type { RemoteEntry } from "./remotes-store";
 
 // Remote HTTP lives in the main process for two reasons: the renderer's origin
 // is app://renderer and a remote daemon has no reason to allow it through CORS,
-// and the connection password must never enter renderer memory.
+// and saved connection passwords must not be sent back to renderer memory.
+// The Add Host form necessarily holds a newly typed password until IPC saves it.
 export type RemoteRequestInit = {
 	method: "GET" | "POST" | "DELETE";
 	path: string;
@@ -21,6 +22,24 @@ export type RemoteResponse = {
 export type RemoteHealth = "online" | "unauthorized" | "offline" | "not-a-daemon";
 
 type FetchImpl = typeof fetch;
+
+/** This is the only remote probe allowed before a saved password is sent. */
+export async function readRemoteIdentity(
+	entry: Pick<RemoteEntry, "url">,
+	fetchImpl: FetchImpl = fetch,
+	signal: AbortSignal = AbortSignal.timeout(5_000),
+): Promise<string> {
+	const base = (entry.url.includes("://") ? entry.url : `http://${entry.url}`).replace(/\/+$/, "");
+	const url = new URL(`${base}/api/v1/identity`);
+	if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+		throw new Error("remote host must use an HTTP(S) URL without embedded credentials");
+	const response = await fetchImpl(url.href, { method: "GET", redirect: "error", signal });
+	if (!response.ok) throw new Error(`remote identity probe returned ${response.status}`);
+	const body = (await response.json()) as { hostId?: unknown };
+	if (typeof body.hostId !== "string" || body.hostId === "") throw new Error("remote identity probe returned no host ID");
+	if (body.hostId === "local") throw new Error("remote identity probe returned reserved local host ID");
+	return body.hostId;
+}
 
 export async function remoteRequest(
 	entry: RemoteEntry,

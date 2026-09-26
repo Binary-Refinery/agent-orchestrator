@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { sessionTitle, shortLabel, type DashboardPR, type DashboardSession, type SessionPRSummary } from "./api";
 import { haptics } from "./haptics";
 import { openGitHub } from "./openGitHub";
+import { useApp } from "./store";
 import type { Theme } from "./theme";
 import {
 	prBlockerLine,
@@ -31,6 +32,7 @@ export function PRCard({
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
+	const { config } = useApp();
 	const state = summary ? stateVisualOf(t, summary.state as PRLifecycle) : prStateVisual(t, pr);
 	const title = summary?.title?.trim() || prTitle(pr, sessionTitle(session));
 	const project = shortLabel(summary?.repo || session.projectId || "Standalone");
@@ -53,7 +55,7 @@ export function PRCard({
 				haptics.tap();
 				router.push({
 					pathname: "/session/[id]",
-					params: { id: session.id, projectId: session.projectId },
+					params: { id: session.id, projectId: session.projectId, hostId: config?.hostId },
 				});
 			}}
 			style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}

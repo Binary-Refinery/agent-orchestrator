@@ -10,12 +10,13 @@ import {
 
 // What the renderer is allowed to see. The password stays in the main process.
 export type RemoteHostView = {
+	hostId: string;
 	label: string;
 	url: string;
 };
 
 export function toHostViews(entries: RemoteEntry[]): RemoteHostView[] {
-	return entries.map(({ label, url }) => ({ label, url }));
+	return entries.map(({ hostId, label, url }) => ({ hostId: hostId ?? "", label, url }));
 }
 
 export async function findRemote(path: string, url: string): Promise<RemoteEntry> {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { probeRemote, remoteRequest } from "./remote-request";
+import { probeRemote, readRemoteIdentity, remoteRequest } from "./remote-request";
 
 const entry = { label: "workbox", url: "http://192.0.2.1:3011", password: "pw" };
 
@@ -15,6 +15,20 @@ function fakeTextFetch(status: number, text: string) {
 }
 
 const daemonProbe = { status: "ok", service: "agent-orchestrator-daemon", pid: 1234 };
+
+describe("readRemoteIdentity", () => {
+	it("learns the host ID without sending a credential", async () => {
+		const doFetch = fakeFetch(200, { hostId: "h_workbox", apiVersion: 1 });
+		await expect(readRemoteIdentity(entry, doFetch)).resolves.toBe("h_workbox");
+		const [url, init] = doFetch.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe("http://192.0.2.1:3011/api/v1/identity");
+		expect(new Headers(init.headers).has("Authorization")).toBe(false);
+		expect(init.redirect).toBe("error");
+	});
+	it("rejects the desktop's reserved local host ID", async () => {
+		await expect(readRemoteIdentity(entry, fakeFetch(200, { hostId: "local" }))).rejects.toThrow(/reserved/);
+	});
+});
 
 describe("remoteRequest", () => {
 	it("sends the connection password as a Bearer token", async () => {

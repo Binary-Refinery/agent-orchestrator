@@ -95,6 +95,7 @@ vi.mock("../lib/bridge", () => ({
 		app: { getVersion, openExternal },
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
+		remotes: { list: vi.fn(async () => []) },
 		updateSettings: {
 			get: getUpdate,
 			set: setUpdate,

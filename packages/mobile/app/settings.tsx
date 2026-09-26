@@ -16,6 +16,7 @@ import { classifyConnectionFailure, describeConnectionFailure } from "../lib/con
 import { discordFeatureRequestURL } from "../lib/discord";
 import { forgetServer } from "../lib/disconnect";
 import { haptics } from "../lib/haptics";
+import { activeHost, loadHosts, type Host as PairedHost } from "../lib/hosts";
 import { toggleLayoutGrid, useLayoutGrid } from "../lib/layoutGrid";
 import { checkStore, openOrStartUpdate } from "../lib/inAppUpdates";
 import { describePrompt } from "../lib/storeUpdate";
@@ -56,21 +57,45 @@ export default function SettingsScreen() {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
-	const { reloadConfig } = useApp();
+	const { config: currentConfig, reloadConfig, switchHost } = useApp();
 	const scrollRef = useRef<ScrollView>(null);
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
+	const [pairedHosts, setPairedHosts] = useState<PairedHost[]>([]);
+	const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+	const [switchingHostId, setSwitchingHostId] = useState<string | null>(null);
 	const [loaded, setLoaded] = useState(false);
 
 	useFocusEffect(useCallback(() => {
-		loadConfig().then((saved) => {
+		let current = true;
+		void Promise.all([loadConfig(), loadHosts(), activeHost()]).then(([saved, hosts, active]) => {
+			if (!current) return;
 			setCfg(saved);
+			setPairedHosts(hosts);
+			setSelectedHostId(active?.id ?? null);
 			setLoaded(true);
 		});
+		return () => { current = false; };
 	}, []));
+
+	async function selectHost(id: string) {
+		if (id === selectedHostId || switchingHostId !== null) return;
+		setSwitchingHostId(id);
+		try {
+			await switchHost(id);
+			setSelectedHostId(id);
+			setCfg(await loadConfig());
+		} catch {
+			Alert.alert("Could not switch machines", "Try again from Settings.");
+		} finally {
+			setSwitchingHostId(null);
+		}
+	}
 
 	if (!loaded) return <View style={styles.center}><ActivityIndicator color={t.accent} /></View>;
 
-	const paired = isConfigured(cfg);
+	const paired = pairedHosts.length > 0 || isConfigured(cfg);
+	const selectedHost = pairedHosts.find((host) => host.id === selectedHostId);
+	const selectedConfigReady = !!currentConfig && isConfigured(currentConfig) && (!selectedHost || currentConfig.hostId === selectedHost.id);
 	return (
 		<View style={styles.screen} collapsable={false}>
 			<View style={styles.header}>
@@ -85,15 +110,27 @@ export default function SettingsScreen() {
 				contentContainerStyle={styles.content}
 				keyboardShouldPersistTaps="handled"
 			>
-				<SettingsSection title="Desktop" footer={paired ? `${cfg.host}:${cfg.httpPort}` : "Pair this phone with AO on your computer."}>
+				<SettingsSection title="Machines" footer={selectedHost?.name ?? (paired ? `${cfg.host}:${cfg.httpPort}` : "Pair this phone with AO on your computer.")}>
 					<SettingsCard>
 						<CardRow
 							icon="monitor"
-							label="Connected desktop"
-							value={paired ? "Paired" : "Set up"}
+							label={paired ? "Pair another machine" : "Pair a machine"}
 							onPress={() => router.navigate("/pair")}
 						/>
-						<ConnectionTestRow cfg={cfg} paired={paired} />
+						{pairedHosts.map((host) => (
+							<CardRow
+								key={host.id}
+								icon="server"
+								label={host.name}
+								value={host.id === selectedHostId ? "Selected" : "Switch"}
+								loading={switchingHostId === host.id}
+								onPress={host.id === selectedHostId ? undefined : () => { void selectHost(host.id); }}
+							/>
+						))}
+						{selectedConfigReady ? <ConnectionTestRow cfg={currentConfig} paired /> : null}
+						{selectedHost && !selectedConfigReady ? (
+							<CardRow icon="refresh-cw" label="Retry selected machine" onPress={() => { void reloadConfig(); }} />
+						) : null}
 					</SettingsCard>
 				</SettingsSection>
 
@@ -124,10 +161,18 @@ export default function SettingsScreen() {
 				</SettingsSection>
 
 				<DisconnectRow
+					machineName={selectedHost?.name}
 					onForget={async () => {
 						await forgetServer();
 						await reloadConfig();
-						router.replace("/onboarding");
+						const remaining = await loadHosts();
+						if (remaining.length === 0) {
+							router.replace("/onboarding");
+						} else {
+							setPairedHosts(remaining);
+							setSelectedHostId((await activeHost())?.id ?? null);
+							setCfg(await loadConfig());
+						}
 					}}
 				/>
 				<VersionFooter />
@@ -539,15 +584,15 @@ function FeatureRequestRow() {
 	);
 }
 
-function DisconnectRow({ onForget }: { onForget: () => Promise<void> }) {
+function DisconnectRow({ machineName, onForget }: { machineName?: string; onForget: () => Promise<void> }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [forgetting, setForgetting] = useState(false);
 	function confirmForget() {
-		Alert.alert("Disconnect from desktop?", "This phone will stop receiving notifications and its saved connection will be removed.", [
+		Alert.alert(machineName ? `Forget ${machineName}?` : "Disconnect from desktop?", "This phone will stop receiving notifications from this machine and remove its saved connection.", [
 			{ text: "Cancel", style: "cancel" },
 			{
-				text: "Disconnect",
+				text: machineName ? "Forget" : "Disconnect",
 				style: "destructive",
 				onPress: async () => {
 					setForgetting(true);
@@ -563,7 +608,7 @@ function DisconnectRow({ onForget }: { onForget: () => Promise<void> }) {
 			style={({ pressed }) => [styles.disconnect, pressed && styles.rowPressed]}
 		>
 			{forgetting ? <ActivityIndicator color={t.red} /> : <Feather name="log-out" size={17} color={t.red} />}
-			<Text style={styles.disconnectText}>{forgetting ? "Disconnecting…" : "Disconnect from desktop"}</Text>
+			<Text style={styles.disconnectText}>{forgetting ? "Disconnecting…" : machineName ? `Forget ${machineName}` : "Disconnect from desktop"}</Text>
 		</Pressable>
 	);
 }

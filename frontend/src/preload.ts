@@ -22,6 +22,7 @@ import {
 } from "./shared/tray";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { RemoteHostView } from "./main/remotes-ipc";
+import type { ConnectedHostView } from "./main/remote-registry";
 import type { RemoteHealth, RemoteRequestInit, RemoteResponse } from "./main/remote-request";
 import type {
 	EditorHandoffState,
@@ -637,7 +638,7 @@ const api = {
 	},
 	// Saved AO daemons, shared with the CLI's ~/.ao/remotes.json. Everything the
 	// renderer receives back is password-free (see main/remotes-ipc.ts); the
-	// plaintext password only ever travels renderer -> main, on `add`.
+	// plaintext password only travels renderer -> main on add or credential edit.
 	remotes: {
 		list: () => ipcRenderer.invoke("remotes:list") as Promise<RemoteHostView[]>,
 		add: (input: { label: string; url: string; password: string }) =>
@@ -651,6 +652,9 @@ const api = {
 		probe: (url: string) => ipcRenderer.invoke("remotes:probe", url) as Promise<RemoteHealth>,
 		request: (url: string, init: RemoteRequestInit) =>
 			ipcRenderer.invoke("remotes:request", url, init) as Promise<RemoteResponse>,
+		connect: (url: string) => ipcRenderer.invoke("remotes:connect", url) as Promise<ConnectedHostView>,
+		disconnect: (url: string) => ipcRenderer.invoke("remotes:disconnect", url) as Promise<void>,
+		connected: () => ipcRenderer.invoke("remotes:connected") as Promise<ConnectedHostView[]>,
 	},
 	cloud: {
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,

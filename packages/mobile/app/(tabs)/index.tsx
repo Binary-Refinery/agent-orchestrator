@@ -58,8 +58,8 @@ export default function FleetScreen() {
 	const spawnWorker = useCallback(() => {
 		Keyboard.dismiss();
 		haptics.tap();
-		router.push({ pathname: "/spawn", params: spawnProjectParam(workerProjectId) });
-	}, [router, workerProjectId]);
+		router.push({ pathname: "/spawn", params: { ...spawnProjectParam(workerProjectId), hostId: config?.hostId } });
+	}, [config?.hostId, router, workerProjectId]);
 	// Two selectors rather than the whole state object, so the board re-renders
 	// only when one of these two values actually changes.
 	//
@@ -199,7 +199,7 @@ export default function FleetScreen() {
 								icon="moon"
 								title="No active workers"
 								message="Spawn a worker to get started."
-								action={<Button title="New agent" icon="plus" onPress={() => router.push({ pathname: "/spawn", params: spawnProjectParam(workerProjectId) })} />}
+								action={<Button title="New agent" icon="plus" onPress={() => router.push({ pathname: "/spawn", params: { ...spawnProjectParam(workerProjectId), hostId: config?.hostId } })} />}
 							/>
 						)
 					}
