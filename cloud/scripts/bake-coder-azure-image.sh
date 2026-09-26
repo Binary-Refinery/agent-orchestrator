@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Bake the native Azure Coder workspace image used by the ao-azure-vm template
 # (cloud/coder-azure-vm/main.tf). The image is Ubuntu + node + ALL AO harnesses
-# (claude-code, codex, cursor-agent) + gh + the release-matched ao-worker/ao
+# (claude-code, codex, cursor-agent, opencode) + gh + the release-matched ao-worker/ao
 # binaries + a `coder` user with NOPASSWD sudo. Nothing runs in a container at
 # runtime; the coder agent + AO worker run NATIVELY (the template's cloud-init
 # starts the coder agent as a systemd service and the control plane bootstraps
@@ -33,6 +33,7 @@ VM_SIZE="${AO_AZURE_BAKE_VM_SIZE:-Standard_D2s_v5}"
 CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.228}"
 CODEX_VERSION="${CODEX_VERSION:-0.147.0}"
 CURSOR_AGENT_VERSION="${CURSOR_AGENT_VERSION:-2026.08.11-e8db854}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.32}"
 GH_VERSION="${GH_VERSION:-2.97.0}"
 
 echo "=== resolve source image ${SOURCE_IMAGE_NAME} ==="
@@ -54,12 +55,16 @@ az vm create -g "$RG" -n "$BAKE_VM" \
   --output none
 echo "bake VM created"
 
-echo "=== install missing harnesses (codex + cursor-agent) + verify all three ==="
+echo "=== install missing harnesses (codex + cursor-agent + opencode) + verify all ==="
 az vm run-command invoke -g "$RG" -n "$BAKE_VM" --command-id RunShellScript --scripts "
 set -e
 export DEBIAN_FRONTEND=noninteractive
 # codex (node already present from the base image)
 sudo npm install --global '@openai/codex@${CODEX_VERSION}'
+# opencode (npm global; the linux-x64 platform binary rides as an optional dep,
+# so no per-user runtime download — the worker's PATH picks up the global bin the
+# same way it finds codex)
+sudo npm install --global 'opencode-ai@${OPENCODE_VERSION}'
 # cursor-agent (native tarball; amd64 -> x64)
 sudo mkdir -p '/opt/cursor-agent/${CURSOR_AGENT_VERSION}'
 curl --fail --location --silent --show-error \
@@ -79,7 +84,10 @@ export HOME=\"\${HOME:-/root}\"
 claude --version || echo 'claude MISSING'
 codex --version || echo 'codex MISSING'
 cursor-agent --version || echo 'cursor-agent MISSING'
+opencode --version || echo 'opencode MISSING'
 gh --version | head -1 || echo 'gh MISSING'
+# opencode must resolve on the default PATH (the worker guard does LookPath).
+command -v opencode || echo 'opencode NOT ON PATH'
 # make the freshly installed tools available to the coder user by default
 ls -l /usr/local/bin/cursor-agent
 " --query 'value[0].message' -o tsv
