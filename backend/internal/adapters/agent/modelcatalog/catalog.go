@@ -341,10 +341,25 @@ func applyClaudeConfiguredDefault(models []ports.AgentModelInfo, configured stri
 	}
 	if !matched {
 		// Claude accepts custom aliases and pinned snapshots beyond the static
-		// picker snapshot. Keep the effective configured model visible.
-		models = append(models, ports.AgentModelInfo{ID: configured, Label: configured, IsDefault: true})
+		// picker snapshot. Keep the effective configured model visible. When it
+		// is one of Claude Code's known aliases (the common case: settings.json
+		// pins "sonnet" while provider discovery returns concrete snapshot IDs),
+		// carry the human label so the picker reads "Sonnet" rather than a raw
+		// id — this is the local CLI's configured default, shown verbatim.
+		models = append(models, ports.AgentModelInfo{ID: configured, Label: claudeConfiguredLabel(configured), IsDefault: true})
 	}
 	return models
+}
+
+// claudeConfiguredLabel returns the human label Claude Code uses for a known
+// alias, falling back to the raw id for custom aliases and pinned snapshots.
+func claudeConfiguredLabel(id string) string {
+	for _, model := range claudeCodeModels() {
+		if strings.EqualFold(model.ID, id) {
+			return model.Label
+		}
+	}
+	return id
 }
 
 // CatalogFingerprint returns a stable fingerprint of the discovery inputs: the
