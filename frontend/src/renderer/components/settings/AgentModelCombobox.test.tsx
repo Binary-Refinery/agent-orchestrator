@@ -410,6 +410,7 @@ describe("AgentModelCombobox", () => {
 		await userEvent.type(search, "missing-model");
 		const refresh = screen.getByRole("button", { name: "Refresh models" });
 		expect(search.parentElement?.parentElement).toContainElement(refresh);
+		expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
 		await userEvent.click(refresh);
 		const busy = screen.getByRole("button", { name: /Refreshing/ });
 		expect(busy).toBeDisabled();
