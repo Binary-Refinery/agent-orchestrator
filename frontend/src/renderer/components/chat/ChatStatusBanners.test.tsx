@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServerBanner, ReauthBanner, ThreadStateBanner } from "./ChatStatusBanners";
+import { TooltipProvider } from "../ui/tooltip";
 
 // Each of these answers a question the timeline structurally cannot, so the tests are
 // about what is said and when it is withheld — a banner for an ordinary state is noise
@@ -97,10 +98,16 @@ describe("McpServerBanner", () => {
 			error: "did not report ready within 30s",
 		},
 	];
+	const renderBanner = (servers: Parameters<typeof McpServerBanner>[0]["servers"]) =>
+		render(
+			<TooltipProvider>
+				<McpServerBanner servers={servers} />
+			</TooltipProvider>,
+		);
 
 	it("shows a compact, non-actionable notice for three seconds", async () => {
 		vi.useFakeTimers();
-		render(<McpServerBanner servers={broken} />);
+		renderBanner(broken);
 
 		expect(screen.getByRole("status")).toHaveTextContent("Playwright MCP unavailable");
 		expect(screen.getByRole("status")).not.toHaveTextContent("1 tool server unavailable");
@@ -120,12 +127,16 @@ describe("McpServerBanner", () => {
 	});
 
 	it("lists affected server names as titled MCPs", () => {
-		render(<McpServerBanner servers={[...broken, { name: "notion", status: "failed" }]} />);
+		renderBanner([...broken, { name: "notion", status: "failed" }]);
 		expect(screen.getByRole("status")).toHaveTextContent("Playwright, Notion MCPs unavailable");
 	});
 
 	it("can place the notice below the composer", () => {
-		render(<McpServerBanner servers={broken} placement="below" />);
+		render(
+			<TooltipProvider>
+				<McpServerBanner servers={broken} placement="below" />
+			</TooltipProvider>,
+		);
 		expect(screen.getByRole("status").parentElement).toHaveClass("top-full");
 	});
 

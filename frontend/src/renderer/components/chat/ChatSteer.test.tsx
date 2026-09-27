@@ -514,7 +514,7 @@ describe("ChatWorkspace steering", () => {
 		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
 	});
 
-	it("shows the queued dock while messages are still queued between turns", () => {
+	it("hides stale queued messages after the active turn finishes", () => {
 		const snapshot = {
 			...withQueuedMessages(),
 			turns: withQueuedMessages().turns.map((turn) =>
@@ -522,8 +522,7 @@ describe("ChatWorkspace steering", () => {
 			),
 		};
 		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
-		expect(screen.getByTestId("queued-message-dock")).toBeInTheDocument();
-		expect(within(screen.getByTestId("queued-message-dock")).getByText("first queued")).toBeVisible();
+		expect(screen.queryByTestId("queued-message-dock")).not.toBeInTheDocument();
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {
