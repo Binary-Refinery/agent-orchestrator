@@ -51,6 +51,16 @@ function deferredByDefault(file: CloudCpWorkspaceReviewFileSummary) {
 	return file.binary || file.size > 512 * 1024 || /^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|go\.sum|cargo\.lock)$/.test(name);
 }
 
+type ViewedRecords = Record<string, string>;
+
+function readViewedRecords(storageKey: string): ViewedRecords {
+	try { return JSON.parse(window.localStorage.getItem(storageKey) ?? "{}") as ViewedRecords; } catch { return {}; }
+}
+
+function isViewedRecord(file: CloudCpWorkspaceReviewFileSummary, records: ViewedRecords) {
+	return records[file.path] === file.fileFingerprint;
+}
+
 export function CloudWorkspaceReviewPane({
 	annotation, baseUrl, client, data, filter, onBrowseAll, onOpenFile, orgId, sessionId, split,
 }: {
@@ -72,22 +82,27 @@ export function CloudWorkspaceReviewPane({
 	const [commitBrowserOpen, setCommitBrowserOpen] = useState(false);
 	const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 	const [loadedDeferred, setLoadedDeferred] = useState<Set<string>>(() => new Set());
-	const selectedCommit = data.commits.find((commit) => commit.sha === commitSha);
-	const allFiles = scope === "committed" && selectedCommit ? selectedCommit.files : filesForScope(data, scope);
+	const selectedCommit = useMemo(() => data.commits.find((commit) => commit.sha === commitSha), [commitSha, data.commits]);
+	const allFiles = useMemo(
+		() => scope === "committed" && selectedCommit ? selectedCommit.files : filesForScope(data, scope),
+		[data, scope, selectedCommit],
+	);
 	const normalizedFilter = filter.trim().toLowerCase();
-	const files = normalizedFilter ? allFiles.filter((file) => `${file.path} ${file.previousPath ?? ""}`.toLowerCase().includes(normalizedFilter)) : allFiles;
+	const files = useMemo(
+		() => normalizedFilter ? allFiles.filter((file) => `${file.path} ${file.previousPath ?? ""}`.toLowerCase().includes(normalizedFilter)) : allFiles,
+		[allFiles, normalizedFilter],
+	);
 	const selectionKey = selectedCommit ? `commit:${selectedCommit.sha}` : scope;
 	const storageKey = `ao.cloud.files.viewed.${sessionId}.${selectionKey}`;
-	const [viewedRecords, setViewedRecords] = useState<Record<string, string>>(() => {
-		try { return JSON.parse(window.localStorage.getItem(storageKey) ?? "{}"); } catch { return {}; }
-	});
+	const [viewedRecords, setViewedRecords] = useState<ViewedRecords>(() => readViewedRecords(storageKey));
 	useEffect(() => {
-		try { setViewedRecords(JSON.parse(window.localStorage.getItem(storageKey) ?? "{}")); } catch { setViewedRecords({}); }
+		setViewedRecords(readViewedRecords(storageKey));
 	}, [storageKey]);
 	useEffect(() => {
-		setCollapsed(new Set(files.filter(deferredByDefault).map((file) => file.path)));
+		const savedViewed = readViewedRecords(storageKey);
+		setCollapsed(new Set(files.filter((file) => deferredByDefault(file) || isViewedRecord(file, savedViewed)).map((file) => file.path)));
 		setLoadedDeferred(new Set());
-	}, [data.workspaceVersion, selectionKey]);
+	}, [data.workspaceVersion, files, selectionKey, storageKey]);
 	useEffect(() => {
 		if (scope === "committed" && selectedCommit) return;
 		if (scope === "combined") return;
@@ -114,7 +129,7 @@ export function CloudWorkspaceReviewPane({
 	const retryAll = () => diffQueries.forEach((query) => void query.refetch());
 	const firstError = diffQueries.find((query) => query.error)?.error;
 	const groupError = diffQueries.flatMap((query) => query.data?.groups ?? []).flatMap((group) => group.errors)[0];
-	const isViewed = (file: CloudCpWorkspaceReviewFileSummary) => viewedRecords[file.path] === file.fileFingerprint;
+	const isViewed = (file: CloudCpWorkspaceReviewFileSummary) => isViewedRecord(file, viewedRecords);
 	const toggleViewed = (file: CloudCpWorkspaceReviewFileSummary) => setViewedRecords((current) => {
 		const next = { ...current };
 		if (next[file.path] === file.fileFingerprint) delete next[file.path]; else next[file.path] = file.fileFingerprint;

@@ -58,4 +58,14 @@ describe("CloudWorkspaceReviewPane", () => {
 		expect(screen.queryByTestId("diff:src/App.tsx")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Expand src/App.tsx" })).toBeInTheDocument();
 	});
+
+	it("collapses files that were already marked viewed when the pane mounts", async () => {
+		window.localStorage.setItem("ao.cloud.files.viewed.session-1.unstaged", JSON.stringify({ "src/App.tsx": "fp:src/App.tsx" }));
+		const getWorkspaceReviewDiffs = vi.fn().mockResolvedValue({ workspaceVersion: "v1", groups: [{ patch: "diff", truncated: false, includedPaths: ["src/App.tsx"], deferred: [], errors: [] }] });
+		renderPane({ getWorkspaceReviewDiffs } as unknown as CloudCpClient);
+		expect(await screen.findByRole("checkbox", { name: /Mark src\/App\.tsx as not viewed/ })).toBeInTheDocument();
+		expect(screen.getByText("1 of 1 viewed")).toBeInTheDocument();
+		expect(screen.queryByTestId("diff:src/App.tsx")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Expand src/App.tsx" })).toBeInTheDocument();
+	});
 });
