@@ -120,6 +120,109 @@ func TestWorkspaceIntegrationStashApplyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationStashApplyPreservesTrackedIgnoredFile(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-tracked-ignored", Branch: "feature/tracked-ignored"}
+
+	info, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	configPath := filepath.Join(info.Path, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("committed config\n"), 0o644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	runGit(t, git, info.Path, "add", "config.yaml")
+	runGit(t, git, info.Path, "commit", "-m", "add config")
+
+	if err := os.WriteFile(filepath.Join(info.Path, ".gitignore"), []byte("config.yaml\nignored-untracked.txt\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGit(t, git, info.Path, "add", ".gitignore")
+	runGit(t, git, info.Path, "commit", "-m", "ignore local config")
+
+	if err := os.WriteFile(configPath, []byte("edited config\n"), 0o644); err != nil {
+		t.Fatalf("edit config.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(info.Path, "ignored-untracked.txt"), []byte("must not be preserved\n"), 0o644); err != nil {
+		t.Fatalf("write ignored-untracked.txt: %v", err)
+	}
+
+	ref, err := ws.StashUncommitted(ctx, info)
+	if err != nil {
+		t.Fatalf("StashUncommitted: %v", err)
+	}
+	if ref == "" {
+		t.Fatal("StashUncommitted returned empty ref for dirty worktree")
+	}
+	if err := ws.ForceDestroy(ctx, info); err != nil {
+		t.Fatalf("ForceDestroy: %v", err)
+	}
+
+	restored, err := ws.Restore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if err := ws.ApplyPreserved(ctx, restored, ref); err != nil {
+		t.Fatalf("ApplyPreserved: %v", err)
+	}
+
+	configBytes, err := os.ReadFile(filepath.Join(restored.Path, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml after apply: %v", err)
+	}
+	if string(configBytes) != "edited config\n" {
+		t.Fatalf("config.yaml = %q, want edited config", string(configBytes))
+	}
+	if _, err := os.Stat(filepath.Join(restored.Path, "ignored-untracked.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ignored-untracked.txt exists after apply but must not be preserved")
+	}
+}
+
+func TestCaptureWorktreeCommitHandlesUnbornHead(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runGit(t, git, repo, "init")
+	runGit(t, git, repo, "config", "user.name", "Test")
+	runGit(t, git, repo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "new-file.txt"), []byte("unborn worktree content\n"), 0o644); err != nil {
+		t.Fatalf("write new-file.txt: %v", err)
+	}
+
+	ws, err := New(Options{
+		Binary:       git,
+		ManagedRoot:  filepath.Join(tmp, "managed"),
+		RepoResolver: StaticRepoResolver{"proj": repo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	commit, err := ws.captureWorktreeCommit(context.Background(), repo, "preserved unborn work")
+	if err != nil {
+		t.Fatalf("captureWorktreeCommit: %v", err)
+	}
+	if commit == "" {
+		t.Fatal("captureWorktreeCommit returned empty commit for dirty unborn repository")
+	}
+	content := outputGit(t, git, repo, "show", commit+":new-file.txt")
+	if string(content) != "unborn worktree content\n" {
+		t.Fatalf("preserved content = %q, want original content", string(content))
+	}
+}
+
 // TestWorkspaceIntegrationApplyPreservedConflict verifies the spec for a
 // conflicting apply (plan edge case 5):
 //

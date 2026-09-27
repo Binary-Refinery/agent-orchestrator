@@ -1115,8 +1115,9 @@ func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceIn
 }
 
 // captureWorktreeCommit snapshots tracked and non-ignored untracked edits using
-// a temporary index. It never changes the real index, worktree, or stash stack.
-// An empty SHA means the worktree matches HEAD (apart from ignored files).
+// a temporary index seeded from HEAD. It never changes the real index,
+// worktree, or stash stack. An empty SHA means the worktree matches HEAD
+// (apart from ignored files).
 func (w *Workspace) captureWorktreeCommit(ctx context.Context, path, message string) (string, error) {
 	// Reserve a unique path for the temp index. Git requires GIT_INDEX_FILE to
 	// either be absent or contain a valid index, so remove the empty reservation.
@@ -1128,6 +1129,18 @@ func (w *Workspace) captureWorktreeCommit(ctx context.Context, path, message str
 	_ = tmpIdx.Close()
 	_ = os.Remove(tmpIdxPath)
 	defer func() { _ = os.Remove(tmpIdxPath) }()
+
+	headOut, headErr := w.run(ctx, w.binary, revParseHeadArgs(path)...)
+	headSHA := ""
+	if headErr == nil {
+		headSHA = strings.TrimSpace(string(headOut))
+		readTreeArgs := []string{"-C", path, "read-tree", headSHA}
+		readTreeCmd := aoprocess.CommandContext(ctx, w.binary, readTreeArgs...)
+		readTreeCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
+		if out, err := readTreeCmd.CombinedOutput(); err != nil {
+			return "", commandError{args: append([]string{w.binary}, readTreeArgs...), output: string(out), err: err}
+		}
+	}
 
 	addArgs := addAllTempIndexArgs(path)
 	addCmd := aoprocess.CommandContext(ctx, w.binary, addArgs...)
@@ -1145,11 +1158,6 @@ func (w *Workspace) captureWorktreeCommit(ctx context.Context, path, message str
 	}
 	treeSHA := strings.TrimSpace(string(treeOut))
 
-	headOut, headErr := w.run(ctx, w.binary, revParseHeadArgs(path)...)
-	headSHA := ""
-	if headErr == nil {
-		headSHA = strings.TrimSpace(string(headOut))
-	}
 	if headSHA != "" {
 		headTreeOut, err := w.run(ctx, w.binary, "-C", path, "rev-parse", headSHA+"^{tree}")
 		if err == nil && strings.TrimSpace(string(headTreeOut)) == treeSHA {
