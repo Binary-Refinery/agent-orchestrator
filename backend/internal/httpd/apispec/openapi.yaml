@@ -1985,6 +1985,31 @@ paths:
       summary: Enable the Connect Mobile LAN bridge and issue a fresh password
       tags:
       - mobile
+  /api/v1/mobile/enable-lan-only:
+    post:
+      operationId: enableMobileLANOnly
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Enable the authenticated LAN bridge without a managed public tunnel
+      tags:
+      - mobile
   /api/v1/mobile/keep-awake:
     post:
       operationId: setMobileKeepAwake

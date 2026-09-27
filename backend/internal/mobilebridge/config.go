@@ -29,6 +29,10 @@ type State struct {
 	Enabled  bool   `json:"enabled"`
 	Password string `json:"password"`
 	LastPort int    `json:"lastPort"`
+	// NoPublicTunnel keeps the self-hosted remote listener off the managed
+	// Cloudflare tunnel, including after daemon restart. Old Connect Mobile
+	// configs default to false and keep their existing behavior.
+	NoPublicTunnel bool `json:"noPublicTunnel"`
 	// SecurePairing is the opt-in TLS-over-Tailscale mode. Persisted so a daemon
 	// restart (backend/internal/daemon/mobile_restore.go, via
 	// BridgeService.RestoreOnBoot) knows to re-apply the `tailscale serve` proxy

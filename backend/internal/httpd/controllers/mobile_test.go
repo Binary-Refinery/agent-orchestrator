@@ -28,7 +28,8 @@ func (f *fakeBridge) Enable() (MobileStatusResponse, error) {
 	r.Password = "abcd1234"
 	return r, nil
 }
-func (f *fakeBridge) Disable() error { f.enabled = false; return nil }
+func (f *fakeBridge) EnableLANOnly() (MobileStatusResponse, error) { return f.Enable() }
+func (f *fakeBridge) Disable() error                               { f.enabled = false; return nil }
 func (f *fakeBridge) Regenerate() (MobileStatusResponse, error) {
 	r := f.Status()
 	r.Password = "wxyz5678"

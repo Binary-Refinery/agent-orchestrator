@@ -99,6 +99,17 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 			t.Fatalf("%s: got %d want 404 (Host-spoof + valid auth must not reach control routes)", path, resp.StatusCode)
 		}
 	}
+	{
+		req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/v1/mobile/enable-lan-only", port), nil)
+		req.Header.Set("Authorization", "Bearer secret12")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("LAN-only control route on LAN listener: got %d want 404", resp.StatusCode)
+		}
+	}
 
 	// Agent install mutations are loopback-only, while the adjacent GET
 	// catalog/status routes remain available to authenticated mobile clients.

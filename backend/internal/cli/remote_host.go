@@ -28,7 +28,7 @@ func newRemoteHostCommand(ctx *commandContext) *cobra.Command {
 		name, method, path string
 	}{
 		{"status", "GET", "mobile/status"},
-		{"enable", "POST", "mobile/enable"},
+		{"enable", "POST", "mobile/enable-lan-only"},
 		{"disable", "POST", "mobile/disable"},
 	} {
 		root.AddCommand(&cobra.Command{
@@ -36,14 +36,7 @@ func newRemoteHostCommand(ctx *commandContext) *cobra.Command {
 			Short: action.name + " this machine's authenticated remote listener",
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				var status remoteHostStatus
-				method, path := action.method, action.path
-				if action.name == "enable" {
-					method, path = "GET", "mobile/status"
-				}
-				err := ctx.doJSON(cmd.Context(), method, path, nil, &status)
-				if err == nil && action.name == "enable" && !status.Enabled {
-					err = ctx.doJSON(cmd.Context(), action.method, action.path, nil, &status)
-				}
+				err := ctx.doJSON(cmd.Context(), action.method, action.path, nil, &status)
 				if err != nil {
 					if errors.Is(err, errDaemonNotRunning) {
 						return daemonUnavailableError{message: "AO daemon is not running — run `ao daemon` on this machine", cause: errDaemonNotRunning}

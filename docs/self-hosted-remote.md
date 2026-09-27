@@ -12,6 +12,8 @@ or new global database. The existing AO Cloud path is separate.
 2. Run `ao remote-host enable` **on that machine**. It prints its stable Host ID,
    reachable addresses, and connection password. `ao remote-host status` shows
    the current details; `ao remote-host disable` closes the network listener.
+   This command does not start AO's managed public Cloudflare tunnel, even if
+   Connect Mobile previously started one.
 3. On each desktop client, enable **Settings → General → Remote hosts
    (experimental)** and add the address/password. Repeat for as many remote
    machines as needed. The sidebar lists each machine separately; **Start on

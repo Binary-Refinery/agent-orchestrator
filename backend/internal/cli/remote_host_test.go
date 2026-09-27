@@ -18,7 +18,7 @@ func TestRemoteHostCLIUsesLocalControlAPI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/mobile/enable":
+		case "/api/v1/mobile/enable-lan-only":
 			enabled = true
 			_, _ = io.WriteString(w, `{"enabled":true,"hostId":"host-a","endpoints":[{"kind":"lan","host":"192.168.1.10","port":3011,"secure":false}],"password":"pairing-secret"}`)
 		case "/api/v1/mobile/status":
@@ -43,8 +43,8 @@ func TestRemoteHostCLIUsesLocalControlAPI(t *testing.T) {
 		want       []string
 		absent     string
 	}{
-		{"enable", "enable", []string{"GET /api/v1/mobile/status", "POST /api/v1/mobile/enable"}, []string{"host-a", "http://192.168.1.10:3011", "pairing-secret"}, ""},
-		{"repeat enable", "enable", []string{"GET /api/v1/mobile/status"}, []string{"host-a", "http://192.168.1.10:3011", "pairing-secret"}, ""},
+		{"enable", "enable", []string{"POST /api/v1/mobile/enable-lan-only"}, []string{"host-a", "http://192.168.1.10:3011", "pairing-secret"}, ""},
+		{"repeat enable", "enable", []string{"POST /api/v1/mobile/enable-lan-only"}, []string{"host-a", "http://192.168.1.10:3011", "pairing-secret"}, ""},
 		{"status", "status", []string{"GET /api/v1/mobile/status"}, []string{"host-a", "http://192.168.1.10:3011", "pairing-secret"}, ""},
 		{"disable", "disable", []string{"POST /api/v1/mobile/disable"}, []string{"disabled"}, "pairing-secret"},
 	} {
@@ -83,7 +83,7 @@ func TestRemoteHostCLIRejectsArgsAndPreservesDaemonError(t *testing.T) {
 			_, _ = io.WriteString(w, `{"message":"status failed","code":"MOBILE_STATUS","requestId":"req-456"}`)
 		case r.URL.Path == "/api/v1/mobile/status":
 			_, _ = io.WriteString(w, `{"enabled":false,"hostId":"host-a"}`)
-		case r.URL.Path == "/api/v1/mobile/enable":
+		case r.URL.Path == "/api/v1/mobile/enable-lan-only":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"message":"listener failed","code":"MOBILE_ENABLE","requestId":"req-123"}`)
 		}
@@ -99,12 +99,12 @@ func TestRemoteHostCLIRejectsArgsAndPreservesDaemonError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "listener failed (MOBILE_ENABLE) [request req-123]") {
 		t.Fatalf("daemon error = %v, want request ID and code", err)
 	}
-	if got := strings.Join(requests, ","); got != "GET /api/v1/mobile/status,POST /api/v1/mobile/enable" {
-		t.Fatalf("requests = %v, want status then enable", requests)
+	if got := strings.Join(requests, ","); got != "POST /api/v1/mobile/enable-lan-only" {
+		t.Fatalf("requests = %v, want LAN-only enable", requests)
 	}
 	requests = nil
 	statusError = true
-	_, _, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "remote-host", "enable")
+	_, _, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "remote-host", "status")
 	if err == nil || !strings.Contains(err.Error(), "status failed (MOBILE_STATUS) [request req-456]") {
 		t.Fatalf("status error = %v, want request ID and code", err)
 	}
