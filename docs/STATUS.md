@@ -67,7 +67,7 @@ surface (`npm run sqlc`, `npm run api`).
   (claude-agent-acp), Auggie (native `auggie --acp`), Autohand
   (`autohand-acp`), Cline (native `cline --acp`), Goose (native `goose acp`),
   Kilo Code (native `kilocode acp`), Kiro (native `kiro-cli acp`), Vibe
-  (native `vibe-acp`), Prime Agent (native `prime-agent --mode acp`), Cursor,
+  (native `vibe-acp`), Cursor,
   OpenCode, Droid, Kimchi, Kimi, Pi, OMP, and Qwen. Qwen Chat uses native
   `qwen --acp` and requires Qwen Code 0.16.0 or newer. Qwen Code's ACP mode
   enforces approval modes over `session/request_permission` (verified live: a

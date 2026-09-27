@@ -20,7 +20,6 @@ agent plugin. AO never downloads, packages, or substitutes the provider CLI.
 | Goose | `goose acp` | session-advertised model options | `GOOSE_MODE` env (`smart_approve`/`auto`) | not injectable |
 | Kilo Code | `kilocode acp` | `session/set_config_option` (`model`, `effort`) | `KILO_CONFIG_CONTENT` permission map | `KILO_CONFIG_CONTENT` generated primary agent |
 | Kiro | `kiro-cli acp --agent ao` | `session/set_model` | ACP requests; `accept-edits`/`auto`/`bypass` auto-resolve | workspace-local `ao` custom agent |
-| Prime Agent | `prime-agent --mode acp` | not selectable: no config options, no `session/set_model` | unsupported: bypass-only admission | not injectable |
 | Vibe | `vibe-acp` | `session/set_config_option` (`model`) | ACP requests; `auto`/`bypass` use per-call approval, `accept-edits` prompts | not injectable |
 
 Codex remains on its native app-server. Claude Code, Cursor, OpenCode, Droid,
@@ -37,9 +36,6 @@ Kimi, Kimchi, Pi, OMP, and Qwen keep the bindings they already shipped.
   once `--acp` is set; `goose acp` accepts only `--with-builtin` and
   `--enable-scheduler`; `vibe-acp` accepts only setup/harness flags. The
   provider's own project rules (for example `AGENTS.md`) still apply.
-- **Prime Agent** has no ACP permission requests and no `session/load`, so AO
-  reports approvals and resume unsupported. Chat admission therefore requires
-  the explicit per-session bypass choice, exactly as Pi does.
 - Approval changes that a binding fixes at process launch are rejected with
   `ErrACPSetterUnsupported` rather than silently ignored; the UI tells the user
   to restart Chat. Bindings that resolve approvals per ACP request instead
@@ -62,7 +58,6 @@ run, which confirms the launch shape without confirming session behavior.
 | Autohand | adapter 0.2.1 | `autohand-acp` handshake: `loadSession: true`, session capabilities `list`/`resume`/`fork`. `AUTOHAND_PERMISSION_MODE` is present in the published adapter. `session/new` requires `autohand login`. |
 | Cline | 3.0.62 | `cline --acp` handshake: `loadSession: true`. `--help` confirms `--acp` and `--auto-approve <boolean>`; `CLINE_MODEL` is present in the shipped binary. `session/new` requires login. |
 | Kilo Code | 7.7.5 | `kilo acp --help` plus a full `session/new`: the session advertises selects `model`, `effort`, and `mode`, and `KILO_CONFIG_CONTENT` is present in the shipped binary. AO maps `model` and `effort`; `mode` is Kilo's agent mode, not an approval mode. `default_agent` was probed directly and is honored only for a primary agent -- see below. |
-| Prime Agent | 0.7.2 | `prime-agent --mode acp` handshake: `loadSession: false`, `session/new` advertises no config options, and `session/set_config_option` and `session/set_model` both answer `-32601`. AO therefore sends no session selectors. |
 | Kiro | not installed | `kiro-cli acp` is documented with `--agent <name>` only; no launch-time trust or model flag is published for the `acp` subcommand, so permissions stay on ACP requests. |
 | Goose | 1.51.0 | `goose acp` handshake: `loadSession: true`. `--help` lists exactly `--with-builtin` and `--enable-scheduler`, confirming no model or system-prompt flag; `GOOSE_MODE` and `smart_approve` are present in the shipped binary. `session/new` requires `GOOSE_PROVIDER`. |
 | Vibe | 2.25.5 | `vibe-acp` handshake: `loadSession: true`. `--help` lists only `--setup`/harness flags. Its `request_permission` (`vibe/acp/agent.py`) always offers `allow_once`, `allow_always`, `allow_always_permanent`, `reject_once`, but sends no tool kind -- hence the `accept-edits` limitation above. AO uses `allow_once` so a later permission downgrade takes effect. `session/new` requires a Mistral API key. |
@@ -100,5 +95,5 @@ depends on it.
 | Grok | none | `superagent-ai/grok-cli` has no ACP or persistent structured protocol. | Blocked. |
 | Kilo Code | ACP | `@kilocode/cli` is a fork of OpenCode with a native `acp` subcommand. | Implemented. |
 | Muse | third-party, unofficial | `@bex-co/muse-code-acp` is an unofficial community adapter for Meta's `muse` CLI; Meta publishes no first-party ACP server. | Not implemented: no first-party protocol and no local binary to validate the community adapter. |
-| Prime Agent | ACP | `prime-agent --mode acp`; `packages/coding-agent/src/modes/acp`. | Implemented. |
+| Prime Agent | ACP | `prime-agent --mode acp` advertises neither permission requests nor `session/load`; verified against 0.7.2. | Blocked: bypass can waive approvals, but AO's production floor still requires resumability. |
 | Autohand | ACP | Vendor-published `@autohandai/autohand-acp` adapter. | Implemented. |
