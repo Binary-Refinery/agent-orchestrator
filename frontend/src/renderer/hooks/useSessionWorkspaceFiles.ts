@@ -74,7 +74,11 @@ async function fetchSessionPRFiles(sessionId: string, number: number, sourceUrl:
 		params: { path: { sessionId, prNumber: number }, query: { sourceUrl } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
-	return { ...data, sections: { staged: [], unstaged: [], untracked: [], committed: data?.files ?? [] }, commits: [] } as WorkspaceFilesResponse;
+	return {
+		...data,
+		sections: { staged: [], unstaged: [], untracked: [], committed: data?.files ?? [] },
+		commits: (data?.commits ?? []).map((commit) => ({ ...commit, files: commit.files ?? [] })),
+	} as WorkspaceFilesResponse;
 }
 
 export const sessionWorkspaceFileQueryKey = (sessionId: string, path: string, scope: WorkspaceDiffScope = "combined", commitSha?: string) =>
@@ -89,9 +93,9 @@ async function fetchSessionWorkspaceFile(sessionId: string, path: string, scope:
 	return data as WorkspaceFileDetail;
 }
 
-async function fetchSessionPRFile(sessionId: string, number: number, sourceUrl: string, path: string, previousPath: string, errorMessage: string): Promise<WorkspaceFileDetail> {
+async function fetchSessionPRFile(sessionId: string, number: number, sourceUrl: string, path: string, previousPath: string, errorMessage: string, commitSha?: string): Promise<WorkspaceFileDetail> {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr/{prNumber}/file", {
-		params: { path: { sessionId, prNumber: number }, query: { path, previousPath, sourceUrl } },
+		params: { path: { sessionId, prNumber: number }, query: { path, previousPath, sourceUrl, commitSha } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
 	if (!data) throw new Error(errorMessage);
@@ -110,7 +114,7 @@ export function sessionWorkspaceFileQueryOptions(sessionId: string, path: string
 export function sessionSourceFileQueryOptions(sessionId: string, source: FilesSource, path: string, errorMessage = "Unable to load file", scope: WorkspaceDiffScope = "combined", commitSha?: string, previousPath = ""): UseQueryOptions<WorkspaceFileDetail> {
 	return source.kind === "workspace"
 		? sessionWorkspaceFileQueryOptions(sessionId, path, errorMessage, scope, commitSha)
-		: { queryKey: ["session-source-file", sessionId, "pull_request", source.url, source.snapshot ?? "", path], queryFn: () => fetchSessionPRFile(sessionId, source.number, source.url, path, previousPath, errorMessage) };
+		: { queryKey: ["session-source-file", sessionId, "pull_request", source.url, source.snapshot ?? "", commitSha ?? "", path], queryFn: () => fetchSessionPRFile(sessionId, source.number, source.url, path, previousPath, errorMessage, commitSha) };
 }
 
 export const sessionWorkspaceDiffsQueryKey = (
@@ -183,9 +187,9 @@ export async function fetchWorkspaceFileRevision({
 	return data;
 }
 
-export async function fetchPRFileRevision(sessionId: string, number: number, sourceUrl: string, path: string, side: "before" | "after"): Promise<WorkspaceFileRevision> {
+export async function fetchPRFileRevision(sessionId: string, number: number, sourceUrl: string, path: string, side: "before" | "after", commitSha?: string): Promise<WorkspaceFileRevision> {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr/{prNumber}/file/revision", {
-		params: { path: { sessionId, prNumber: number }, query: { path, side, sourceUrl } },
+		params: { path: { sessionId, prNumber: number }, query: { path, side, sourceUrl, commitSha } },
 	});
 	if (error || !data) throw new Error(apiErrorMessage(error, "Unable to load pull request file revision"));
 	return data as WorkspaceFileRevision;
@@ -232,8 +236,8 @@ export function sessionSourceFileRevisionQueryOptions({
 	return source.kind === "workspace"
 		? sessionWorkspaceFileRevisionQueryOptions({ path, scope, sessionId, side, workspaceVersion, commitSha })
 		: {
-			queryKey: ["session-source-file-revision", sessionId, "pull_request", source.url, source.snapshot ?? "", side, path] as const,
-			queryFn: () => fetchPRFileRevision(sessionId, source.number, source.url, path, side),
+			queryKey: ["session-source-file-revision", sessionId, "pull_request", source.url, source.snapshot ?? "", commitSha ?? "", side, path] as const,
+			queryFn: () => fetchPRFileRevision(sessionId, source.number, source.url, path, side, commitSha),
 		};
 }
 
