@@ -603,15 +603,17 @@ func (b *BridgeService) EnableLANOnly() (MobileStatusResponse, error) {
 	if err != nil {
 		return MobileStatusResponse{}, err
 	}
+	// A connector may still be running even if the listener went down. Stop it
+	// before any attempt to re-arm the private listener.
+	if t := b.tunnel(); t != nil {
+		t.Stop()
+	}
 	if st.Enabled && b.LAN.Running() {
 		if !st.NoPublicTunnel {
 			st.NoPublicTunnel = true
 			if err := mobilebridge.Save(b.ConfigPath, st); err != nil {
 				return MobileStatusResponse{}, err
 			}
-		}
-		if t := b.tunnel(); t != nil {
-			t.Stop()
 		}
 		return b.Status(), nil
 	}

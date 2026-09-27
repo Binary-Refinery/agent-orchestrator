@@ -79,6 +79,21 @@ func TestLANOnlyTransitionStopsPublicTunnelWithoutRotatingPassword(t *testing.T)
 	}
 }
 
+func TestLANOnlyEnableStopsPublicTunnelWhenListenerWentDown(t *testing.T) {
+	tunnel := &fakeTunnel{}
+	bridge := lanOnlyBridge(t, tunnel)
+	if _, err := bridge.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	bridge.LAN.(*fakeLAN).running = false
+	if _, err := bridge.EnableLANOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if tunnel.stops != 1 || !bridge.LAN.Running() || !loadLANOnlyState(t, bridge.ConfigPath).NoPublicTunnel {
+		t.Fatal("private re-enable left the old public tunnel running")
+	}
+}
+
 func TestLANOnlyRegenerateKeepsPublicTunnelOff(t *testing.T) {
 	tunnel := &fakeTunnel{}
 	bridge := lanOnlyBridge(t, tunnel)
