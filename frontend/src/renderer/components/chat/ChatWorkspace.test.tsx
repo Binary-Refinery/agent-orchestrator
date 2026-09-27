@@ -1253,13 +1253,13 @@ describe("ChatWorkspace timeline", () => {
 	// An asynchronous spawn puts the session on screen before its agent exists.
 	// That is not a controller that stopped, and the composer has to stay open:
 	// what the user types while it starts is queued, not lost.
-	it("explains a session that is still starting and keeps it typeable", () => {
+	it.each([false, true])("explains a session that is still starting and keeps it typeable (queued: %s)", (queued) => {
 		const snapshot = {
 			...chatFixtureSettled,
 			controller: { state: "connecting" as const },
 			turns: [
 				...chatFixtureSettled.turns,
-				{ id: "queued-start", state: "queued" as const, requestedAt: "2026-08-15T00:00:00Z" },
+				...(queued ? [{ id: "queued-start", state: "queued" as const, requestedAt: "2026-08-15T00:00:00Z" }] : []),
 			],
 		};
 		render(
@@ -1271,6 +1271,8 @@ describe("ChatWorkspace timeline", () => {
 		);
 
 		expect(screen.getByRole("status")).toHaveTextContent("Starting Codex…");
+		expect(screen.getByText("Agent is working — this sends when it finishes")).toBeInTheDocument();
+		expect(screen.queryByTestId("live-turn-status")).not.toBeInTheDocument();
 		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
 		expect(screen.queryByText("The agent controller stopped")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
