@@ -1289,7 +1289,7 @@ function ChatWorkspaceContent({
 	// at the bottom and stays there for the rest of the session.
 	const conversationEmpty = snapshot.items.length === 0 && !turn && (localEchos?.length ?? 0) === 0;
 	const [emptyChatPlaceholder] = useState(
-		() => EMPTY_CHAT_PLACEHOLDERS[Math.min(EMPTY_CHAT_PLACEHOLDERS.length - 1, Math.floor(Math.random() * EMPTY_CHAT_PLACEHOLDERS.length))],
+		() => EMPTY_CHAT_PLACEHOLDERS[Math.floor(Math.random() * EMPTY_CHAT_PLACEHOLDERS.length)],
 	);
 	const composerDockRef = useRef<HTMLDivElement>(null);
 	const composerCenteredTopRef = useRef<number | null>(null);
@@ -3216,7 +3216,7 @@ function Timeline({
 									canRollback={Boolean(onRollback && group.turnId && (group.rollbackable || group.live))}
 									rollbackDisabled={rollbackDisabled && !(group.outcome && turn?.id === group.turnId)}
 									busy={busy}
-								queued={Boolean(group.turnId && queued.has(group.turnId) && hasEarlierHumanMessage)}
+									queued={Boolean(group.turnId && queued.has(group.turnId) && hasEarlierHumanMessage)}
 								/>
 							</div>
 						);
