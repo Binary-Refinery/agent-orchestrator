@@ -73,11 +73,13 @@ describe("push registration across machines", () => {
 	});
 
 	it("keeps B registered when A's earlier registration finishes late", async () => {
-		const aStarted = Promise.withResolvers<void>();
-		const releaseA = Promise.withResolvers<void>();
+		let signalA!: () => void;
+		let releaseA!: () => void;
+		const aStarted = new Promise<void>((resolve) => { signalA = resolve; });
+		const aCanFinish = new Promise<void>((resolve) => { releaseA = resolve; });
 		vi.mocked(registerPushDevice).mockImplementationOnce(async () => {
-			aStarted.resolve();
-			await releaseA.promise;
+			signalA();
+			await aCanFinish;
 		});
 		vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
 			ok: true,
@@ -85,10 +87,10 @@ describe("push registration across machines", () => {
 		})));
 
 		const onA = registerForPush(config("h_a"));
-		await aStarted.promise;
+		await aStarted;
 		const onB = registerForPush(config("h_b", "100.101.102.103"));
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		releaseA.resolve();
+		releaseA();
 		await Promise.all([onA, onB]);
 
 		expect((await getPushStatus(config("h_b", "100.101.102.103"))).registered).toBe(true);
