@@ -10,7 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestStatusReadinessWaitsForRecoveryAndAllowsRetry(t *testing.T) {
+func TestStatusReadinessWaitsForRecoveryAndRetriesAutomatically(t *testing.T) {
 	m, st, rt, _ := newManager()
 	rec := domain.SessionRecord{ID: "s1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
 		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Unix(100, 0)},
@@ -23,19 +23,16 @@ func TestStatusReadinessWaitsForRecoveryAndAllowsRetry(t *testing.T) {
 	if err := m.ReconcileBackground(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.SessionStatusReadiness(rec); got != "unavailable" {
-		t.Fatalf("failed probe = %s", got)
+	if got := m.SessionStatusReadiness(rec); got != "checking" {
+		t.Fatalf("failed probe = %s, want neutral checking while recovery retries", got)
 	}
 	if st.sessions[rec.ID].Activity != rec.Activity {
 		t.Fatal("failed probe changed activity")
 	}
 	rt.aliveErr = nil
 	rt.aliveByHandle = map[string]bool{"s1": true}
-	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := m.SessionStatusReadiness(st.sessions[rec.ID]); got != "ready" {
-		t.Fatalf("retry = %s", got)
+	if !waitForStatusReadiness(t, m, st.sessions[rec.ID], "ready") {
+		t.Fatal("automatic liveness retry did not recover the session")
 	}
 	if rt.created != 0 {
 		t.Fatal("retry spawned a duplicate of a surviving runtime")
@@ -108,28 +105,37 @@ func TestStatusReadinessDeadlineReleasesSessionForRetry(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
-	if got := m.SessionStatusReadiness(rec); got != "unavailable" {
-		t.Fatalf("deadline = %s, want unavailable", got)
+	if got := m.SessionStatusReadiness(rec); got != "checking" {
+		t.Fatalf("deadline = %s, want checking while recovery retries", got)
 	}
 	rt.aliveByHandle = map[string]bool{"s1": true}
 	m.runtime = rt
-	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
-		t.Fatalf("retry after deadline: %v", err)
-	}
-	if got := m.SessionStatusReadiness(st.sessions[rec.ID]); got != "ready" {
-		t.Fatalf("retry = %s, want ready", got)
+	if !waitForStatusReadiness(t, m, st.sessions[rec.ID], "ready") {
+		t.Fatal("automatic retry after deadline did not recover the session")
 	}
 }
 
-func TestStatusReadinessDiscoveryFailureIsUnavailable(t *testing.T) {
+func TestStatusReadinessDiscoveryFailureDoesNotMarkSessionsUnavailable(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.listAllErr = errors.New("storage unavailable")
 	if err := m.ReconcileBackground(context.Background()); err == nil {
 		t.Fatal("expected discovery failure")
 	}
-	if got := m.SessionStatusReadiness(domain.SessionRecord{ID: "s1"}); got != "unavailable" {
-		t.Fatalf("readiness = %s", got)
+	if got := m.SessionStatusReadiness(domain.SessionRecord{ID: "s1"}); got != "checking" {
+		t.Fatalf("readiness = %s, want checking because a global scan failure proves no individual session is dead", got)
 	}
+}
+
+func waitForStatusReadiness(t *testing.T, m *Manager, rec domain.SessionRecord, want string) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := m.SessionStatusReadiness(rec); got == want {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return m.SessionStatusReadiness(rec) == want
 }
 
 func TestStatusReadinessFreshSpawnAfterDiscoveryFailureIsReady(t *testing.T) {

@@ -36,8 +36,7 @@ func (m *Manager) SessionStatusReadiness(rec domain.SessionRecord) string {
 		if result.pending {
 			return "checking"
 		}
-		if result.failed != nil && !rec.IsTerminated && rec.Activity.State != domain.ActivityExited &&
-			rec.ControllerOwner() == result.failed.ControllerOwner() && rec.Activity == result.failed.Activity {
+		if result.failed != nil && rec.ControllerOwner() == result.failed.ControllerOwner() && rec.Activity == result.failed.Activity {
 			return "unavailable"
 		}
 		return "ready"
@@ -45,7 +44,10 @@ func (m *Manager) SessionStatusReadiness(rec domain.SessionRecord) string {
 	select {
 	case <-m.startupBackgroundReconcileDone:
 		if m.statusRecoveryFailed {
-			return "unavailable"
+			// A discovery/read failure says nothing about any individual
+			// controller's liveness. Don't turn every session red because the
+			// daemon couldn't complete its global startup scan.
+			return "checking"
 		}
 		return "ready"
 	default:

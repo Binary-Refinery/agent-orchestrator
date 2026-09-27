@@ -8,7 +8,8 @@
  */
 
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
-import { memo, useEffect, useRef, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -20,6 +21,7 @@ import { useObservedAgentSwitchLifecycle } from "../../hooks/useObservedAgentSwi
 import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../../hooks/useAgentSwitchVisibility";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
+	conversationQueryKey,
 	useConversation,
 	useConversationCommands,
 	useConversationConfigOptions,
@@ -171,6 +173,28 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
 	onConversationWorkChange?: (state: ConversationWorkState) => void;
 }) {
+	const queryClient = useQueryClient();
+	const previousStatusReadiness = useRef(session.statusReadiness);
+	const [recoverySnapshotPending, setRecoverySnapshotPending] = useState(
+		session.statusReadiness === "checking",
+	);
+	useEffect(() => {
+		const previous = previousStatusReadiness.current;
+		previousStatusReadiness.current = session.statusReadiness;
+		if (previous === "checking" && session.statusReadiness !== "checking") {
+			setRecoverySnapshotPending(true);
+			// The first conversation snapshot can race daemon startup recovery and
+			// capture the empty controller registry. Read it again after verification
+			// settles so a successfully reattached controller is reflected immediately.
+			void queryClient
+				.invalidateQueries({ queryKey: conversationQueryKey(session.id) })
+				.then(
+					() => setRecoverySnapshotPending(false),
+					() => setRecoverySnapshotPending(false),
+				);
+		}
+	}, [queryClient, session.id, session.statusReadiness]);
+
 	// ShellTopbar already resolves this state for the editor action. Read the
 	// same cached query here so the stopped-controller banner never offers a
 	// resume or shell action when this session's worktree is gone.
@@ -491,6 +515,9 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 			<ChatWorkspace
 				key={session.id}
 				snapshot={renderSnapshot}
+				controllerRecoveryChecking={
+					session.statusReadiness === "checking" || recoverySnapshotPending
+				}
 				agentInputDisabled={switchLocksChat || handoffDialogOpen}
 				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}

@@ -335,6 +335,8 @@ export interface ChatWorkspaceProps {
 	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
+	/** Keep a stale stopped snapshot in a neutral checking state during daemon recovery. */
+	controllerRecoveryChecking?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
 	agentInputDisabled?: boolean;
 	/** Fence new agent work without blocking decisions required by the current turn. */
@@ -580,6 +582,7 @@ function ChatWorkspaceContent({
 	auxiliaryTabOrder,
 	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
+	controllerRecoveryChecking = false,
 	agentInputDisabled = false,
 	newWorkDisabled = false,
 	reviewerTerminal,
@@ -1466,6 +1469,7 @@ function ChatWorkspaceContent({
 					) : null}
 					<ControllerBanner
 						controller={snapshot.controller}
+						statusReadiness={controllerRecoveryChecking ? "checking" : session?.statusReadiness}
 						agentName={agentLabel(snapshot.harness)}
 						provisionState={session?.provisionState}
 						provisionError={session?.provisionError}
@@ -1947,6 +1951,7 @@ function ChatHeader({
  */
 function ControllerBanner({
 	controller,
+	statusReadiness,
 	agentName,
 	provisionState,
 	provisionError,
@@ -1960,6 +1965,7 @@ function ControllerBanner({
 	shellError,
 }: {
 	controller: { state: ControllerState; error?: string };
+	statusReadiness?: WorkspaceSession["statusReadiness"];
 	agentName: string;
 	provisionState?: WorkspaceSession["provisionState"];
 	provisionError?: string;
@@ -1975,6 +1981,11 @@ function ControllerBanner({
 	const provisioning = provisionState === "provisioning";
 	const failed = provisionState === "failed";
 	const starting = provisioning || failed;
+	// The session list reports `checking` while daemon startup verifies and
+	// reconnects persisted sessions. A Chat snapshot can arrive first and report
+	// its empty in-memory controller registry as `stopped`; don't call that a
+	// failure until the daemon's recovery pass has actually finished.
+	const recoveryChecking = statusReadiness === "checking" && controller.state === "stopped";
 
 	// The transition coordinator intentionally stops one controller before it
 	// starts the other. The top-bar handoff state already explains that interval;
@@ -2000,13 +2011,15 @@ function ControllerBanner({
 		? { title: `Starting ${agentName}…`, tone: "text-muted-foreground" }
 		: failed
 			? { title: "This session could not be started", tone: "text-destructive" }
+			: recoveryChecking
+				? { title: "Checking the agent connection…", tone: "text-muted-foreground" }
 			: copy[controller.state];
 	if (!shown) return null;
-	const loading = provisioning || (!failed && controller.state === "connecting");
+	const loading = provisioning || recoveryChecking || (!failed && controller.state === "connecting");
 
 	return (
 		<div
-			role={failed || controller.state === "stopped" ? "alert" : "status"}
+			role={failed || (controller.state === "stopped" && !recoveryChecking) ? "alert" : "status"}
 			aria-atomic="true"
 			className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5"
 		>
@@ -2047,7 +2060,7 @@ function ControllerBanner({
 				) : controller.error ? (
 					<span className="text-[11px] leading-snug text-muted-foreground">{controller.error}</span>
 				) : null}
-				{!starting && controller.state === "stopped" ? (
+				{!starting && !recoveryChecking && controller.state === "stopped" ? (
 					<>
 						{resumeWorkspaceUnavailable ? (
 							<>
@@ -3203,12 +3216,11 @@ function Timeline({
 									canRollback={Boolean(onRollback && group.turnId && (group.rollbackable || group.live))}
 									rollbackDisabled={rollbackDisabled && !(group.outcome && turn?.id === group.turnId)}
 									busy={busy}
-							queued={Boolean(group.turnId && queued.has(group.turnId) && hasEarlierHumanMessage)}
+								queued={Boolean(group.turnId && queued.has(group.turnId) && hasEarlierHumanMessage)}
 								/>
 							</div>
 						);
 					})}
-<<<<<<< HEAD
 					{turn && !groups.some((group) => group.turnId === turn.id) ? (
 						<TurnLiveStatus />
 					) : null}

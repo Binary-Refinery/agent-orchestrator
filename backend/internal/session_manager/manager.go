@@ -3455,7 +3455,12 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	acquired, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile)
 	if err != nil {
 		for _, rec := range candidates {
-			m.finishStatusRecovery(ctx, rec, err)
+			if isUnrecoverableStartupRecoveryError(err) {
+				m.finishStatusRecovery(ctx, rec, err)
+			} else {
+				m.beginStatusRecovery(rec.ID)
+				go m.retryLiveRecovery(ctx, rec.ID)
+			}
 		}
 		m.logger.Warn("reconcile: could not fence live sessions", "error", err)
 		return
@@ -3467,7 +3472,8 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	live := make([]domain.SessionRecord, 0, len(acquired))
 	for _, rec := range candidates {
 		if _, ok := acquiredSet[rec.ID]; !ok {
-			m.finishStatusRecovery(ctx, rec, ErrResumeInProgress)
+			m.beginStatusRecovery(rec.ID)
+			go m.retryLiveRecovery(ctx, rec.ID)
 			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
 			continue
 		}
@@ -3494,10 +3500,14 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 					defer cancel()
 					return m.reconcileLive(recoveryCtx, rec)
 				}()
-				m.finishStatusRecovery(ctx, rec, err)
 				if err != nil {
 					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
+					if !isUnrecoverableStartupRecoveryError(err) {
+						go m.retryLiveRecovery(ctx, rec.ID)
+						continue
+					}
 				}
+				m.finishStatusRecovery(ctx, rec, err)
 			}
 		}()
 	}
@@ -3506,6 +3516,69 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+// retryLiveRecovery keeps an uncertain startup reconnect neutral and retries it
+// without requiring the user to discover and click Resume. A provider being
+// slow, a GUI-launched daemon missing a transient dependency, or another
+// process briefly owning a native writer is not proof that a session is dead.
+func (m *Manager) retryLiveRecovery(ctx context.Context, id domain.SessionID) {
+	backoff := 2 * time.Second
+	for {
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			backoff = nextRecoveryBackoff(backoff)
+			continue
+		}
+		if !ok || rec.IsTerminated {
+			m.finishStatusRecovery(ctx, rec, nil)
+			return
+		}
+		if err := m.beginAgentOperation(ctx, id, agentOperationReconcile); err != nil {
+			backoff = nextRecoveryBackoff(backoff)
+			continue
+		}
+		recoveryCtx, cancel := context.WithTimeout(ctx, m.statusVerificationLimit)
+		err = m.reconcileLive(recoveryCtx, rec)
+		cancel()
+		m.endAgentOperation(id, agentOperationReconcile)
+		if err == nil {
+			m.finishStatusRecovery(ctx, rec, nil)
+			return
+		}
+		if isUnrecoverableStartupRecoveryError(err) {
+			m.finishStatusRecovery(ctx, rec, err)
+			return
+		}
+		backoff = nextRecoveryBackoff(backoff)
+	}
+}
+
+func nextRecoveryBackoff(current time.Duration) time.Duration {
+	const maxBackoff = 30 * time.Second
+	if current >= maxBackoff/2 {
+		return maxBackoff
+	}
+	return current * 2
+}
+
+// Only typed, terminal conditions justify a persistent unavailable state.
+// Unclassified errors stay eligible for background recovery instead of
+// painting the session red on a transient startup race.
+func isUnrecoverableStartupRecoveryError(err error) bool {
+	return errors.Is(err, ErrIncompleteHandle) ||
+		errors.Is(err, ErrNotResumable) ||
+		errors.Is(err, ports.ErrChatUnsupported) ||
+		errors.Is(err, ports.ErrChatDriverIncompatible) ||
+		errors.Is(err, ports.ErrChatResumeFailed)
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last
@@ -3529,15 +3602,67 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		if !rec.IsTerminated {
 			continue
 		}
-		m.restoreAllSession(ctx, rec)
+		m.beginStatusRecovery(rec.ID)
+		err := m.attemptRestoreAllSession(ctx, rec.ID)
+		if err == nil || errors.Is(err, ErrNotFound) {
+			m.finishStatusRecovery(ctx, rec, nil)
+			continue
+		}
+		if isUnrecoverableStartupRecoveryError(err) {
+			m.finishStatusRecovery(ctx, rec, err)
+			continue
+		}
+		m.logger.Warn("restore-all: session remains in recovery; retrying in background", "sessionID", rec.ID, "error", err)
+		go m.retryRestoredRecovery(ctx, rec.ID)
 	}
 	return nil
+}
+
+func (m *Manager) attemptRestoreAllSession(ctx context.Context, id domain.SessionID) error {
+	if err := m.beginAgentOperation(ctx, id, agentOperationReconcile); err != nil {
+		return err
+	}
+	defer m.endAgentOperation(id, agentOperationReconcile)
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok || !rec.IsTerminated {
+		return nil
+	}
+	return m.restoreAllSession(ctx, rec)
+}
+
+func (m *Manager) retryRestoredRecovery(ctx context.Context, id domain.SessionID) {
+	backoff := 2 * time.Second
+	for {
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		err := m.attemptRestoreAllSession(ctx, id)
+		if err == nil || errors.Is(err, ErrNotFound) {
+			rec, _, _ := m.store.GetSession(ctx, id)
+			m.finishStatusRecovery(ctx, rec, nil)
+			return
+		}
+		if isUnrecoverableStartupRecoveryError(err) {
+			rec, _, _ := m.store.GetSession(ctx, id)
+			m.finishStatusRecovery(ctx, rec, err)
+			return
+		}
+		backoff = nextRecoveryBackoff(backoff)
+	}
 }
 
 // restoreAllSession restores one terminated session marked for restore at
 // shutdown, acquiring the project workspace gate so cleanup does not tear down
 // its workspace while restore is in progress.
-func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecord) {
+func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecord) error {
 	releaseWorkspaceGate := m.acquireWorkspaceGate(rec.ProjectID)
 	defer releaseWorkspaceGate()
 
@@ -3545,15 +3670,15 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 	rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
 	if err != nil {
 		m.logger.Error("restore-all: list worktrees failed", "sessionID", rec.ID, "error", err)
-		return
+		return err
 	}
 	if len(rows) == 0 {
 		// No marker: this session was killed by the user before shutdown.
-		return
+		return nil
 	}
 	rows = restorableWorktreeRows(rows)
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 
 	// Step 1: ensure the worktree exists. workspace.Restore re-creates it
@@ -3561,7 +3686,7 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		m.logger.Error("restore-all: load project failed", "sessionID", rec.ID, "error", err)
-		return
+		return err
 	}
 	var ws ports.WorkspaceInfo
 	restoredWorkspaceProject := project.Kind.WithDefault() == domain.ProjectKindWorkspace
@@ -3571,12 +3696,12 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 		projectRows, rowErr = m.workspaceProjectRestoreRowsFromMarkers(ctx, project, rec, rows)
 		if rowErr != nil {
 			m.logger.Error("restore-all: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			return
+			return rowErr
 		}
 		root, restoreErr := m.restoreWorkspaceProjectRows(ctx, projectRows)
 		if restoreErr != nil {
 			m.logger.Error("restore-all: workspace project restore failed", "sessionID", rec.ID, "error", restoreErr)
-			return
+			return restoreErr
 		}
 		ws = workspaceInfoFromRepoInfo(root)
 	} else {
@@ -3593,16 +3718,16 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 		})
 		if restoreErr != nil {
 			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", restoreErr)
-			return
+			return restoreErr
 		}
 	}
 	if ws.Path == "" {
 		m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", "empty restored root path")
-		return
+		return fmt.Errorf("restore-all: workspace restore returned empty path: %w", ErrIncompleteHandle)
 	}
 	if err := m.restoreAttachments(ctx, rec.ID, ws); err != nil {
 		m.logger.Error("restore-all: restore attachments failed", "sessionID", rec.ID, "error", err)
-		return
+		return err
 	}
 
 	// Step 2: replay preserve ref when one was recorded.
@@ -3643,7 +3768,7 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 		default:
 			m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 		}
-		return
+		return err
 	}
 
 	// One-shot: drop the consumed marker so it never outlives one restart
@@ -3662,6 +3787,7 @@ func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecor
 			m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
+	return nil
 }
 
 func restorableWorktreeRows(rows []domain.SessionWorktreeRecord) []domain.SessionWorktreeRecord {
