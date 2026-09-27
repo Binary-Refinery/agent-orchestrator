@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
+import { aoBridge } from "../lib/bridge";
 import { TooltipProvider } from "./ui/tooltip";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
@@ -499,6 +500,7 @@ describe("SessionInspector PR section", () => {
   });
 
   it("uses the singular heading and shows enriched facts for a single PR", () => {
+    const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
     renderWithQuery(
       <SessionInspector session={session([pr(7, "open")])} />,
       undefined,
@@ -534,6 +536,9 @@ describe("SessionInspector PR section", () => {
     expect(
       prSection("Pull request").getByRole("button", { name: "Merge PR #7" }),
     ).toBeInTheDocument();
+    fireEvent.click(prSection("Pull request").getByRole("link", { name: /Checks passing/ }));
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/repo/pull/7/checks");
+    openExternal.mockRestore();
   });
 
   it("shows only people who commented beside the review status", () => {
@@ -919,7 +924,11 @@ describe("SessionInspector PR section", () => {
     expect(commentCount).toHaveTextContent("9");
     expect(commentCount.querySelector("svg.lucide-message-square")).toBeInTheDocument();
     expect(prSection("Pull request").getByLabelText("Commented: alice, bob")).toBeInTheDocument();
-    expect(prSection("Pull request").getAllByRole("link")).toHaveLength(1);
+    expect(prSection("Pull request").getByRole("link", { name: /#4383/ })).toHaveAttribute("href", "https://github.com/acme/repo/pull/4383");
+    expect(prSection("Pull request").getByRole("link", { name: /Checks passing/ })).toHaveAttribute("href", "https://github.com/acme/repo/pull/4383/checks");
+    expect(prSection("Pull request").getByRole("link", { name: /No review required/ })).toHaveAttribute("href", "https://github.com/acme/repo/pull/4383");
+    expect(prSection("Pull request").getByRole("link", { name: /Ready to merge/ })).toHaveAttribute("href", "https://github.com/acme/repo/pull/4383");
+    expect(prSection("Pull request").getAllByRole("link")).toHaveLength(5);
     expect(prSection("Pull request").getByText("No review required")).toBeInTheDocument();
     expect(prSection("Pull request").queryByRole("button", { name: "View review details" })).not.toBeInTheDocument();
   });

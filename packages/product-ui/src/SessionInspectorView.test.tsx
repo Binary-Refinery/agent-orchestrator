@@ -201,6 +201,11 @@ describe("portable inspector presentations", () => {
               tone: "success",
             },
             supporting: [],
+            statusRows: [
+              { key: "ci", label: "Checks passing", links: [], tone: "success", href: "https://example.com/pull/12/checks" },
+              { key: "review", label: "No review required", links: [], tone: "passive", href: "https://example.com/pull/12" },
+              { key: "merge", label: "Ready to merge", links: [], tone: "success", href: "https://example.com/pull/12" },
+            ],
           },
           changedFiles: 2,
           deletions: 1,
@@ -220,10 +225,14 @@ describe("portable inspector presentations", () => {
     expect(screen.getByText("feature → main")).toBeInTheDocument();
     expect(title.parentElement).toContainElement(screen.getByText("#12"));
     expect(screen.queryByText("@ada")).not.toBeInTheDocument();
-    expect(screen.getByText("Ready to merge")).toHaveClass("text-success");
+    expect(screen.getByText("Ready to merge").parentElement).toHaveClass("text-success");
     expect(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Portable inspector #12" })).toHaveAttribute("href", "https://example.com/pull/12");
+    expect(screen.getByRole("link", { name: /Checks passing/ })).toHaveAttribute("href", "https://example.com/pull/12/checks");
+    expect(screen.getByRole("link", { name: /No review required/ })).toHaveAttribute("href", "https://example.com/pull/12");
+    expect(screen.getByRole("link", { name: /Ready to merge/ })).toHaveAttribute("href", "https://example.com/pull/12");
     expect(screen.getByRole("link", { name: "View PR" })).toHaveAttribute("href", "https://example.com/pull/12");
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getAllByRole("link")).toHaveLength(5);
   });
 
   it("renders timeline events with current-state marker treatment", () => {

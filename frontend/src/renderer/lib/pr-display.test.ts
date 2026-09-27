@@ -345,7 +345,20 @@ describe("prCardPresentation", () => {
 			href: "https://github.com/acme/repo/pull/7/checks",
 			breathe: true,
 		});
-		expect(presentation.statusRows?.[2]?.label).toBe("Merge blocked");
+		expect(presentation.statusRows?.[1]).toMatchObject({ label: "Review pending", href: "https://github.com/acme/repo/pull/7" });
+		expect(presentation.statusRows?.[2]).toMatchObject({ label: "Merge blocked", href: "https://github.com/acme/repo/pull/7" });
+	});
+
+	it("links GitLab checks status to the merge request when a checks page is unavailable", () => {
+		const href = "https://gitlab.com/acme/repo/-/merge_requests/7";
+		const presentation = prCardPresentation(summary({
+			provider: "gitlab",
+			url: href,
+			htmlUrl: href,
+			mergeability: { state: "mergeable", reasons: [], prUrl: href },
+		}));
+
+		expect(presentation.statusRows?.[0]?.href).toBe(href);
 	});
 
 	it("shows running checks instead of an internal provider blocker", () => {

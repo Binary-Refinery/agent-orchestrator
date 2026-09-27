@@ -239,8 +239,11 @@ export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
 						? "pr.review.pending"
 						: "pr.review.notRequired",
 			reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments),
+			undefined,
+			[],
+			prBrowserUrl(pr),
 		);
-		return { primary, supporting, statusRows: [checks, review, mergeReadiness(pr)] };
+		return { primary, supporting, statusRows: [{ ...checks, href: checks.href ?? prBrowserUrl(pr) }, review, mergeReadiness(pr)] };
 	}
 	return { primary, supporting };
 }

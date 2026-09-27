@@ -155,7 +155,7 @@ export function PRCardStatusSummary({
 								{status.tone === "success" ? <CheckIcon className="size-3.5 shrink-0" /> :
 									status.tone === "error" || status.tone === "warning" ? <XIcon className="size-3.5 shrink-0" /> :
 									<span aria-hidden="true" className={cn("mx-1 size-dot-sm shrink-0 rounded-full bg-current", status.breathe && "animate-status-pulse")} />}
-									<span>{status.label}</span>
+								<PRCardStatusLink externalLink={externalLink} status={status} />
 							</div>
 							{status.key === "review" && reviewDetailsAction ? <div className="shrink-0">{reviewDetailsAction}</div> : null}
 						</div>
