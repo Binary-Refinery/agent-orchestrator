@@ -1700,7 +1700,8 @@ SELECT COALESCE((
 // to main's PR discussion migration. The physical schemas determine whether
 // Goose should apply PR discussion at 159 and automations at canonical 161.
 // An older automation build also used 156; release it only when the canonical
-// session-provisioning columns are absent.
+// session-provisioning columns are absent. Once 162 has dropped the PR
+// discussion columns, their absence no longer says anything about 159.
 func repairBurnedAutomationsMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -1745,6 +1746,10 @@ SELECT COALESCE((
 	if err != nil {
 		return err
 	}
+	applied162, err := applied(162)
+	if err != nil {
+		return err
+	}
 	if automationsTable > 0 && automationRunID > 0 {
 		if applied156 && provisionColumns != 2 {
 			if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 156`); err != nil {
@@ -1760,6 +1765,9 @@ SELECT COALESCE((
 		if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 161`); err != nil {
 			return err
 		}
+	}
+	if applied162 {
+		return nil
 	}
 	if discussionColumn > 0 && !applied159 {
 		_, err = db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (159, 1)`)
