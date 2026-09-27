@@ -162,35 +162,66 @@ function CloudTestProviders({ children }: { children: ReactNode }) {
 // RequiredAgentField is left real (the cloud agent step below renders it
 // directly against provider-connection state); only the heavy local sheet,
 // which needs its own daemon-backed state, is stubbed.
-vi.mock("./CreateProjectAgentSheet", async (importOriginal) => ({
-	...(await importOriginal<typeof import("./CreateProjectAgentSheet")>()),
-	CreateProjectAgentSheet: ({
-		error,
-		kind,
-		onSubmit,
-		open,
-		path,
-		shake,
-	}: {
-		error?: string | null;
-		kind: string;
-		onSubmit: (selection: { workerAgent: string; orchestratorAgent: string }) => Promise<void>;
-		open: boolean;
-		path: string | null;
-		shake?: boolean;
-	}) =>
-		open ? (
-			<div className={shake ? "modal-shake" : undefined} data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet">
-				{error ? <span>{error}</span> : null}
-				<button
-					type="button"
-					onClick={() => void onSubmit({ workerAgent: "codex", orchestratorAgent: "codex" })}
-				>
-					Submit agents
-				</button>
-			</div>
-		) : null,
-}));
+vi.mock("./CreateProjectAgentSheet", async (importOriginal) => {
+	const { useEffect, useState } = await import("react");
+	return {
+		...(await importOriginal<typeof import("./CreateProjectAgentSheet")>()),
+		CreateProjectAgentSheet: ({
+			defaultBranchCandidate = null,
+			error,
+			kind,
+			onSubmit,
+			open,
+			path,
+			shake,
+		}: {
+			defaultBranchCandidate?: string | null;
+			error?: string | null;
+			kind: string;
+			onSubmit: (selection: {
+				workerAgent: string;
+				orchestratorAgent: string;
+				defaultBranch?: string;
+			}) => Promise<void>;
+			open: boolean;
+			path: string | null;
+			shake?: boolean;
+		}) => {
+			const [branch, setBranch] = useState(defaultBranchCandidate ?? "");
+			useEffect(() => {
+				if (defaultBranchCandidate !== null) setBranch(defaultBranchCandidate);
+			}, [defaultBranchCandidate]);
+			if (!open) return null;
+			return (
+				<div className={shake ? "modal-shake" : undefined} data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet">
+					{error ? <span>{error}</span> : null}
+					{defaultBranchCandidate !== null ? (
+						<label>
+							Default branch for new sessions
+							<input
+								aria-label="Default branch for new sessions"
+								onChange={(event) => setBranch(event.target.value)}
+								value={branch}
+							/>
+						</label>
+					) : null}
+					<button
+						type="button"
+						onClick={() =>
+							void onSubmit({
+								workerAgent: "codex",
+								orchestratorAgent: "codex",
+								...(defaultBranchCandidate !== null ? { defaultBranch: branch.trim() } : {}),
+							})
+						}
+					>
+						Submit agents
+					</button>
+				</div>
+			);
+		},
+	};
+});
 
 // Probe stand-in: the real dialog needs its own form state and validation.
 // These tests only care whether the clone flow is on screen and that the
@@ -1376,7 +1407,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(bridgeMocks.getRepositoryBranch).not.toHaveBeenCalled();
 	});
 
-	it("preserves the checked-out root branch when importing a workspace", async () => {
+	it("confirms the checked-out root branch when importing a workspace", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn(async () => undefined);
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
@@ -1401,13 +1432,17 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow({ onCreateProject });
 		await openSource(user, "Import a workspace folder");
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		const branchField = await screen.findByLabelText(/default branch/i);
+		expect(branchField).toHaveValue("main");
+		await user.clear(branchField);
+		await user.type(branchField, "trunk");
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/project",
 				asWorkspace: true,
-				defaultBranch: "main",
+				defaultBranch: "trunk",
 				workerAgent: "codex",
 				orchestratorAgent: "codex",
 			}),
@@ -1415,11 +1450,11 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(bridgeMocks.getRepositoryBranch).toHaveBeenCalledWith("/repo/project");
 	});
 
-	it("opens agent setup for a committed remoteless repository and records its branch", async () => {
+	it("opens agent setup for a committed remoteless repository and confirms its branch", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined);
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/local-only");
-		bridgeMocks.getRepositoryBranch.mockResolvedValue("main");
+		bridgeMocks.getRepositoryBranch.mockResolvedValue("feature/local");
 		apiMocks.POST.mockResolvedValueOnce({
 			data: projectValidation("/repo/local-only", {
 				nextStep: "continue",
@@ -1437,13 +1472,15 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/local-only");
 		expect(screen.queryByText(/does not have a GitHub remote/i)).not.toBeInTheDocument();
+		const branchField = await screen.findByLabelText(/default branch/i);
+		expect(branchField).toHaveValue("feature/local");
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 
 		await waitFor(() =>
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/local-only",
 				asWorkspace: false,
-				defaultBranch: "main",
+				defaultBranch: "feature/local",
 				workerAgent: "codex",
 				orchestratorAgent: "codex",
 			}),

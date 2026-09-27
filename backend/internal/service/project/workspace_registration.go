@@ -188,7 +188,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
 			var apiErr *apierr.Error
-			if errors.As(err, &apiErr) && (apiErr.Code == "WORKSPACE_CHILD_ORIGIN_REQUIRED" || apiErr.Code == "WORKSPACE_CHILD_UNBORN" || apiErr.Code == "WORKSPACE_CHILD_IS_WORKTREE") {
+			if errors.As(err, &apiErr) && (apiErr.Code == "WORKSPACE_CHILD_UNBORN" || apiErr.Code == "WORKSPACE_CHILD_IS_WORKTREE") {
 				repos = append(repos, domain.WorkspaceRepoRecord{
 					ProjectID:     projectID,
 					Name:          name,
@@ -201,6 +201,10 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			}
 			return nil, err
 		}
+		defaultBranch, err := resolveRegisteredChildDefaultBranch(ctx, child)
+		if err != nil {
+			return nil, err
+		}
 		repos = append(repos, domain.WorkspaceRepoRecord{
 			ProjectID:     projectID,
 			Name:          name,
@@ -208,8 +212,9 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			RepoOriginURL: resolveGitOriginURL(child),
 			// Preserve AO's recorded branch for repositories it initialized during
 			// onboarding, even when the freshly entered remote URL does not yet
-			// advertise origin/HEAD.
-			DefaultBranch: resolveWorkspaceChildDefaultBranch(ctx, child),
+			// advertise origin/HEAD. Remoteless children get their checkout recorded
+			// as ao.defaultBranch so spawn can base worktrees without a remote.
+			DefaultBranch: defaultBranch,
 			RegisteredAt:  registeredAt,
 			GitStatus:     domain.GitStatusReady,
 		})
@@ -241,12 +246,8 @@ func validateWorkspaceChild(ctx context.Context, child string) error {
 			"suggestedFix": "Run `git init -b main`, add the initial files, and create the first commit before registering the workspace.",
 		})
 	}
-	if origin := resolveGitOriginURL(child); origin == "" {
-		return apierr.Invalid("WORKSPACE_CHILD_ORIGIN_REQUIRED", "Workspace child repositories must have an origin remote configured", map[string]any{
-			"path":         child,
-			"suggestedFix": "Run `git remote add origin <url>` in the child repository, then retry.",
-		})
-	}
+	// Remotes are optional: committed local children can register without origin.
+	// resolveRegisteredChildDefaultBranch records a durable default when needed.
 	return nil
 }
 
@@ -389,6 +390,36 @@ func resolveWorkspaceChildDefaultBranch(ctx context.Context, child string) strin
 		return strings.TrimSpace(out)
 	}
 	return ""
+}
+
+// resolveRegisteredChildDefaultBranch returns the durable default for a Ready
+// workspace child. Remoteless children without AO-recorded metadata get their
+// current symbolic branch written to ao.defaultBranch so spawn can resolve a
+// base ref; children with an origin keep empty DefaultBranch when no cached
+// HEAD exists so spawn can still infer from the remote.
+func resolveRegisteredChildDefaultBranch(ctx context.Context, child string) (string, error) {
+	if branch := resolveWorkspaceChildDefaultBranch(ctx, child); branch != "" {
+		return branch, nil
+	}
+	if resolveGitOriginURL(child) != "" {
+		return "", nil
+	}
+	branch, err := gitOutput(ctx, child, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil || strings.TrimSpace(branch) == "" {
+		return "", apierr.Invalid("WORKSPACE_CHILD_DEFAULT_BRANCH_REQUIRED",
+			"Remote-free workspace child repositories need a checked-out branch so AO can record a default base",
+			map[string]any{
+				"path":         child,
+				"suggestedFix": "Check out a named branch in the child repository (for example `git switch -c main`), or add an origin remote, then retry.",
+			})
+	}
+	branch = strings.TrimSpace(branch)
+	if _, err := gitOutput(ctx, child, "config", "--local", gitdefault.ManagedDefaultConfigKey, branch); err != nil {
+		return "", apierr.Invalid("WORKSPACE_CHILD_DEFAULT_BRANCH_FAILED",
+			"Failed to record the workspace child default branch",
+			map[string]any{"path": child, "error": err.Error()})
+	}
+	return branch, nil
 }
 
 func guardNoGitlinks(ctx context.Context, repo string) error {

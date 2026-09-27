@@ -29,6 +29,7 @@ import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import type { ProjectKind } from "../types/workspace";
+import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { appI18n } from "../i18n";
@@ -40,6 +41,8 @@ export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: TrackerIntakeConfig;
+	/** Explicit base branch confirmed during remoteless / workspace import. */
+	defaultBranch?: string;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
@@ -58,6 +61,8 @@ type CreateProjectAgentSheetProps = {
 	repositorySetupNeeded?: boolean;
 	repositorySetupWarning?: string | null;
 	shake?: boolean;
+	/** Prefill when the import must confirm a durable default branch (issue #4679). */
+	defaultBranchCandidate?: string | null;
 };
 
 type SheetError = {
@@ -118,6 +123,7 @@ export function CreateProjectAgentSheet({
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
 	shake = false,
+	defaultBranchCandidate = null,
 }: CreateProjectAgentSheetProps) {
 	const { t } = useTranslation();
 	const [isExiting, setIsExiting] = useState(false);
@@ -130,6 +136,8 @@ export function CreateProjectAgentSheet({
 		displayedError.current = error;
 		displayedOnBack.current = onBack;
 	}
+	const needsDefaultBranchConfirm = defaultBranchCandidate !== null;
+	const [confirmedDefaultBranch, setConfirmedDefaultBranch] = useState(defaultBranchCandidate ?? "");
 	const agentsQuery = useAgentReadinessQuery(contentOpen);
 	useEnsureAgentReadiness({ enabled: contentOpen });
 	const agents = agentsQuery.data;
@@ -170,6 +178,7 @@ export function CreateProjectAgentSheet({
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
+	const defaultBranchReady = !needsDefaultBranchConfirm || confirmedDefaultBranch.trim() !== "";
 	const canSubmit =
 		canSubmitProjectSetup({
 			workerAgent,
@@ -178,6 +187,7 @@ export function CreateProjectAgentSheet({
 			intakeAssignee: intake.assignee,
 		}) &&
 		!intakeIncomplete &&
+		defaultBranchReady &&
 		!isBusy &&
 		!isLoadingAgents;
 	const sheetError = displayedError.current
@@ -192,9 +202,15 @@ export function CreateProjectAgentSheet({
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
 			setIntake(EMPTY_INTAKE);
+			setConfirmedDefaultBranch(defaultBranchCandidate ?? "");
 		}
 		wasOpen.current = open;
-	}, [open]);
+	}, [defaultBranchCandidate, open]);
+
+	useEffect(() => {
+		if (!open || !needsDefaultBranchConfirm) return;
+		setConfirmedDefaultBranch(defaultBranchCandidate ?? "");
+	}, [defaultBranchCandidate, needsDefaultBranchConfirm, open]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -315,18 +331,45 @@ export function CreateProjectAgentSheet({
 						}
 						canSubmit={canSubmit}
 						intakeControl={
-							<IntakeFields
-								form={intake}
-								onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
-								compact
-								controlClassName="agents-sheet-control"
-								labelClassName="agents-sheet-label"
-							/>
+							<>
+								{needsDefaultBranchConfirm ? (
+									<div className="space-y-2">
+										<Label className="agents-sheet-label" htmlFor="newProjectDefaultBranch">
+											{t("createProject.confirmDefaultBranch")}
+										</Label>
+										<Input
+											id="newProjectDefaultBranch"
+											className="agents-sheet-control"
+											value={confirmedDefaultBranch}
+											disabled={isBusy}
+											onChange={(event) => setConfirmedDefaultBranch(event.target.value)}
+											placeholder={t("createProject.confirmDefaultBranchPlaceholder")}
+										/>
+										<p className="text-[12px] text-muted-foreground">
+											{t("createProject.confirmDefaultBranchHint")}
+										</p>
+									</div>
+								) : null}
+								<IntakeFields
+									form={intake}
+									onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
+									compact
+									controlClassName="agents-sheet-control"
+									labelClassName="agents-sheet-label"
+								/>
+							</>
 						}
 						isBusy={isBusy}
 						onCancel={() => onOpenChange(false)}
 						onSubmit={() =>
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) })
+							void onSubmit({
+								workerAgent,
+								orchestratorAgent,
+								trackerIntake: buildIntake(intake),
+								...(needsDefaultBranchConfirm
+									? { defaultBranch: confirmedDefaultBranch.trim() }
+									: {}),
+							})
 						}
 						setupNotice={
 							repositorySetupNeeded

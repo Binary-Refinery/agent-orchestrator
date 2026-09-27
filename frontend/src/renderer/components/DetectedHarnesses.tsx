@@ -4,6 +4,7 @@ import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAge
 import {
 	buildRankedAgentOptions,
 	DEFAULT_AGENT_PRIORITY_RANK,
+	isReadyAgent,
 	type AgentInfo,
 	unknownAgentReadiness,
 } from "../lib/agent-select-options";
@@ -32,7 +33,7 @@ export function DetectedHarnesses({ className }: { className?: string }) {
 			}).slice(0, 5),
 		[agentsQuery.data?.agents, fallbackAgents],
 	);
-	const readyCount = options.filter((agent) => !agent.disabled && agent.installation.state === "installed").length;
+	const readyCount = options.filter(isReadyAgent).length;
 	const loading = agentsQuery.data === undefined && agentsQuery.isFetching;
 
 	if (loading) {

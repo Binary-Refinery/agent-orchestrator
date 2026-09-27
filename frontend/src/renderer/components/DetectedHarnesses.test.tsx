@@ -33,6 +33,7 @@ describe("DetectedHarnesses", () => {
 			data: {
 				agents: [
 					agentReadiness("claude-code", "Claude Code", { installation: "installed", authentication: "authorized" }),
+					agentReadiness("cursor", "Cursor", { installation: "installed", authentication: "unknown" }),
 					agentReadiness("codex", "Codex", { installation: "not_installed", authentication: "not_applicable" }),
 				],
 			},
@@ -42,9 +43,11 @@ describe("DetectedHarnesses", () => {
 		renderHarnesses();
 
 		expect(await screen.findByTestId("detected-harnesses")).toBeInTheDocument();
-		await waitFor(() => expect(screen.getByText(/Detected/i)).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText(/Detected 1 ready agent CLI/i)).toBeInTheDocument());
 		expect(screen.getByText("Claude Code")).toBeInTheDocument();
 		expect(screen.getByText("Ready")).toBeInTheDocument();
+		expect(screen.getByText("Cursor")).toBeInTheDocument();
+		expect(screen.getByText("Auth unknown")).toBeInTheDocument();
 		expect(screen.getByText("Codex")).toBeInTheDocument();
 		expect(screen.getByText("Install CLI to use")).toBeInTheDocument();
 	});

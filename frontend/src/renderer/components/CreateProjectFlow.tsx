@@ -213,6 +213,9 @@ export function CreateProjectFlow({
 	const [isPreparingGit, setIsPreparingGit] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
+	// Prefill for the agent-sheet default-branch confirmation (#4679). Null means
+	// confirmation is not required (for example a repo with origin/HEAD).
+	const [defaultBranchCandidate, setDefaultBranchCandidate] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
 	// Workspace vs Project. Consumed exactly once by openFolderStep.
 	const [pendingDropPath, setPendingDropPath] = useState<string | null>(null);
@@ -263,7 +266,24 @@ export function CreateProjectFlow({
 		setProjectRemoteUrl("");
 		setProjectGitHubRepo(null);
 		setProjectImportShake(false);
+		setDefaultBranchCandidate(null);
 	};
+
+	const prepareDefaultBranchConfirm = async (path: string, validation: ImportValidationResult | null, kind: ProjectKind) => {
+		const remoteless = validation?.root.hasOrigin === false;
+		if (kind !== "workspace" && !remoteless) {
+			setDefaultBranchCandidate(null);
+			return;
+		}
+		const branch = (await aoBridge.app.getRepositoryBranch(path))?.trim() ?? "";
+		setDefaultBranchCandidate(branch);
+	};
+
+	// Prefill the agent-sheet confirmation whenever a local import reaches agent setup.
+	useEffect(() => {
+		if (!selectedPath || cloneSelection) return;
+		void prepareDefaultBranchConfirm(selectedPath, projectValidation, selectedKind);
+	}, [cloneSelection, projectValidation, selectedKind, selectedPath]);
 
 	const reportProjectError = (message: string) => {
 		setError(message);
@@ -511,20 +531,13 @@ export function CreateProjectFlow({
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-		// Workspace roots and remoteless single-repo imports need an explicit
-		// default branch so spawn can create worktrees without a remote HEAD.
-		// Repos with an origin keep automatic remote-default resolution so a
-		// feature-branch checkout is not silently recorded as the default.
-		const remoteless = projectValidation?.root.hasOrigin === false;
-		const defaultBranch =
-			selectedKind === "workspace" || remoteless
-				? await aoBridge.app.getRepositoryBranch(selectedPath)
-				: undefined;
+		// Confirmed in the agent sheet for workspace / remoteless imports (#4679).
+		const { defaultBranch: confirmedDefaultBranch, ...agentSelection } = selection;
 		await onCreateProject({
 			path: selectedPath,
 			asWorkspace: selectedKind === "workspace",
-			...(defaultBranch ? { defaultBranch } : {}),
-			...selection,
+			...(confirmedDefaultBranch ? { defaultBranch: confirmedDefaultBranch } : {}),
+			...agentSelection,
 		});
 			if (showProgress) {
 				setCreateProgress({ open: true, stage: "complete", value: 100 });
@@ -906,6 +919,7 @@ export function CreateProjectFlow({
 				isInitializing={isInitializing}
 				kind={selectedKind}
 				shake={projectImportShake}
+				defaultBranchCandidate={defaultBranchCandidate}
 				onOpenChange={(open) => {
 					if (!open) {
 						void (async () => {

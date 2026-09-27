@@ -1746,33 +1746,126 @@ func TestManager_AddWorkspaceAcceptsUnbornChildAsNeedsInit(t *testing.T) {
 	}
 }
 
-func TestManager_AddWorkspaceAcceptsChildWithoutOriginAsNeedsInit(t *testing.T) {
+func TestManager_AddWorkspaceRecordsRemotelessChildDefaultBranch(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
-	m := newManager(t)
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
 	parent := t.TempDir()
-	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+	child := gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+	if out, err := exec.Command("git", "-C", child, "switch", "-c", "feature/local").CombinedOutput(); err != nil {
+		t.Fatalf("switch child branch: %v (%s)", err, out)
+	}
 	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
-	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws-remoteless"), AsWorkspace: true})
 	if err != nil {
 		t.Fatalf("Add workspace with originless child: %v", err)
 	}
 	if len(proj.WorkspaceRepos) != 2 {
 		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
 	}
-	var needsInitRepo *project.WorkspaceRepo
-	for i := range proj.WorkspaceRepos {
-		if proj.WorkspaceRepos[i].GitStatus == string(domain.GitStatusNeedsInit) {
-			needsInitRepo = &proj.WorkspaceRepos[i]
+	registered, err := store.ListWorkspaceRepos(ctx, "ws-remoteless")
+	if err != nil {
+		t.Fatalf("list workspace repos: %v", err)
+	}
+	var apiRepo *domain.WorkspaceRepoRecord
+	for i := range registered {
+		if registered[i].Name == "api" {
+			apiRepo = &registered[i]
 			break
 		}
 	}
-	if needsInitRepo == nil {
-		t.Fatalf("expected a needs_init child")
+	if apiRepo == nil {
+		t.Fatalf("registered repos = %#v, want api child", registered)
 	}
-	if needsInitRepo.Repo != "" {
-		t.Fatalf("Repo = %q, want empty", needsInitRepo.Repo)
+	if apiRepo.GitStatus != domain.GitStatusReady {
+		t.Fatalf("api GitStatus = %q, want ready", apiRepo.GitStatus)
+	}
+	if apiRepo.RepoOriginURL != "" {
+		t.Fatalf("api RepoOriginURL = %q, want empty", apiRepo.RepoOriginURL)
+	}
+	if apiRepo.DefaultBranch != "feature/local" {
+		t.Fatalf("api DefaultBranch = %q, want feature/local (recorded checkout)", apiRepo.DefaultBranch)
+	}
+	configured, err := exec.Command("git", "-C", child, "config", "--local", "--get", gitdefault.ManagedDefaultConfigKey).Output()
+	if err != nil {
+		t.Fatalf("read ao.defaultBranch: %v", err)
+	}
+	if got := strings.TrimSpace(string(configured)); got != "feature/local" {
+		t.Fatalf("ao.defaultBranch = %q, want feature/local", got)
+	}
+}
+
+// Import → spawn: a committed remoteless workspace child must register a durable
+// default and resolve a base ref so CreateWorkspaceProject succeeds.
+func TestManager_RemotelessWorkspaceChildImportToSpawn(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+
+	parent := t.TempDir()
+	child := gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{
+		Path:        parent,
+		ProjectID:   ptr("ws-spawn"),
+		AsWorkspace: true,
+		Config:      &domain.ProjectConfig{DefaultBranch: domain.DefaultBranchName},
+	})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	registered, err := store.ListWorkspaceRepos(ctx, "ws-spawn")
+	if err != nil {
+		t.Fatalf("list workspace repos: %v", err)
+	}
+	if len(registered) != 1 || registered[0].DefaultBranch != domain.DefaultBranchName {
+		t.Fatalf("registered = %#v, want ready child with default %q", registered, domain.DefaultBranchName)
+	}
+
+	ws, err := gitworktree.New(gitworktree.Options{
+		ManagedRoot:  filepath.Join(t.TempDir(), "managed"),
+		RepoResolver: gitworktree.StaticRepoResolver{proj.ID: parent},
+	})
+	if err != nil {
+		t.Fatalf("workspace adapter: %v", err)
+	}
+	childTarget, err := ws.ResolveDefaultBranch(ctx, child, registered[0].DefaultBranch)
+	if err != nil {
+		t.Fatalf("ResolveDefaultBranch after remoteless import: %v", err)
+	}
+	if childTarget.BaseRef != "refs/heads/"+domain.DefaultBranchName {
+		t.Fatalf("child BaseRef = %q, want local refs/heads/%s", childTarget.BaseRef, domain.DefaultBranchName)
+	}
+	info, err := ws.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
+		ProjectID:    proj.ID,
+		SessionID:    "sess-remoteless-child",
+		Kind:         "worker",
+		Branch:       "ao/ws-spawn-1",
+		RootRepoPath: parent,
+		BaseBranch:   domain.DefaultBranchName,
+		Repos: []ports.WorkspaceProjectRepoConfig{{
+			Name:         "api",
+			RelativePath: "api",
+			RepoPath:     child,
+			BaseRef:      childTarget.BaseRef,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceProject after remoteless import: %v", err)
+	}
+	if len(info.Worktrees) < 2 {
+		t.Fatalf("worktrees = %#v, want root + child", info.Worktrees)
 	}
 }
 
