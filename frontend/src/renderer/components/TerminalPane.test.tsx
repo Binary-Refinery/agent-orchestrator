@@ -259,11 +259,12 @@ function renderPane(
 	window.ao = {
 		...previousAO,
 		editorHandoff: {
-			getState: vi.fn().mockResolvedValue({
-				targets: [],
-				preferredEditorId: "cursor",
-				workspaceAvailable: true,
-			}),
+		getState: vi.fn().mockResolvedValue({
+			targets: [],
+			preferredEditorId: "cursor",
+			workspaceAvailable: true,
+		}),
+		open: vi.fn().mockResolvedValue({ id: "cursor", name: "Cursor", kind: "editor" }),
 		},
 	};
 	const result = render(

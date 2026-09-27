@@ -3478,14 +3478,11 @@ const TurnGroup = memo(function TurnGroup({
 	const workedRuns = group.outcome
 		? runs.filter((run, index) => {
 			const item = run.items[0];
-			return index !== finalAssistantRunIndex && !(item?.kind === "message" && item.role === "user");
+			return index !== finalAssistantRunIndex && !isHumanRun(item);
 		})
 		: [];
 	const humanRuns = group.outcome
-		? runs.filter((run) => {
-			const item = run.items[0];
-			return item?.kind === "message" && item.role === "user";
-		})
+		? runs.filter((run) => isHumanRun(run.items[0]))
 		: [];
 	const hasWorkedActivity = workedRuns.some((run) => run.kind === "activities");
 	const finalRun = finalAssistantRunIndex >= 0 ? runs[finalAssistantRunIndex] : undefined;
@@ -4166,4 +4163,8 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	}
 
 	return groups;
+}
+
+function isHumanRun(item: ConversationItem | undefined): boolean {
+	return (item?.kind === "message" && item.role === "user") || (item?.kind === "activity" && isSteer(item));
 }
