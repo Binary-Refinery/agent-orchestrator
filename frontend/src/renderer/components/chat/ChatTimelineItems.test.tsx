@@ -232,6 +232,7 @@ describe("AssistantMessage streaming", () => {
 		runFrame(32);
 		expect(document.querySelector("p")?.textContent).toBe("ae\u0301");
 		runFrame(48);
+		runFrame(64);
 		expect(document.querySelector("p")?.textContent).toBe("ae\u0301z");
 	});
 
