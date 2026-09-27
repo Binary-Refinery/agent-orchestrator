@@ -749,9 +749,10 @@ export const ChatComposer = memo(function ChatComposer({
 				})),
 			);
 		}
-		const committedSeedText =
-			draftSeed?.text ??
-			(committedDraft ? committedDraft.composer.text : draftSeedText);
+		const committedSeedText = durableDelivery
+			? ""
+			: (draftSeed?.text ??
+				(committedDraft ? committedDraft.composer.text : draftSeedText));
 		if (committedSeedText === undefined) {
 			restoredSeedKey.current = undefined;
 			return;
@@ -772,7 +773,7 @@ export const ChatComposer = memo(function ChatComposer({
 		// A history action intentionally creates a new draft and must be persisted.
 		// A session restore is already durable; writing it again here needlessly
 		// changes the accepted-send revision during mount.
-		if (draftScope && draftSeed) {
+		if (draftScope && draftSeed && !durableDelivery) {
 			const result = writeChatComposerText(draftScope, committedSeedText);
 			composerRevision.current = result.draft.composer.revision;
 			setTextDraftPersistenceError(
@@ -786,6 +787,7 @@ export const ChatComposer = memo(function ChatComposer({
 		draftSeed,
 		draftSeedId,
 		draftSeedText,
+		durableDelivery,
 		editingQueuedTurnId,
 		fileAttachments.reconcilePersistedAttachments,
 	]);
