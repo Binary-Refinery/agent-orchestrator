@@ -72,7 +72,7 @@ it("shows what the build changes", async () => {
 	expect(screen.queryByText(/Leave AO closed until it reopens/)).toBeNull();
 });
 
-it("shows stable notes without repository attribution and links to the product changelog", async () => {
+it("shows stable notes without contributor handles and retains linked PR numbers", async () => {
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	renderDialog({
 		state: "downloaded",
@@ -87,10 +87,10 @@ it("shows stable notes without repository attribution and links to the product c
 	});
 
 	expect(await screen.findByText(/Add useful workflows/)).toBeVisible();
-	expect(screen.queryByText(/@person|#123|v0\.13\.0\.\.\.v0\.13\.1/)).toBeNull();
-	expect(screen.getByRole("link", { name: "View changelog" })).toHaveAttribute(
+	expect(screen.queryByText(/@person|v0\.13\.0\.\.\.v0\.13\.1|View changelog/)).toBeNull();
+	expect(screen.getByRole("link", { name: "#123" })).toHaveAttribute(
 		"href",
-		"https://orchestrator.inc/changelog",
+		"https://github.com/Untrivial-ai/agent-orchestrator/pull/123",
 	);
 });
 

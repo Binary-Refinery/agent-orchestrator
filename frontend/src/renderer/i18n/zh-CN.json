@@ -1102,7 +1102,6 @@
 	"settings.title": "设置",
 	"update.restart.title": "重启以更新",
 	"update.restart.whatsNew": "更新内容",
-	"update.restart.viewChangelog": "查看更新日志",
 	"update.restart.noNotes": "此版本未发布更新说明。",
 	"update.restart.sessionsTitle_one": "1 个聊天会话将丢失当前轮次",
 	"update.restart.sessionsTitle_other": "{{count}} 个聊天会话将丢失当前轮次",

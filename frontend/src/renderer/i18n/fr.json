@@ -1138,7 +1138,6 @@
 	"settings.title": "Paramètres",
 	"update.restart.title": "Redémarrer pour mettre à jour",
 	"update.restart.whatsNew": "Nouveautés",
-	"update.restart.viewChangelog": "Voir le journal des modifications",
 	"update.restart.noNotes": "Aucune note de version n'a été publiée pour cette compilation.",
 	"update.restart.sessionsTitle_many": "{{count}} sessions de chat perdront leur tour en cours",
 	"update.restart.sessionsTitle_one": "1 session de chat perdra son tour en cours",

@@ -1138,7 +1138,6 @@
 	"settings.title": "Ajustes",
 	"update.restart.title": "Reiniciar para actualizar",
 	"update.restart.whatsNew": "Novedades",
-	"update.restart.viewChangelog": "Ver registro de cambios",
 	"update.restart.noNotes": "No se publicaron notas de la versión para esta compilación.",
 	"update.restart.sessionsTitle_many": "{{count}} sesiones de chat perderán su turno actual",
 	"update.restart.sessionsTitle_one": "1 sesión de chat perderá su turno actual",

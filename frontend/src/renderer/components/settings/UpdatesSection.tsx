@@ -569,7 +569,7 @@ function UpdateActions({
 			{/* Release notes used to live only in the restart confirmation, so
 			    skipping that dialog when nothing is at risk would have hidden them
 			    entirely. The panel has room the dialog never did. The shared renderer
-			    keeps repository attribution out of the customer-facing summary. */}
+			    keeps contributor handles out while preserving linked PR numbers. */}
 			{(status.state === "downloaded" || status.staged) && status.releaseNotes ? (
 				<div className="mt-3" data-testid="update-release-notes">
 					<p className="text-caption font-medium uppercase tracking-wide text-settings-muted">

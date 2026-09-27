@@ -1255,7 +1255,6 @@
 	"settings.title": "Settings",
 	"update.restart.title": "Restart to update",
 	"update.restart.whatsNew": "What's new",
-	"update.restart.viewChangelog": "View changelog",
 	"update.restart.noNotes": "No release notes were published for this build.",
 	"update.restart.sessionsTitle_one": "1 chat session will lose its current turn",
 	"update.restart.sessionsTitle_other": "{{count}} chat sessions will lose their current turn",

@@ -1118,7 +1118,6 @@
 	"settings.title": "Einstellungen",
 	"update.restart.title": "Neu starten und aktualisieren",
 	"update.restart.whatsNew": "Neu in dieser Version",
-	"update.restart.viewChangelog": "Changelog anzeigen",
 	"update.restart.noNotes": "Für diesen Build wurden keine Versionshinweise veröffentlicht.",
 	"update.restart.sessionsTitle_one": "1 Chat-Sitzung verliert ihren aktuellen Zug",
 	"update.restart.sessionsTitle_other": "{{count}} Chat-Sitzungen verlieren ihren aktuellen Zug",
