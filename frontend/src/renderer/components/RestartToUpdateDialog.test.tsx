@@ -149,6 +149,22 @@ it("renders unrelated release-note links as plain text", async () => {
 	expect(screen.queryByRole("link", { name: "external notes" })).toBeNull();
 });
 
+it("links the generated nightly comparison without allowing arbitrary compare URLs", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	const comparisonUrl = "https://github.com/Untrivial-ai/agent-orchestrator/compare/v0.13.1...v0.13.2-nightly.202609271025";
+	renderDialog({
+		state: "downloaded",
+		version: "0.13.2-nightly.202609271025",
+		releaseNotes: [
+			`- 2 more linked changes are included in the [full comparison](${comparisonUrl}).`,
+			"- Do not trust [another comparison](https://github.com/another/repo/compare/v1.0.0...v1.1.0).",
+		].join("\n"),
+	});
+
+	expect(await screen.findByRole("link", { name: "full comparison" })).toHaveAttribute("href", comparisonUrl);
+	expect(screen.queryByRole("link", { name: "another comparison" })).toBeNull();
+});
+
 it("renders the nightly build date from the UTC instant", async () => {
 	// The stamp 202609070300 encodes 03:00 UTC. Near the UTC day boundary the
 	// date-only dialog label must show the device-local calendar day of the

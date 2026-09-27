@@ -4,7 +4,7 @@ import { prepareDesktopReleaseNotes } from "../lib/desktop-release-notes";
 import { ProductExternalLink } from "./ProductExternalLink";
 
 const AO_RELEASE_LINK_PATTERN =
-	/^https:\/\/github\.com\/Untrivial-ai\/agent-orchestrator\/(?:pull\/\d+|commit\/[0-9a-f]{7,40})$/i;
+	/^https:\/\/github\.com\/Untrivial-ai\/agent-orchestrator\/(?:pull\/\d+|commit\/[0-9a-f]{7,40}|compare\/v\d+\.\d+\.\d+(?:-nightly\.\d{12})?\.\.\.v\d+\.\d+\.\d+(?:-nightly\.\d{12})?)$/i;
 
 const releaseNoteComponents: Components = {
 	h3: ({ children }) => (
