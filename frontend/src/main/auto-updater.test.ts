@@ -2689,7 +2689,7 @@ describe("startAutoUpdates", () => {
       : kind === "automatic" ? h.module.startAutoUpdates(stateDir) : h.module.returnToHome(stateDir, "hung");
     await vi.advanceTimersByTimeAsync(0);
     const retry = h.module.checkForUpdatesNow(stateDir, { requestId: "retry" });
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(180_000);
     expect(requestAborted).toBe(true);
     if (kind === "automatic") {
       // A background check the user never asked for must not strand its timeout
@@ -2717,7 +2717,7 @@ describe("startAutoUpdates", () => {
       downloadPromise: new Promise<void>((resolve) => { finishDownload = resolve; }),
     });
     const checking = h.module.startAutoUpdates(stateDir);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(180_000);
     expect(h.autoUpdater.httpExecutor.request).toBe(originalRequest);
     finishDownload();
     await checking;

@@ -1112,7 +1112,9 @@ function supersedesStagedBuild(version: string | undefined): boolean {
 
 type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
 
-const UPDATE_CHECK_TIMEOUT_MS = 60_000;
+// GitHub's release-assets CDN can take ~75s just to establish a connection on
+// slower networks, so a 60s deadline aborted checks that would have succeeded.
+const UPDATE_CHECK_TIMEOUT_MS = 180_000;
 const UPDATE_CHECK_TIMEOUT_MESSAGE = "Update check timed out. The update service did not respond in time. Try again.";
 
 // electron-updater owns this executor but omits it from its public declarations.
