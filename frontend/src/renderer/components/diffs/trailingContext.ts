@@ -59,6 +59,25 @@ export function diffContentVersion(fileDiff: FileDiffMetadata): number {
 
 const hydratedCopies = new WeakMap<FileDiffMetadata, { files: FileDiffLoadedFiles; diff: FileDiffMetadata | null }>();
 
+// Pierre 1.4.1's virtualizer asserts the rendered diff is the same object it
+// measured. Two objects that share a cacheKey (a reparse, or a second hydration
+// of the same patch) fail that check and the row is replaced with the error.
+const diffsByCacheKey = new Map<string, FileDiffMetadata>();
+
+export function stableFileDiff(fileDiff: FileDiffMetadata): FileDiffMetadata {
+	const key = fileDiff.cacheKey;
+	if (key == null) return fileDiff;
+	const existing = diffsByCacheKey.get(key);
+	if (existing == null) {
+		diffsByCacheKey.set(key, fileDiff);
+		return fileDiff;
+	}
+	if (existing === fileDiff || (existing.isPartial === fileDiff.isPartial && patchIdentity(existing) === patchIdentity(fileDiff))) return existing;
+	fileDiff.cacheKey = `${key}\u0000${patchIdentity(fileDiff)}`;
+	diffsByCacheKey.set(fileDiff.cacheKey, fileDiff);
+	return fileDiff;
+}
+
 /**
  * A full-content copy of a partial diff (the parsed patch itself is left
  * untouched), or null when the fetched contents don't fit the patch. Memoized
@@ -73,6 +92,7 @@ export function hydratedCopy(fileDiff: FileDiffMetadata, files: FileDiffLoadedFi
 	} catch {
 		diff = null;
 	}
+	if (diff) diff = stableFileDiff(diff);
 	hydratedCopies.set(fileDiff, { files, diff });
 	return diff;
 }

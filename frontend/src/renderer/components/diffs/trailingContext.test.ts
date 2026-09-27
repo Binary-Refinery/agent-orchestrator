@@ -1,6 +1,6 @@
 import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vitest";
-import { endsAtLastHunk, hydratedCopy, patchIdentity } from "./trailingContext";
+import { endsAtLastHunk, hydratedCopy, patchIdentity, stableFileDiff } from "./trailingContext";
 
 function parse(path: string, body: string): FileDiffMetadata {
 	const patch = `diff --git a/${path} b/${path}\nindex 1111111..2222222 100644\n--- a/${path}\n+++ b/${path}\n${body}`;
@@ -60,5 +60,21 @@ describe("hydratedCopy", () => {
 		expect(hydrated?.additionLines).toHaveLength(7);
 		expect(partial.isPartial).toBe(true);
 		expect(hydratedCopy(partial, files)).toBe(hydrated);
+	});
+
+	it("reuses one object when the same patch is hydrated from a second parse", () => {
+		const first = parse("NOTES.md", appendedAtEnd);
+		const second = parse("NOTES.md", appendedAtEnd);
+		const oldContents = "line1\nline2\nline3\nline4\nline5\n";
+		const files = {
+			oldFile: { name: "NOTES.md", contents: oldContents },
+			newFile: { name: "NOTES.md", contents: `${oldContents}added6\nadded7\n` },
+		};
+		const again = {
+			oldFile: { name: "NOTES.md", contents: oldContents },
+			newFile: { name: "NOTES.md", contents: `${oldContents}added6\nadded7\n` },
+		};
+		expect(stableFileDiff(second)).toBe(stableFileDiff(first));
+		expect(hydratedCopy(second, again)).toBe(hydratedCopy(first, files));
 	});
 });

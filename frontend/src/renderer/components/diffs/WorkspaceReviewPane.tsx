@@ -27,7 +27,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { formatTimeTerse } from "../../lib/format-time";
 import { AO_PIERRE_FILES_REVIEW_CSS, AO_PIERRE_SURFACE_CSS } from "./pierreTheme";
-import { REVIEW_CONTEXT_LINES, diffContentVersion, endsAtLastHunk, hydratedCopy, patchIdentity } from "./trailingContext";
+import { REVIEW_CONTEXT_LINES, diffContentVersion, endsAtLastHunk, hydratedCopy, patchIdentity, stableFileDiff } from "./trailingContext";
 import { usePersistentGutterUtility } from "./usePersistentGutterUtility";
 
 const PATCH_BATCH_SIZE = 100;
@@ -37,15 +37,15 @@ const workingScopeOrder = ["unstaged", "staged"] as const;
 const SOURCE_CONTROL = MENU_TRIGGER_CHROME;
 // Height of the custom per-file header row below (h-9).
 const FILE_HEADER_HEIGHT_PX = 36;
+const REVIEW_CODE_VIEW_LAYOUT = { gap: 4, paddingBottom: 8, paddingTop: 0 };
+const REVIEW_CODE_VIEW_METRICS = { diffHeaderHeight: FILE_HEADER_HEIGHT_PX };
+const REVIEW_CODE_VIEW_THEME = { dark: "github-dark", light: "github-light" } as const;
 // Files whose patch proves they end at the last hunk get their full contents up
 // front, so their diff has no dead "More unchanged context may be available"
 // row. Bounded so a big review doesn't fetch every file; beyond these limits the
 // row stays and still loads on click.
 const MAX_END_OF_FILE_PREFETCHES = 40;
 const END_OF_FILE_PREFETCH_MAX_BYTES = 128 * 1024;
-// Longest a first display waits for those contents before showing patch-only diffs.
-const END_OF_FILE_HOLD_MS = 1500;
-
 export type ReviewSourceMenu = {
 	/** Short description of the current review source, shown on the trigger. */
 	label: string;
@@ -338,52 +338,36 @@ export function WorkspaceReviewPane({
 		}),
 	});
 
-	// While a file's full contents load, its patch-only diff would flash Pierre's
-	// trailing row, so it isn't shown: a file already on screen keeps its previous
-	// diff, and a first display waits (showing "Loading diff") so the list doesn't
-	// shift as files arrive. END_OF_FILE_HOLD_MS caps the wait if a request stalls.
-	const shownDiffsRef = useRef(new Map<string, FileDiffMetadata>());
-	const endOfFileLoading = endOfFileContents.some((query) => query.isLoading);
-	const [endOfFileHoldExpired, setEndOfFileHoldExpired] = useState(false);
-	useEffect(() => {
-		if (!endOfFileLoading) {
-			setEndOfFileHoldExpired(false);
-			return;
-		}
-		const timer = window.setTimeout(() => setEndOfFileHoldExpired(true), END_OF_FILE_HOLD_MS);
-		return () => window.clearTimeout(timer);
-	}, [endOfFileLoading]);
+	// CodeView re-renders an item whenever the item object changes, and Pierre
+	// 1.4.1 throws if that render sees a different object with the same cache key.
+	const publishedItemsRef = useRef(new Map<string, CodeViewItem<"feedback">>());
 
-	const { items, holdingForEndOfFile } = useMemo(
+	const items = useMemo(
 		() => {
-			const shown = shownDiffsRef.current;
 			const itemId = (path: string) => `${reviewSelectionKey}:${path}`;
-			const endOfFile = new Map<string, FileDiffMetadata | "loading">();
+			const endOfFile = new Map<string, FileDiffMetadata>();
 			endOfFileFiles.forEach((file, index) => {
 				const metadata = metadataByPath.get(file.path);
 				const query = endOfFileContents[index];
 				const hydrated = metadata && query?.data ? hydratedCopy(metadata, query.data) : null;
 				if (hydrated) endOfFile.set(file.path, hydrated);
-				else if (query?.isLoading && !endOfFileHoldExpired) endOfFile.set(file.path, shown.get(itemId(file.path)) ?? "loading");
 			});
-			let holding = false;
-			const next = files.flatMap((file): CodeViewItem<"feedback">[] => {
+			return files.flatMap((file): CodeViewItem<"feedback">[] => {
 				if (file.binary) return [];
 				const metadata = metadataByPath.get(file.path);
 				if (!metadata) return [];
-				const endOfFileDiff = endOfFile.get(file.path);
-				if (endOfFileDiff === "loading") {
-					holding = true;
-					return [];
-				}
-				const fileDiff = endOfFileDiff ?? metadata;
+				const fileDiff = stableFileDiff(endOfFile.get(file.path) ?? metadata);
 				const collapsed = collapsedPaths.has(file.path);
 				const fileAnnotationActive = annotation.target?.surface !== "focused" && annotation.target?.path === file.path && annotation.target.side === "file";
 				const activeTarget = annotation.target?.surface !== "focused" && annotation.target?.path === file.path && annotation.target.side !== "file"
 					? annotation.target
 					: null;
-				return [{
-					id: itemId(file.path),
+				const id = itemId(file.path);
+				const version = diffContentVersion(fileDiff) * 8 + (collapsed ? 1 : 0) + (activeTarget ? 2 : 0) + (fileAnnotationActive ? 4 : 0);
+				const previous = publishedItemsRef.current.get(id);
+				if (previous?.type === "diff" && !activeTarget && !fileAnnotationActive && previous.annotations == null && previous.fileDiff === fileDiff && previous.version === version && previous.collapsed === collapsed) return [previous];
+				const item: CodeViewItem<"feedback"> = {
+					id,
 					type: "diff",
 					fileDiff,
 					collapsed,
@@ -395,19 +379,14 @@ export function WorkspaceReviewPane({
 					// CodeView only re-reads an item when its version changes: the content
 					// part lets changed or newly hydrated diffs through, the low bits carry
 					// the collapsed/annotation state.
-					version: diffContentVersion(fileDiff) * 8 + (collapsed ? 1 : 0) + (activeTarget ? 2 : 0) + (fileAnnotationActive ? 4 : 0),
-				}];
+					version,
+				};
+				publishedItemsRef.current.set(id, item);
+				return [item];
 			});
-			// Nothing from this review is on screen yet: hold the whole list rather
-			// than inserting the held files later.
-			const firstDisplay = !files.some((file) => shown.has(itemId(file.path)));
-			return { items: holding && firstDisplay ? [] : next, holdingForEndOfFile: holding };
 		},
-		[annotation.target, collapsedPaths, endOfFileContents, endOfFileFiles, endOfFileHoldExpired, files, metadataByPath, reviewSelectionKey],
+		[annotation.target, collapsedPaths, endOfFileContents, endOfFileFiles, files, metadataByPath, reviewSelectionKey],
 	);
-	useEffect(() => {
-		shownDiffsRef.current = new Map(items.flatMap((item) => (item.type === "diff" ? [[item.id, item.fileDiff] as const] : [])));
-	}, [items]);
 
 	const beginLineAnnotation = useCallback((itemId: string, lineNumber: number, side: "deletions" | "additions") => {
 		const file = summaryById.get(itemId);
@@ -569,7 +548,7 @@ export function WorkspaceReviewPane({
 				<>
 			{firstError ? <PanelMessage action={<RetryButton onClick={retryAll} />}>{firstError.message}</PanelMessage> : null}
 			{groupError ? <PanelMessage action={<RetryButton onClick={retryAll} />}>{groupError.message}</PanelMessage> : null}
-			{(loading || holdingForEndOfFile) && items.length === 0 ? <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage> : null}
+			{loading && items.length === 0 ? <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage> : null}
 			{files.length === 0 ? <PanelMessage action={allFiles.length === 0 ? <Button onClick={onBrowseAll}>{t("files.browseAll")}</Button> : undefined} compact>{allFiles.length === 0 ? t(hasAnyReviewFiles ? "files.noneInSource" : "files.noneChanged") : t("files.noFilterMatches")}</PanelMessage> : null}
 			<div className="min-h-0 flex-1 overflow-hidden">
 				{items.length > 0 ? (
@@ -585,17 +564,17 @@ export function WorkspaceReviewPane({
 							expansionLineCount: 20,
 							hunkSeparators: "line-info",
 							lineDiffType: "word-alt",
-							layout: { gap: 4, paddingBottom: 8, paddingTop: 0 },
+							layout: REVIEW_CODE_VIEW_LAYOUT,
 							// Must match the custom file header height (h-9 = 36px). Pierre's default
 							// (44px) reserves the difference and pushes the header down by 8px.
-							itemMetrics: { diffHeaderHeight: FILE_HEADER_HEIGHT_PX },
+							itemMetrics: REVIEW_CODE_VIEW_METRICS,
 							lineHoverHighlight: "line",
 							loadDiffFiles,
 							maxLineDiffLength: 400,
 							onPostRender: gutterHover.restoreAfterRender,
 							overflow: "wrap",
 							stickyHeaders: true,
-							theme: { dark: "github-dark", light: "github-light" },
+							theme: REVIEW_CODE_VIEW_THEME,
 							themeType: resolvedTheme,
 							tokenizeMaxLength: 200_000,
 							tokenizeMaxLineLength: 2_000,
@@ -650,10 +629,8 @@ export function WorkspaceReviewPane({
 														</span>
 													</span>
 												</div>
-												{/* Every action is always visible in a 24px slot, 8px apart: the same
-												    32px pitch as the Files header buttons, so the checkbox and feedback
-												    button sit under the header's trailing columns. */}
-												<div className="ml-auto flex shrink-0 items-center gap-2 pl-2" onClick={(event) => event.stopPropagation()}>
+												{/* Same 4px gap as the inspector tab buttons. */}
+												<div className="ml-auto flex shrink-0 items-center gap-1 pl-2" onClick={(event) => event.stopPropagation()}>
 													{file.editable && file.fileFingerprint ? (
 														<HeaderActionTooltip label={t("files.editFile")}>
 															<Button aria-label={t("files.editFile")} className="size-6 text-muted-foreground hover:text-foreground" onClick={() => onOpenFile?.(file.path, { editing: true, mode: "file", scope })} size="icon-sm" type="button" variant="ghost"><Pencil aria-hidden="true" className="size-icon-sm" /></Button>

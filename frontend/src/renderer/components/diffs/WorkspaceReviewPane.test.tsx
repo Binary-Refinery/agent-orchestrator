@@ -168,7 +168,7 @@ describe("WorkspaceReviewPane", () => {
 		}
 	});
 
-	it("holds a file that ends at its last change until its contents load, instead of flashing the patch-only diff", async () => {
+	it("shows the patch while a file that ends at its last change loads its contents", async () => {
 		postMock.mockResolvedValue({
 			data: {
 				sessionId: "sess-1",
@@ -188,35 +188,28 @@ describe("WorkspaceReviewPane", () => {
 		renderWithQuery(<WorkspaceReviewPane annotation={annotation()} data={data} filter="" onBrowseAll={vi.fn()} sessionId="sess-1" split={false} />);
 
 		await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
-		expect(screen.getByText("Loading diff...")).toBeInTheDocument();
-		expect(screen.queryByTestId("code-view")).not.toBeInTheDocument();
+		expect(screen.queryByText("Loading diff...")).not.toBeInTheDocument();
+		expect(screen.getByTestId("code-view").querySelector("[data-partial]")).toHaveAttribute("data-partial", "true");
 
 		release();
 		await waitFor(() => expect(screen.getByTestId("code-view").querySelector("[data-partial]")).toHaveAttribute("data-partial", "false"));
-		expect(screen.queryByText("Loading diff...")).not.toBeInTheDocument();
 	});
 
-	it("stops holding after a stalled contents request and shows the patch-only diff", async () => {
-		vi.useFakeTimers({ shouldAdvanceTime: true });
-		try {
-			postMock.mockResolvedValue({
-				data: {
-					sessionId: "sess-1",
-					workspaceVersion: "workspace-1",
-					groups: [{ repository: "", patch: "diff --git a/README.md b/README.md\nends-at-eof\n", truncated: false, includedPaths: ["README.md"], deferred: [] }],
-				},
-			});
-			getMock.mockImplementation(() => new Promise(() => {}));
-			const data = workspace([{ path: "README.md", status: "modified", additions: 1, deletions: 0, size: 20, binary: false }]);
-			renderWithQuery(<WorkspaceReviewPane annotation={annotation()} data={data} filter="" onBrowseAll={vi.fn()} sessionId="sess-1" split={false} />);
+	it("keeps the patch-only diff when the contents request never returns", async () => {
+		postMock.mockResolvedValue({
+			data: {
+				sessionId: "sess-1",
+				workspaceVersion: "workspace-1",
+				groups: [{ repository: "", patch: "diff --git a/README.md b/README.md\nends-at-eof\n", truncated: false, includedPaths: ["README.md"], deferred: [] }],
+			},
+		});
+		getMock.mockImplementation(() => new Promise(() => {}));
+		const data = workspace([{ path: "README.md", status: "modified", additions: 1, deletions: 0, size: 20, binary: false }]);
+		renderWithQuery(<WorkspaceReviewPane annotation={annotation()} data={data} filter="" onBrowseAll={vi.fn()} sessionId="sess-1" split={false} />);
 
-			await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
-			expect(screen.queryByTestId("code-view")).not.toBeInTheDocument();
-			await vi.advanceTimersByTimeAsync(1600);
-			await waitFor(() => expect(screen.getByTestId("code-view").querySelector("[data-partial]")).toHaveAttribute("data-partial", "true"));
-		} finally {
-			vi.useRealTimers();
-		}
+		await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+		expect(screen.queryByText("Loading diff...")).not.toBeInTheDocument();
+		expect(screen.getByTestId("code-view").querySelector("[data-partial]")).toHaveAttribute("data-partial", "true");
 	});
 
 	it("keeps the patch-only diff (and its load-more row) when the file may continue", async () => {
