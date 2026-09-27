@@ -23,3 +23,21 @@ it("leaves nightly notes and unrelated user text unchanged", () => {
 	const notes = "This automated build tracks main.\n\n- Source: @team in #general";
 	expect(prepareDesktopReleaseNotes(notes)).toBe(notes);
 });
+
+it("removes contributor handles from generated nightly changes", () => {
+	const notes = [
+		"**Changes in this nightly**",
+		"",
+		"- Add durable scheduled automations by @person in [#4459](https://github.com/Untrivial-ai/agent-orchestrator/pull/4459)",
+		"",
+		"**Build details**",
+	].join("\n");
+
+	expect(prepareDesktopReleaseNotes(notes)).toBe([
+		"**Changes in this nightly**",
+		"",
+		"- Add durable scheduled automations [#4459](https://github.com/Untrivial-ai/agent-orchestrator/pull/4459)",
+		"",
+		"**Build details**",
+	].join("\n"));
+});

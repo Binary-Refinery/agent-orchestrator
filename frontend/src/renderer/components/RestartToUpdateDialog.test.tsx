@@ -94,31 +94,59 @@ it("shows stable notes without contributor handles and retains linked PR numbers
 	);
 });
 
-it("renders nightly Markdown without exposing its formatting syntax", async () => {
+it("renders complete nightly changes without contributor handles or formatting syntax", async () => {
 	useUiStore.setState({ updateInstallPromptOpen: true });
-	const commitUrl = "https://github.com/Untrivial-ai/agent-orchestrator/commit/35a96279b657b818b488071f75b03d083fc6c9f2";
+	const commitUrl = "https://github.com/Untrivial-ai/agent-orchestrator/commit/5994692db97410cb36e8c6725fc7789905d04dae";
 	renderDialog({
 		state: "downloaded",
-		version: "0.13.2-nightly.202609270208",
+		version: "0.13.2-nightly.202609271025",
 		releaseNotes: [
-			"**Nightly build**",
+			"**Changes in this nightly**",
 			"",
-			"This automated build tracks the latest `main` branch for testing changes before the next stable release.",
+			"- Add durable scheduled automations by @Vaibhaav-Tiwari in [#4459](https://github.com/Untrivial-ai/agent-orchestrator/pull/4459)",
+			"- Remove Last updated line from model picker by @nikhilachale in [#5930](https://github.com/Untrivial-ai/agent-orchestrator/pull/5930)",
+			"- Pass terminal theme hints to every agent by @AgentWrapper in [#5934](https://github.com/Untrivial-ai/agent-orchestrator/pull/5934)",
+			"- Revert: simplify pull request summary cards (#4383) by @AgentWrapper in [#5943](https://github.com/Untrivial-ai/agent-orchestrator/pull/5943)",
 			"",
-			`- Commit: [35a9627](${commitUrl})`,
-			"- Built: `2026-09-27T02:08:00Z`",
+			"**Build details**",
 			"",
-			"> This build may be unstable and is not recommended for production use.",
+			`- Commit: [5994692](${commitUrl})`,
+			"- Built: `2026-09-27 10:25 UTC`",
+			"",
+			"> Nightly builds contain the newest changes for testing and may be unstable.",
 		].join("\n"),
 	});
 
-	expect(await screen.findByText("Nightly build")).toBeVisible();
-	expect(screen.getByText("Nightly build").closest("strong")).not.toBeNull();
-	expect(screen.getByText("main").closest("code")).not.toBeNull();
-	expect(screen.getByText("2026-09-27T02:08:00Z").closest("code")).not.toBeNull();
-	expect(screen.getByRole("link", { name: "35a9627" })).toHaveAttribute("href", commitUrl);
+	expect(await screen.findByText("Changes in this nightly")).toBeVisible();
+	expect(screen.getByText("Changes in this nightly").closest("strong")).not.toBeNull();
+	expect(screen.getByText("Build details").closest("strong")).not.toBeNull();
+	expect(screen.getByText("2026-09-27 10:25 UTC").closest("code")).not.toBeNull();
+	expect(screen.getByRole("link", { name: "#4459" })).toHaveAttribute(
+		"href",
+		"https://github.com/Untrivial-ai/agent-orchestrator/pull/4459",
+	);
+	expect(screen.getByRole("link", { name: "#5943" })).toHaveAttribute(
+		"href",
+		"https://github.com/Untrivial-ai/agent-orchestrator/pull/5943",
+	);
+	expect(screen.getByRole("link", { name: "5994692" })).toHaveAttribute("href", commitUrl);
 	expect(screen.getByText(/may be unstable/).closest("blockquote")).not.toBeNull();
-	expect(screen.queryByText(/\*\*Nightly build\*\*|\[35a9627\]|^>/)).toBeNull();
+	expect(screen.queryByText(/@Vaibhaav-Tiwari|@nikhilachale|@AgentWrapper/)).toBeNull();
+	expect(screen.queryByText(/\*\*Changes in this nightly\*\*|\[5994692\]|^>/)).toBeNull();
+});
+
+it("renders unrelated release-note links as plain text", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	renderDialog({
+		state: "downloaded",
+		version: "0.13.2-nightly.202609271025",
+		releaseNotes: "See [external notes](https://example.com/release) before updating.",
+	});
+
+	expect(await screen.findByText((_, element) => (
+		element?.tagName === "P" && element.textContent === "See external notes before updating."
+	))).toBeVisible();
+	expect(screen.queryByRole("link", { name: "external notes" })).toBeNull();
 });
 
 it("renders the nightly build date from the UTC instant", async () => {
