@@ -584,6 +584,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const viewIdsBySessionId = new Map<string, string>();
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
+	const pendingTemporaryPartitionClears = new Set<Promise<void>>();
 	const ipcDisposers: Array<() => void> = [];
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held native focus; cleared when the
@@ -1618,11 +1619,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
 	};
 
-	const clearTemporaryPartition = (partition: string): void => {
-		if (!isTemporaryBrowserPartition(partition) || !options.clearBrowserProfileData) return;
-		void options.clearBrowserProfileData(partition).catch((error) => {
+	const clearTemporaryPartition = (partition: string): Promise<void> => {
+		const clearBrowserProfileData = options.clearBrowserProfileData;
+		if (!isTemporaryBrowserPartition(partition) || !clearBrowserProfileData) return Promise.resolve();
+		const cleanup = Promise.resolve().then(() => clearBrowserProfileData(partition)).catch((error) => {
 			console.warn("temporary browser profile cleanup failed:", error);
 		});
+		pendingTemporaryPartitionClears.add(cleanup);
+		void cleanup.finally(() => pendingTemporaryPartitionClears.delete(cleanup));
+		return cleanup;
 	};
 
 	const destroy = (viewId: string): void => {
@@ -1799,7 +1804,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			unregisterBrowserSignalWatcher(session);
 			disposeSessionTabs(session);
 			didTearDown = true;
-			if (previousProfileId === null) clearTemporaryPartition(previousPartition);
 			session.profileId = normalizedRequestedProfileId;
 			session.profilePartition = normalizedRequestedProfileId
 				? browserProfilePartition(normalizedRequestedProfileId)
@@ -1810,6 +1814,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			pushProfileState(session);
 			pushDevToolsState(session);
 			pushNavState(options, activeEntry(session));
+			if (previousProfileId === null) await clearTemporaryPartition(previousPartition);
 			return profileStateForSession(session);
 		} catch (error) {
 			if (bindingChanged) {
@@ -2598,6 +2603,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					destroy(viewId);
 				}
 				if (options.browserHistoryStore) await options.browserHistoryStore.drain();
+				while (pendingTemporaryPartitionClears.size > 0) {
+					await Promise.all([...pendingTemporaryPartitionClears]);
+				}
 				await options.agentBrowserRuntime?.dispose();
 			})();
 			return disposePromise;

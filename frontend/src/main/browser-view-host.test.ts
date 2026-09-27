@@ -1565,6 +1565,47 @@ describe("browser profile partitions and replacement", () => {
 		expect(partition).toMatch(/^persist:ao-browser-temporary-/);
 	});
 
+	it("waits for temporary persisted partition cleanup before host disposal finishes", async () => {
+		let releaseCleanup!: () => void;
+		const cleanupFinished = vi.fn();
+		const clearBrowserProfileData = vi.fn(
+			async (_partition: string) =>
+				new Promise<undefined>((resolve) => {
+					releaseCleanup = () => {
+						cleanupFinished();
+						resolve(undefined);
+					};
+				}),
+		);
+		const { constructorOptions, host, invoke, runtime } = setupTabHost(
+			undefined,
+			false,
+			undefined,
+			undefined,
+			clearBrowserProfileData,
+		);
+		await invoke("browser:ensure", "worker-1");
+		const partition = constructorOptions[0]!.webPreferences.partition!;
+
+		const disposal = host.dispose();
+		let disposed = false;
+		void disposal.then(() => {
+			disposed = true;
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(clearBrowserProfileData).toHaveBeenCalledWith(partition);
+		expect(disposed).toBe(false);
+		expect(runtime.dispose).not.toHaveBeenCalled();
+		expect(cleanupFinished).not.toHaveBeenCalled();
+
+		releaseCleanup();
+		await disposal;
+
+		expect(disposed).toBe(true);
+		expect(runtime.dispose).toHaveBeenCalled();
+	});
+
 	it("does not clear named profile partitions when their browser session is destroyed", async () => {
 		const clearBrowserProfileData = vi.fn(async (_partition: string) => undefined);
 		const { host, invoke } = setupTabHost(
@@ -1898,6 +1939,57 @@ describe("browser profile partitions and replacement", () => {
 		await third.invoke("browser:ensure", "worker-1");
 		await third.host.dispose();
 		expect(third.host.isProfileLive(profile.id)).toBe(false);
+	});
+
+	it("clears an old temporary partition only after a switch to a profile succeeds", async () => {
+		const bindings: Record<string, string> = {};
+		const store = fakeBrowserProfileStore(profile, bindings);
+		const clearBrowserProfileData = vi.fn(async (_partition: string) => undefined);
+		const { constructorOptions, host, invoke } = setupTabHost(
+			store,
+			false,
+			undefined,
+			undefined,
+			clearBrowserProfileData,
+		);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		const temporaryPartition = constructorOptions[0]!.webPreferences.partition!;
+
+		const switched = await host.switchProfile(nav.viewId, profile.id);
+
+		expect(switched).toMatchObject({ profileId: profile.id, temporary: false });
+		expect(bindings["worker-1"]).toBe(profile.id);
+		expect(clearBrowserProfileData).toHaveBeenCalledWith(temporaryPartition);
+		expect(constructorOptions[1]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("does not clear a temporary partition when a failed profile switch rolls back to it", async () => {
+		const bindings: Record<string, string> = {};
+		const store = fakeBrowserProfileStore(profile, bindings);
+		const clearBrowserProfileData = vi.fn(async (_partition: string) => undefined);
+		let failReplacementStartup = true;
+		const { constructorOptions, host, invoke } = setupTabHost(
+			store,
+			false,
+			async (viewIndex, url) => {
+				if (viewIndex > 0 && url === "about:blank" && failReplacementStartup) {
+					failReplacementStartup = false;
+					throw new Error("replacement startup failed");
+				}
+			},
+			undefined,
+			clearBrowserProfileData,
+		);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		const temporaryPartition = constructorOptions[0]!.webPreferences.partition!;
+		await invoke("browser:navigate", { viewId: nav.viewId, url: "https://example.com/" });
+
+		await expect(host.switchProfile(nav.viewId, profile.id)).rejects.toThrow("replacement startup failed");
+
+		expect(bindings["worker-1"]).toBeUndefined();
+		expect(host.getProfileState(nav.viewId)).toMatchObject({ profileId: null, temporary: true });
+		expect(constructorOptions.at(-1)!.webPreferences.partition).toBe(temporaryPartition);
+		expect(clearBrowserProfileData).not.toHaveBeenCalled();
 	});
 
 	it("does not recreate tabs after a worker is destroyed during profile replacement", async () => {
