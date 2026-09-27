@@ -28,6 +28,15 @@ const PENDING_UNREG_KEY = "ao.pushPendingUnregister";
 // Bound the pending list so a permanently-dead daemon can't grow it forever.
 const MAX_PENDING_UNREG = 10;
 
+// One Expo token has one active registration. Finish each mutation before the
+// next one decides which daemon to unregister or save as current.
+let mutationTail: Promise<void> = Promise.resolve();
+function orderedMutation<T>(action: () => Promise<T>): Promise<T> {
+	const result = mutationTail.then(action, action);
+	mutationTail = result.then(() => undefined, () => undefined);
+	return result;
+}
+
 type Registration = {
 	token: string;
 	hostId?: string;
@@ -169,9 +178,9 @@ function easProjectId(): string | undefined {
 // are for — passes true. Without this the prompt fires milliseconds after the
 // first successful connect, while the user is still reading the result, with
 // nothing having framed it.
-export async function registerForPush(
+async function registerForPushNow(
 	cfg: ServerConfig,
-	{ ask }: { ask: boolean } = { ask: true },
+	{ ask }: { ask: boolean },
 ): Promise<PushRegisterResult> {
 	// Nothing to register with until the app is paired. Checked first, and here
 	// rather than only in the UI, so no call site can spend the user's one-shot
@@ -253,6 +262,13 @@ export async function registerForPush(
 	return { ok: true, token };
 }
 
+export function registerForPush(
+	cfg: ServerConfig,
+	options: { ask: boolean } = { ask: true },
+): Promise<PushRegisterResult> {
+	return orderedMutation(() => registerForPushNow(cfg, options));
+}
+
 // Reads the live permission + registration state without prompting.
 export async function getPushStatus(cfg: ServerConfig | null): Promise<PushStatus> {
 	const perm = await Notifications.getPermissionsAsync();
@@ -278,7 +294,7 @@ export async function openNotificationSettings(): Promise<void> {
 // Forget only the selected machine's pairing. Its endpoint must report its host
 // id before its credential is sent; another machine's saved push registration
 // is left alone. Network failure cannot prevent local disconnection.
-export async function unpairFromServer(target: HostMetadata | null): Promise<void> {
+async function unpairFromServerNow(target: HostMetadata | null): Promise<void> {
 	if (!target) return;
 	const reg = await loadRegistration();
 	// A legacy registration can only match the selected pairing by its saved
@@ -312,7 +328,11 @@ export async function unpairFromServer(target: HostMetadata | null): Promise<voi
 	}
 }
 
-export async function unregisterFromPush(cfg: ServerConfig | null): Promise<void> {
+export function unpairFromServer(target: HostMetadata | null): Promise<void> {
+	return orderedMutation(() => unpairFromServerNow(target));
+}
+
+async function unregisterFromPushNow(cfg: ServerConfig | null): Promise<void> {
 	const reg = await loadRegistration();
 	if (!reg || !cfg || !sameDaemon(reg, cfg)) return;
 	// Turning off push for this machine clears its local status even if the
@@ -320,4 +340,8 @@ export async function unregisterFromPush(cfg: ServerConfig | null): Promise<void
 	await clearRegistration();
 	await flushPendingUnregisters();
 	if (reg.hostId && !(await unregisterIfVerified(reg))) await queuePendingUnregister(reg);
+}
+
+export function unregisterFromPush(cfg: ServerConfig | null): Promise<void> {
+	return orderedMutation(() => unregisterFromPushNow(cfg));
 }

@@ -32,7 +32,7 @@ vi.mock("./api", () => ({
 }));
 
 const { getPushStatus, registerForPush, unregisterFromPush } = await import("./push");
-const { unpairFromDaemon, unregisterPushDevice } = await import("./api");
+const { registerPushDevice, unpairFromDaemon, unregisterPushDevice } = await import("./api");
 const { forgetServer } = await import("./disconnect");
 const { loadHosts, saveHost, setActiveHost } = await import("./hosts");
 
@@ -70,6 +70,29 @@ describe("push registration across machines", () => {
 		await registerForPush(config("h_a", "100.101.102.103"));
 
 		expect(unregisterPushDevice).not.toHaveBeenCalled();
+	});
+
+	it("keeps B registered when A's earlier registration finishes late", async () => {
+		const aStarted = Promise.withResolvers<void>();
+		const releaseA = Promise.withResolvers<void>();
+		vi.mocked(registerPushDevice).mockImplementationOnce(async () => {
+			aStarted.resolve();
+			await releaseA.promise;
+		});
+		vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+			ok: true,
+			json: async () => ({ hostId: url.includes("192.168.1.42") ? "h_a" : "h_b" }),
+		})));
+
+		const onA = registerForPush(config("h_a"));
+		await aStarted.promise;
+		const onB = registerForPush(config("h_b", "100.101.102.103"));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		releaseA.resolve();
+		await Promise.all([onA, onB]);
+
+		expect((await getPushStatus(config("h_b", "100.101.102.103"))).registered).toBe(true);
+		expect(unregisterPushDevice).toHaveBeenCalledWith(config("h_a"), "ExponentPushToken[test]");
 	});
 
 	it("replaces a legacy registration without sending its bearer to an unverified address", async () => {
