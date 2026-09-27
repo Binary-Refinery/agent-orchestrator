@@ -258,6 +258,7 @@ func newSessionKillCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "kill <id>",
 		Short: "Terminate a session",
+		Long:  "Terminate a session. Tracked and non-ignored edits are saved for later reapply; ignored files in removed worktrees are deleted and cannot be restored.",
 		Args:  oneSessionIDArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := normalizeSessionID(args[0])
@@ -369,7 +370,7 @@ func newSessionCleanupCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cleanup",
 		Short: "Clean up terminated sessions",
-		Long:  "Clean up terminated sessions by reclaiming eligible workspaces. Dirty worktrees are skipped by the daemon.",
+		Long:  "Clean up terminated sessions by reclaiming eligible workspaces. Dirty worktrees are archived: tracked and non-ignored edits are saved for later reapply; ignored files are deleted and cannot be restored.",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return ctx.cleanupSessions(cmd.Context(), cmd, opts)
@@ -641,11 +642,11 @@ func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id
 		return err
 	}
 	if res.Preserved && res.SaveFailed {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (some edits saved; a workspace was kept because other edits could not be saved; run `ao session reapply-edits %s` to put saved edits back)\n", res.SessionID, res.SessionID)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (some edits saved; ignored files in removed worktrees were not saved; a workspace was kept because other edits could not be saved; run `ao session reapply-edits %s` to put saved edits back)\n", res.SessionID, res.SessionID)
 		return err
 	}
 	if res.Preserved {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (edits saved; run `ao session reapply-edits %s` to put them back)\n", res.SessionID, res.SessionID)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (tracked and non-ignored edits saved; ignored files in removed worktrees were not saved; run `ao session reapply-edits %s` to put saved edits back)\n", res.SessionID, res.SessionID)
 		return err
 	}
 	if res.SaveFailed {
@@ -653,7 +654,7 @@ func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id
 		return err
 	}
 	if res.Freed {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed\n", res.SessionID)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (worktree removed; ignored files, if any, are not restored)\n", res.SessionID)
 		return err
 	}
 	// freed=false: the workspace was preserved (e.g. uncommitted changes) — the
@@ -783,6 +784,9 @@ func (c *commandContext) cleanupSessions(ctx context.Context, cmd *cobra.Command
 	}
 	if len(candidates) == 0 {
 		_, err := fmt.Fprintln(out, "  No sessions to clean up.")
+		return err
+	}
+	if _, err := fmt.Fprintln(out, "  Dirty worktrees will be archived: tracked and non-ignored edits are saved for later reapply; ignored files are deleted and cannot be restored."); err != nil {
 		return err
 	}
 	labels := cleanupLabels(candidates, opts.project)

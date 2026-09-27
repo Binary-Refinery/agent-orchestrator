@@ -1015,7 +1015,7 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 // the kills in parallel is what makes removing a many-session project fast;
 // sessions of the same project that reach the shared repository are serialized
 // by the workspace adapter's per-repo teardown lock. Dirty worktrees are
-// preserved by Kill and Cleanup; callers only see hard teardown failures.
+// archived before removal; ignored files are discarded.
 func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID) error {
 	recs, err := s.listRecords(ctx, project)
 	if err != nil {

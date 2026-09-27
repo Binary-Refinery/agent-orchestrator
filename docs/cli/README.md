@@ -73,6 +73,13 @@ output names the saved-edit outcome and the `ao session reapply-edits <id>`
 command. Reapply is available only while the session is terminated; conflicts
 are left in the worktree for inspection.
 
+`ao session cleanup --dry-run` previews terminated sessions before reclaiming
+their workspaces. Confirmed cleanup archives tracked and non-ignored edits for
+later reapply, then removes the worktree. Ignored files, including local-only
+files, are deleted and cannot be restored. Sessions whose work cannot be
+captured or whose worktree cannot be removed remain on disk and are reported as
+skipped.
+
 `ao agent ls` asks the daemon to ensure display readiness, then prints the
 existing table or legacy JSON projection. The daemon alone decides whether a
 native check is needed. `--refresh` is a deprecated compatibility flag that

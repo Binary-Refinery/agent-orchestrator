@@ -4834,25 +4834,30 @@ func TestCleanup_SkipsWorkspaceReleaseWhenShellTerminalsWontClose(t *testing.T) 
 	}
 }
 
-// TestCleanup_ReportsSkippedWorkspaces: a refused teardown must be visible in
-// the result with a reason — a silent skip leaves users staring at
-// "Would clean N … 0 sessions cleaned" with no explanation.
-func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
+// TestCleanup_ArchivesDirtyWorkspacesAndReportsOtherFailures: dirty worktrees
+// are archived before removal, while unrelated teardown failures stay visible
+// with a fixed public reason.
+func TestCleanup_ArchivesDirtyWorkspacesAndReportsOtherFailures(t *testing.T) {
 	m, st, _, ws := newManager()
-	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/repo/mer"})
+	ws.stashRef = "refs/ao/preserved/mer-1"
 	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
 	res, err := m.Cleanup(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Cleaned) != 0 {
-		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" || len(res.Skipped) != 0 {
+		t.Fatalf("cleanup result = %+v, want dirty session archived", res)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
-		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	if ws.stashCalls != 1 {
+		t.Fatalf("StashUncommitted calls = %d, want 1", ws.stashCalls)
 	}
-	if res.Skipped[0].Reason != "workspace has uncommitted changes" {
-		t.Fatalf("reason = %q", res.Skipped[0].Reason)
+	if !strings.Contains(strings.Join(ws.calls, ","), "ForceDestroy:__root__") {
+		t.Fatalf("workspace calls = %v, want ForceDestroy after snapshot", ws.calls)
+	}
+	rows := st.worktrees["mer-1"]
+	if len(rows) != 1 || rows[0].PreservedRef != "refs/ao/preserved/mer-1/__root__" || rows[0].State != "active" {
+		t.Fatalf("preserved worktree row = %+v, want active saved snapshot", rows)
 	}
 
 	// A non-dirty teardown failure is reported too — but with a fixed public
@@ -4883,6 +4888,27 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 	}
 	if res.Skipped[0].Reason != "project is archived or unregistered — remove worktree manually" {
 		t.Fatalf("reason = %q, want archived-project reason", res.Skipped[0].Reason)
+	}
+}
+
+func TestCleanupLeavesDirtyWorkspaceWhenSnapshotFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/repo/mer"})
+	ws.destroyErr = fmt.Errorf("dirty: %w", ports.ErrWorkspaceDirty)
+	ws.stashErr = errors.New("snapshot write failed")
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 || len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("cleanup result = %+v, want failed archive skipped", res)
+	}
+	if res.Skipped[0].Reason != "workspace could not be archived; worktree left in place" {
+		t.Fatalf("skip reason = %q", res.Skipped[0].Reason)
+	}
+	if strings.Contains(strings.Join(ws.calls, ","), "ForceDestroy:") {
+		t.Fatalf("workspace calls = %v, must not force-remove after snapshot failure", ws.calls)
 	}
 }
 
@@ -5090,9 +5116,10 @@ func TestCleanup_WorkspaceProjectMarksRetryRemoveAfterTeardownFailure(t *testing
 	}
 }
 
-func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
-	m, st, _, ws := newManager()
+func TestCleanup_WorkspaceProjectArchivesDirtyRows(t *testing.T) {
+	m, st, rt, ws := newManager()
 	ws.destroyErr = fmt.Errorf("dirty: %w", ports.ErrWorkspaceDirty)
+	ws.stashRef = "refs/ao/preserved/mer-1"
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1"})
@@ -5105,8 +5132,8 @@ func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Skipped) != 1 {
-		t.Fatalf("cleanup result = %+v, want one skipped session", res)
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" || len(res.Skipped) != 0 {
+		t.Fatalf("cleanup result = %+v, want dirty workspace project archived", res)
 	}
 	refs := map[string]string{}
 	states := map[string]string{}
@@ -5114,8 +5141,24 @@ func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 		refs[row.RepoName] = row.PreservedRef
 		states[row.RepoName] = row.State
 	}
-	if states["api"] != "" || refs["api"] != "" {
-		t.Fatalf("api state/ref = %q/%q, want unchanged dirty row", states["api"], refs["api"])
+	if states["api"] != "active" || refs["api"] != "refs/ao/preserved/mer-1/api" {
+		t.Fatalf("api state/ref = %q/%q, want active archived row", states["api"], refs["api"])
+	}
+	if states[domain.RootWorkspaceRepoName] != "active" || refs[domain.RootWorkspaceRepoName] != "refs/ao/preserved/mer-1/__root__" {
+		t.Fatalf("root state/ref = %q/%q, want active archived row", states[domain.RootWorkspaceRepoName], refs[domain.RootWorkspaceRepoName])
+	}
+	if got, want := strings.Join(ws.calls, ","), "Destroy:api,StashUncommitted:api,ForceDestroy:api,Destroy:__root__,StashUncommitted:__root__,ForceDestroy:__root__"; got != want {
+		t.Fatalf("workspace calls = %s, want %s", got, want)
+	}
+	if _, err := m.ReapplyPreservedEdits(ctx, "mer-1"); err != nil {
+		t.Fatalf("reapply after cleanup: %v", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("reapply relaunched the agent %d times", rt.created)
+	}
+	if !strings.Contains(strings.Join(ws.calls, ","), "ApplyPreserved:api:refs/ao/preserved/mer-1/api") ||
+		!strings.Contains(strings.Join(ws.calls, ","), "ApplyPreserved:__root__:refs/ao/preserved/mer-1/__root__") {
+		t.Fatalf("reapply calls = %v, want both archived repos reapplied", ws.calls)
 	}
 }
 

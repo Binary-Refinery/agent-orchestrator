@@ -438,6 +438,9 @@ func TestSessionKill_SuccessWithProjectScope(t *testing.T) {
 	if !strings.Contains(out, "session demo-1 killed") {
 		t.Fatalf("unexpected kill output:\n%s", out)
 	}
+	if !strings.Contains(out, "ignored files, if any, are not restored") {
+		t.Fatalf("kill output did not disclose ignored-file removal:\n%s", out)
+	}
 	want := []string{"GET /api/v1/sessions/demo-1", "POST /api/v1/sessions/demo-1/kill"}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
@@ -488,7 +491,7 @@ func TestSessionKill_ReportsPreservedEditsAndReapplyCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session kill failed: %v\nstderr=%s", err, errOut)
 	}
-	if !strings.Contains(out, "some edits saved") || !strings.Contains(out, "other edits could not be saved") || !strings.Contains(out, "ao session reapply-edits demo-1") {
+	if !strings.Contains(out, "some edits saved") || !strings.Contains(out, "ignored files in removed worktrees were not saved") || !strings.Contains(out, "other edits could not be saved") || !strings.Contains(out, "ao session reapply-edits demo-1") {
 		t.Fatalf("saved-edit outcome or recovery command missing:\n%s", out)
 	}
 }
@@ -627,7 +630,16 @@ func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	if strings.Contains(out, "Type yes to confirm") {
 		t.Fatalf("--yes should skip confirmation prompt:\n%s", out)
 	}
-	for _, want := range []string{"Checking for completed sessions", "Would clean demo-old", "Would clean demo-orch", "Cleaned: demo-old", "Cleaned: demo-orch", "Cleanup complete. 2 sessions cleaned."} {
+	for _, want := range []string{
+		"Checking for completed sessions",
+		"Would clean demo-old",
+		"Would clean demo-orch",
+		"Dirty worktrees will be archived",
+		"ignored files are deleted and cannot be restored",
+		"Cleaned: demo-old",
+		"Cleaned: demo-orch",
+		"Cleanup complete. 2 sessions cleaned.",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("cleanup output missing %q:\n%s", want, out)
 		}
@@ -703,7 +715,13 @@ func TestSessionCleanup_DryRunListsWithoutPromptingOrDeleting(t *testing.T) {
 	if strings.Contains(out, "Type yes to confirm") {
 		t.Fatalf("--dry-run must not prompt for confirmation:\n%s", out)
 	}
-	for _, want := range []string{"Would clean demo-old", "Would clean demo-orch", "(dry-run: no sessions were removed)"} {
+	for _, want := range []string{
+		"Would clean demo-old",
+		"Would clean demo-orch",
+		"Dirty worktrees will be archived",
+		"ignored files are deleted and cannot be restored",
+		"(dry-run: no sessions were removed)",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, out)
 		}

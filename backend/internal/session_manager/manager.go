@@ -2306,7 +2306,7 @@ func (m *Manager) noteArchive(id domain.SessionID, notice archiveNotice) {
 func (m *Manager) removeDirtyWorkspaceAfterCapture(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (bool, archiveNotice) {
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
-		m.logger.Warn("kill: preserve uncommitted work failed; leaving worktree", "sessionID", rec.ID, "error", err)
+		m.logger.Warn("archive: preserve uncommitted work failed; leaving worktree", "sessionID", rec.ID, "error", err)
 		return false, archiveNotice{SaveFailed: true}
 	}
 	notice := archiveNotice{}
@@ -2320,13 +2320,13 @@ func (m *Manager) removeDirtyWorkspaceAfterCapture(ctx context.Context, rec doma
 			PreservedRef: ref,
 			State:        "active",
 		}); err != nil {
-			m.logger.Warn("kill: record preserved edits failed; leaving worktree", "sessionID", rec.ID, "error", err)
+			m.logger.Warn("archive: record preserved edits failed; leaving worktree", "sessionID", rec.ID, "error", err)
 			return false, archiveNotice{SaveFailed: true}
 		}
 		notice.Preserved = true
 	}
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
-		m.logger.Warn("kill: remove worktree after preserve failed; leaving worktree", "sessionID", rec.ID, "error", err)
+		m.logger.Warn("archive: remove worktree after preserve failed; leaving worktree", "sessionID", rec.ID, "error", err)
 		return false, notice
 	}
 	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
@@ -4185,6 +4185,11 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	return nil
 }
 
+var errWorkspaceArchiveFailed = errors.New("workspace archive failed")
+
+// destroyWorkspaceProjectRows removes a terminated workspace project's repos.
+// Dirty repos are snapshotted and recorded before force removal; a failed
+// capture or row write leaves that worktree in place.
 func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (ports.WorkspaceReclaim, error) {
 	touched := false
 	aggregate := ports.WorkspaceReclaimAlreadyAbsent
@@ -4203,7 +4208,46 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 		}
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				return aggregate, err
+				info := workspaceInfoForPreserve(rows[i])
+				ref, stashErr := m.workspace.StashUncommitted(ctx, info)
+				if stashErr != nil {
+					if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove"); stateErr != nil && firstErr == nil {
+						firstErr = fmt.Errorf("%w: record retry state: %w", errWorkspaceArchiveFailed, stateErr)
+					}
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%w: %s repo %s: preserve worktree: %w", errWorkspaceArchiveFailed, rows[i].SessionID, rows[i].RepoName, stashErr)
+					}
+					continue
+				}
+				if ref != "" {
+					if rowErr := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
+						SessionID: rows[i].SessionID, RepoName: rows[i].RepoName, Branch: rows[i].Branch,
+						BaseSHA: rows[i].BaseSHA, BaseRef: rows[i].BaseRef, CreationSHA: rows[i].CreationSHA,
+						WorktreePath: rows[i].Path, PreservedRef: ref, State: "active",
+					}); rowErr != nil {
+						if firstErr == nil {
+							firstErr = fmt.Errorf("%w: %s repo %s: record preserved edits: %w", errWorkspaceArchiveFailed, rows[i].SessionID, rows[i].RepoName, rowErr)
+						}
+						continue
+					}
+				}
+				if forceErr := m.workspace.ForceDestroy(ctx, info); forceErr != nil {
+					if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove"); stateErr != nil && firstErr == nil {
+						firstErr = fmt.Errorf("%w: record retry state: %w", errWorkspaceArchiveFailed, stateErr)
+					}
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%w: %s repo %s: remove preserved worktree: %w", errWorkspaceArchiveFailed, rows[i].SessionID, rows[i].RepoName, forceErr)
+					}
+					continue
+				}
+				if ref == "" {
+					if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "unavailable"); stateErr != nil && firstErr == nil {
+						firstErr = stateErr
+					}
+				}
+				touched = true
+				aggregate = ports.WorkspaceReclaimRemoved
+				continue
 			}
 			if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove"); stateErr != nil && firstErr == nil {
 				firstErr = stateErr
@@ -4742,9 +4786,9 @@ type CleanupResult struct {
 	Skipped     []CleanupSkip
 }
 
-// Cleanup reclaims the workspaces of terminal sessions in a project. A workspace
-// whose teardown is refused (uncommitted work) is never forced; it is reported
-// in Skipped with the reason so the refusal is visible instead of silent.
+// Cleanup reclaims the workspaces of terminal sessions in a project. Dirty
+// worktrees are snapshotted and removed only after the snapshot is recorded; a
+// failed capture or removal is reported in Skipped and leaves the worktree.
 func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupResult, error) {
 	recs, err := m.cleanupRecords(ctx, project)
 	if err != nil {
@@ -4828,7 +4872,8 @@ func (m *Manager) isWorkspaceInUse(ctx context.Context, projectID domain.Project
 	return live[normalizeWorkspacePath(workspacePath)], nil
 }
 
-// cleanupOne reclaims one terminated session's workspace, gating shut any
+// cleanupOne reclaims one terminated session's workspace, archiving dirty
+// worktrees before force-removing them, and gating shut any
 // shell terminal scoped to it first (same ordering as Kill). Split out of
 // Cleanup's loop so the release function's defer is scoped to one session's
 // call, not deferred across every iteration until Cleanup itself returns.
@@ -4871,6 +4916,13 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 	} else {
 		err = m.workspace.Destroy(ctx, ws)
 	}
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		freed, _ := m.removeDirtyWorkspaceAfterCapture(ctx, rec, ws)
+		if !freed {
+			return ports.WorkspaceReclaimRemoved, "workspace could not be archived; worktree left in place"
+		}
+		return ports.WorkspaceReclaimRemoved, ""
+	}
 	if err != nil {
 		if !workspacePreserved(err) {
 			// The public reason stays a fixed string (the raw error carries
@@ -4888,6 +4940,9 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 // it flows to the API response and CLI output, and teardown errors embed
 // internal filesystem paths.
 func cleanupSkipReason(err error) string {
+	if errors.Is(err, errWorkspaceArchiveFailed) {
+		return "workspace could not be archived; worktree left in place"
+	}
 	if errors.Is(err, ports.ErrWorkspaceDirty) {
 		return "workspace has uncommitted changes"
 	}
