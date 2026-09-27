@@ -35,6 +35,8 @@ var agentDocumentationURLs = map[Target]string{
 	TargetKimchi:     "https://docs.kimchi.dev/docs/coding-getting-started",
 	TargetPrimeAgent: "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md",
 	TargetOMP:        "https://github.com/can1357/oh-my-pi",
+	TargetFX:         "https://fx.sh/docs",
+	TargetUnreal:     "https://github.com/unreallabsai/unreal-agent",
 }
 
 func (s requestPlanner) agentMethodPlans(target Target, operation AgentOperation) []Plan {
@@ -190,6 +192,17 @@ func (s requestPlanner) agentMethodPlans(target Target, operation AgentOperation
 		default:
 			plans = []Plan{manualPlan(target, "Prime Agent publishes this installer for macOS and Linux only.", agentDocumentationURLs[target])}
 		}
+	case TargetFX:
+		switch s.goos {
+		case "darwin", "linux":
+			plan := s.planShellInstaller(target, "https://fx.sh/setup.sh", "bash")
+			plan.ExpectedDestination = "~/.local/bin/fx"
+			plans = []Plan{plan}
+		case "windows":
+			plans = []Plan{manualPlan(target, "fx publishes macOS and Linux installers; use WSL on Windows.", agentDocumentationURLs[target])}
+		default:
+			plans = []Plan{manualPlan(target, "fx publishes this installer for macOS and Linux only.", agentDocumentationURLs[target])}
+		}
 	case TargetOMP:
 		official := s.officialByOS(target, "https://omp.sh/install", "sh", "https://omp.sh/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
@@ -197,6 +210,11 @@ func (s requestPlanner) agentMethodPlans(target Target, operation AgentOperation
 		} else {
 			plans = []Plan{s.planBun(target), official}
 		}
+	case TargetUnreal:
+		plans = []Plan{{
+			Target: target, Unsupported: true, Method: "manual",
+			Reason: "Unreal Agent is built into AO; update AO to update the harness.",
+		}}
 	default:
 		plans = []Plan{{Target: target, Unsupported: true, Method: "manual", Reason: "unknown install target"}}
 	}
