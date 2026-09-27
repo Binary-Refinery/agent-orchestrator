@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	claudecodeagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
@@ -376,7 +377,14 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	chatDrivers := chatdriverregistry.Build(log)
+	var agentSvc *agentsvc.Service
+	chatDrivers := chatdriverregistry.Build(log, func() {
+		if agentSvc == nil {
+			return
+		}
+		agentSvc.InvalidateAgentAuthentication(string(domain.HarnessClaudeCode))
+		agentSvc.RecheckAgent(string(domain.HarnessClaudeCode))
+	})
 
 	// Daemon-owned preferences. The store's type is field-compatible with the
 	// service's, adapted here so neither package imports the other. Offering
@@ -391,7 +399,6 @@ func Run() error {
 	// Chat service. The driver registry is the capability gate: a harness with no
 	// registered driver cannot start in chat mode, so an unsupported request fails
 	// loudly instead of silently becoming a TUI session.
-	var agentSvc *agentsvc.Service
 	var sessMgr sessionLifecycle
 	chatSvc := chatsvc.New(chatsvc.Options{
 		Store:    store,
@@ -462,9 +469,8 @@ func Run() error {
 			}
 			agentSvc.ObserveActiveCodexAccountCapacity(observation)
 		},
-		// A model the user picked in ChatUI must land on the session before the
-		// next prompt routes, so a later TUI rebuild resumes with the same model
-		// instead of reverting to the project default.
+		// Sync ChatUI's model choice, including clearing its override, before a
+		// later TUI rebuild reads the session metadata.
 		OnModelChanged: func(sessionID domain.SessionID, model string) {
 			if sessMgr == nil {
 				return
@@ -487,6 +493,16 @@ func Run() error {
 				Args:    []string{"--acp"},
 				Env:     request.Env,
 			}, request.WorkingDir, log)
+		},
+		// Claude's model IDs are provider-specific — first-party aliases,
+		// Bedrock ARNs-in-miniature, Vertex @-versions — so the list has to come
+		// from whichever provider is configured. An error here is expected and
+		// harmless: discovery falls back to the static aliases.
+		ClaudeModels: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.AgentModelInfo, error) {
+			return claudecodeagent.ProviderModels(listCtx, request.Binary, request.WorkingDir, request.Env)
+		},
+		ClaudeFingerprint: func(fingerprintCtx context.Context, request ports.AgentModelDiscoveryRequest) string {
+			return claudecodeagent.ProviderCatalogFingerprint(fingerprintCtx, request.Binary, request.WorkingDir, request.Env)
 		},
 	}
 	// Build the multi-tracker dispatching to both GitHub and GitLab once,
@@ -742,6 +758,8 @@ func Run() error {
 		log.Warn("reviewer chat recovery deferred", "err", reconcileErr)
 	}
 	agentSvc.WarmCodexAccounts()
+	automationSvc, automationDone := startAutomations(ctx, store, sessionSvc, log)
+	lcStack.automationDone = automationDone
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
 	// Push-device registry: persisted phones that receive OS push notifications.
@@ -825,6 +843,9 @@ func Run() error {
 	}
 
 	bs.HostID = hostIdentity.HostID
+	if mobilebridge.KeepAwakeSupported() {
+		bs.KeepAwake = mobilebridge.NewKeepAwake(os.Getpid())
+	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
@@ -835,6 +856,7 @@ func Run() error {
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
 		Sessions:           sessionSvc,
+		Automations:        automationSvc,
 		DesktopWorkspaces:  sessionSvc,
 		PRs:                prActions,
 		Reviews:            reviewSvc,
@@ -983,6 +1005,11 @@ func Run() error {
 	if startupReconcileDone != nil {
 		<-startupReconcileDone
 	}
+	backgroundStopCtx, backgroundStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := sessMgr.WaitBackgroundWorkers(backgroundStopCtx); err != nil {
+		log.Error("session background worker shutdown", "err", err)
+	}
+	backgroundStopCancel()
 	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
 		if agentSwitchWorkerWaitTimedOut(err) {
@@ -1028,6 +1055,7 @@ func Run() error {
 	// public hostname resolving to a port that is about to close. Stopping it
 	// does not disable the bridge — boot restore starts a new one.
 	bs.ShutdownTunnel()
+	bs.ShutdownKeepAwake()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {
