@@ -94,6 +94,33 @@ it("shows stable notes without contributor handles and retains linked PR numbers
 	);
 });
 
+it("renders nightly Markdown without exposing its formatting syntax", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	const commitUrl = "https://github.com/Untrivial-ai/agent-orchestrator/commit/35a96279b657b818b488071f75b03d083fc6c9f2";
+	renderDialog({
+		state: "downloaded",
+		version: "0.13.2-nightly.202609270208",
+		releaseNotes: [
+			"**Nightly build**",
+			"",
+			"This automated build tracks the latest `main` branch for testing changes before the next stable release.",
+			"",
+			`- Commit: [35a9627](${commitUrl})`,
+			"- Built: `2026-09-27T02:08:00Z`",
+			"",
+			"> This build may be unstable and is not recommended for production use.",
+		].join("\n"),
+	});
+
+	expect(await screen.findByText("Nightly build")).toBeVisible();
+	expect(screen.getByText("Nightly build").closest("strong")).not.toBeNull();
+	expect(screen.getByText("main").closest("code")).not.toBeNull();
+	expect(screen.getByText("2026-09-27T02:08:00Z").closest("code")).not.toBeNull();
+	expect(screen.getByRole("link", { name: "35a9627" })).toHaveAttribute("href", commitUrl);
+	expect(screen.getByText(/may be unstable/).closest("blockquote")).not.toBeNull();
+	expect(screen.queryByText(/\*\*Nightly build\*\*|\[35a9627\]|^>/)).toBeNull();
+});
+
 it("renders the nightly build date from the UTC instant", async () => {
 	// The stamp 202609070300 encodes 03:00 UTC. Near the UTC day boundary the
 	// date-only dialog label must show the device-local calendar day of the

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { prepareDesktopReleaseNotes, splitDesktopReleaseNoteLinks } from "../lib/desktop-release-notes";
+import { prepareDesktopReleaseNotes } from "../lib/desktop-release-notes";
 
 it("removes contributor handles and the comparison footer while retaining linked PR numbers", () => {
 	const notes = [
@@ -22,13 +22,4 @@ it("removes contributor handles and the comparison footer while retaining linked
 it("leaves nightly notes and unrelated user text unchanged", () => {
 	const notes = "This automated build tracks main.\n\n- Source: @team in #general";
 	expect(prepareDesktopReleaseNotes(notes)).toBe(notes);
-});
-
-it("turns only canonical AO pull request markdown into link parts", () => {
-	const url = "https://github.com/Untrivial-ai/agent-orchestrator/pull/123";
-	expect(splitDesktopReleaseNoteLinks(`Fixed [#123](${url}) and [docs](https://example.com)`)).toEqual([
-		{ text: "Fixed " },
-		{ text: "#123", href: url },
-		{ text: " and [docs](https://example.com)" },
-	]);
 });

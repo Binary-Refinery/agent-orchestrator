@@ -182,7 +182,7 @@ function RestartToUpdateDialogBody() {
 					{releaseNotes ? (
 						<DesktopReleaseNotes
 							notes={releaseNotes}
-							textClassName="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-line text-pretty text-sm leading-5 text-settings-label"
+							textClassName="mt-1.5 max-h-56 overflow-y-auto text-pretty text-sm leading-5 text-settings-label"
 						/>
 					) : (
 						<p className="mt-1.5 text-sm leading-5 text-settings-muted">{t("update.restart.noNotes")}</p>
