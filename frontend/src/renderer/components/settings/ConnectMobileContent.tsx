@@ -334,7 +334,23 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			if (error) throw new Error(apiErrorMessage(error));
 			return data;
 		},
-		onSuccess: invalidate,
+		// Flip the cached status up front so the switch never falls back to the
+		// old value between the POST finishing and the refetch landing.
+		onMutate: async (keepAwake) => {
+			await queryClient.cancelQueries({ queryKey: mobileStatusQueryKey });
+			const previous = queryClient.getQueryData<MobileStatus>(mobileStatusQueryKey);
+			if (previous?.keepAwake) {
+				queryClient.setQueryData<MobileStatus>(mobileStatusQueryKey, {
+					...previous,
+					keepAwake: { ...previous.keepAwake, enabled: keepAwake },
+				});
+			}
+			return { previous };
+		},
+		onError: (_error, _keepAwake, context) => {
+			if (context?.previous) queryClient.setQueryData(mobileStatusQueryKey, context.previous);
+		},
+		onSettled: invalidate,
 	});
 
 	// TLS turns itself on wherever Tailscale exists — it is not a switch, and it
@@ -701,8 +717,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					<Switch
 						className="mt-0.5"
 						aria-label={t("mobile.keepAwake.label")}
-						checked={setKeepAwake.isPending ? (setKeepAwake.variables ?? false) : status.keepAwake.enabled}
-						disabled={setKeepAwake.isPending}
+						checked={status.keepAwake.enabled}
 						onCheckedChange={(next) => {
 							clearActionErrors();
 							setKeepAwake.mutate(next);

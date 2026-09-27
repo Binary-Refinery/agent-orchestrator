@@ -596,8 +596,16 @@ test("turns the keep-awake option on", async () => {
 	expect(toggle).not.toBeChecked();
 	expect(screen.queryByTestId("mobile-keep-awake-laptop")).not.toBeInTheDocument();
 
+	// The daemon persists the choice, so the refetch after the POST reads it back.
+	vi.mocked(apiClient.POST).mockImplementationOnce(async () => {
+		mobileStatus.keepAwake = { supported: true, enabled: true, active: true, hasBattery: false };
+		return { data: {}, error: undefined } as never;
+	});
 	await userEvent.click(toggle);
 	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/keep-awake", { body: { enabled: true } });
+	// Flipped immediately and never falls back to off while the refetch lands.
+	expect(toggle).toBeChecked();
+	await waitFor(() => expect(toggle).toBeChecked());
 });
 
 // Closing a MacBook's lid sleeps it regardless, so laptops get told up front.
