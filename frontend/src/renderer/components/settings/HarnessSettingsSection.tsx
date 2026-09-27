@@ -676,17 +676,19 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 	useEffect(() => {
 		const box = terminalBoxRef.current;
 		if (!box) return;
-		// Keep wheel scrolling inside the terminal: when xterm has nothing left to
-		// scroll, the browser would otherwise chain it to the settings list.
+		// xterm scrolls itself through its own wheel handler, so the browser never
+		// needs to scroll anything under the terminal. Block native scrolling for
+		// any wheel over the terminal box (by position, since xterm's layers and
+		// cached portal can sit outside the event path) so the settings list
+		// behind it stays put.
 		const onWheel = (event: WheelEvent) => {
-			const viewport = box.querySelector<HTMLElement>(".xterm-viewport");
-			const canScroll = viewport && (event.deltaY < 0
-				? viewport.scrollTop > 0
-				: viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1);
-			if (!canScroll) event.preventDefault();
+			if (event.ctrlKey || event.metaKey) return;
+			const rect = box.getBoundingClientRect();
+			if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return;
+			event.preventDefault();
 		};
-		box.addEventListener("wheel", onWheel, { capture: true, passive: false });
-		return () => box.removeEventListener("wheel", onWheel, { capture: true });
+		window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+		return () => window.removeEventListener("wheel", onWheel, { capture: true });
 	}, []);
 	const status = workflow.phase === "running"
 		? workflow.guidance || t("settings.harness.loggingIn")
