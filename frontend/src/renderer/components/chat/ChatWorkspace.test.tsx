@@ -394,7 +394,6 @@ describe("ChatWorkspace timeline", () => {
 			role: "user",
 			origin: "human",
 			clientMessageId: "local-send",
-			clientMessageId: "local-send",
 			text: "Visible before the server snapshot",
 			streaming: false,
 			createdAt: "2026-09-09T00:00:00Z",
