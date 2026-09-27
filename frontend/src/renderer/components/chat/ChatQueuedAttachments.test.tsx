@@ -25,7 +25,7 @@ function setup(text = "inspect this", content: ConversationContentSummary[] = []
 	const snapshot: ConversationSnapshot = {
 		...chatFixture,
 		turns: [
-			{ id: "active", state: "running" as const, startedAt: "2026-09-06T09:59:00Z" },
+			{ id: "active", state: "running" as const, requestedAt: "2026-09-06T09:59:00Z", startedAt: "2026-09-06T09:59:00Z" },
 			{ id: "q1", state: "queued" as const, requestedAt: "2026-09-06T10:00:00Z" },
 		],
 		items: [
