@@ -512,6 +512,10 @@ function formatDuration(ms: number): string {
 	return `${Math.max(1, Math.floor(ms / 60_000))}m`;
 }
 
+function formatDecisionDuration(ms: number): string {
+	return `${Math.max(0, Math.round(ms))}ms`;
+}
+
 export function ResponseSpinner() {
 	return (
 		<span
@@ -2069,9 +2073,9 @@ function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
 									    told than a policy rule matching, so the provider's own word
 									    for it is carried rather than flattened to "automatically". */}
 									{detail.decisionSource}
-									{detail.durationMs !== undefined && detail.durationMs > 0
-										? ` · ${formatDuration(detail.durationMs)}`
-										: ""}
+						{detail.durationMs !== undefined && detail.durationMs > 0
+							? ` · ${formatDecisionDuration(detail.durationMs)}`
+							: ""}
 								</dd>
 							</>
 						) : null}

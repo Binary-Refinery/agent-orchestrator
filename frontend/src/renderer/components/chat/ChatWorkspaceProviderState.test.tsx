@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { render as rtlRender, screen } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -189,6 +189,7 @@ describe("provider state chrome", () => {
 			});
 		}
 		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+		fireEvent.click(screen.getByRole("button", { name: /Worked for/ }));
 		expect(screen.getByRole("alert")).toHaveTextContent("Sign in again to keep going");
 		expect(screen.getByRole("alert")).toHaveTextContent("login");
 		expect(screen.getByRole("alert")).not.toHaveTextContent("Provider access denied");
@@ -225,7 +226,9 @@ describe("provider state chrome", () => {
 
 	it("places a brief tool-server notice immediately above the composer", () => {
 		render(<ChatWorkspace snapshot={{ ...chatFixtureMcpFailed, controller: { state: "ready" } }} />);
-		const notice = screen.getByRole("status");
+		const notice = screen.getAllByRole("status").find((element) =>
+			element.textContent?.includes("Playwright, Postgres MCPs unavailable"),
+		)!;
 		const composer = notice.parentElement?.nextElementSibling;
 		expect(notice).toHaveTextContent("Playwright, Postgres MCPs unavailable");
 		expect(document.querySelector(".cursor-chat-composer-dock")).toContainElement(notice);
@@ -272,6 +275,7 @@ describe("model reroute", () => {
 				onChooseSettings={vi.fn()}
 			/>,
 		);
+		fireEvent.click(screen.getByRole("button", { name: /Worked for/ }));
 		expect(
 			screen.getByText(/The requested model is at capacity for this account tier/),
 		).toBeInTheDocument();

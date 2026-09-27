@@ -304,6 +304,10 @@ export const ChatComposer = memo(function ChatComposer({
 			? readChatSessionDraft(draftScope).composer.delivery
 			: undefined,
 	);
+	// The editor can emit a synchronous change while the optimistic clear occurs,
+	// before React commits durableDelivery. Keep the send journal's exact draft out
+	// of the ordinary draft writer until delivery settles.
+	const durableDeliveryRef = useRef(durableDelivery);
 	const [steerNextRequest, setSteerNextRequest] = useState(0);
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
@@ -403,6 +407,7 @@ export const ChatComposer = memo(function ChatComposer({
 		synchronouslyClearedDeliveryRevision.current = undefined;
 		const currentDraft = draftScope ? readChatSessionDraft(draftScope) : undefined;
 		composerRevision.current = currentDraft?.composer.revision ?? 0;
+		durableDeliveryRef.current = currentDraft?.composer.delivery;
 		setDurableDelivery(currentDraft?.composer.delivery);
 		setAppliedAcceptanceSequence(0);
 		setTextDraftPersistenceError(null);
@@ -622,6 +627,7 @@ export const ChatComposer = memo(function ChatComposer({
 			setTextDraftPersistenceError(null);
 			setDeliveryRecoveryNotice(null);
 			if (!result.cleared) return false;
+			durableDeliveryRef.current = undefined;
 			clearEditorView();
 			fileAttachments.clear();
 			return true;
@@ -632,6 +638,7 @@ export const ChatComposer = memo(function ChatComposer({
 	const clearAcceptedDraft = useCallback(
 		(acceptedRevision: number, mutationToken?: ChatDraftMutationToken) => {
 			if (!draftScope) {
+				durableDeliveryRef.current = undefined;
 				clearEditorView();
 				fileAttachments.clear();
 				return true;
@@ -699,6 +706,7 @@ export const ChatComposer = memo(function ChatComposer({
 			);
 			return;
 		}
+		durableDeliveryRef.current = undefined;
 		setDeliveryUncertain(false);
 		setTextDraftPersistenceError(null);
 		setDeliveryRecoveryNotice(null);
@@ -828,7 +836,7 @@ export const ChatComposer = memo(function ChatComposer({
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
 		textRef.current = snapshot.text;
 		onQueuedDraftChange?.(snapshot.text);
-		if (draftScope) {
+		if (draftScope && !durableDeliveryRef.current) {
 			const result = writeChatComposerText(draftScope, snapshot.text);
 			composerRevision.current = result.draft.composer.revision;
 			// A disabled Lexical editor can still publish an internal state update
@@ -1158,6 +1166,7 @@ export const ChatComposer = memo(function ChatComposer({
 			return;
 		}
 		const delivery = prepared.mutation;
+		durableDeliveryRef.current = delivery;
 		synchronouslyClearedDeliveryRevision.current = undefined;
 		setDeliveryUncertain(false);
 		composerRevision.current = prepared.draft.composer.revision;
@@ -1194,6 +1203,7 @@ export const ChatComposer = memo(function ChatComposer({
 						delivery.revision,
 					);
 					setDurableDelivery(cleared.draft.composer.delivery);
+					if (cleared.ok) durableDeliveryRef.current = undefined;
 					composerRevision.current = cleared.draft.composer.revision;
 					if (cleared.ok) {
 						setTextDraftPersistenceError(null);
@@ -1228,8 +1238,16 @@ export const ChatComposer = memo(function ChatComposer({
 					draftScope, delivery.clientMessageId, delivery.revision,
 				);
 				setDurableDelivery(cleared.draft.composer.delivery);
-				setDeliveryUncertain(false);
-				setDeliveryRecoveryNotice(null);
+				if (cleared.ok) {
+					durableDeliveryRef.current = undefined;
+					const restoredText = cleared.draft.composer.text;
+					textRef.current = restoredText;
+					hasTextRef.current = restoredText.trim().length > 0;
+					setHasText(hasTextRef.current);
+					editor.current?.setText(restoredText);
+					setDeliveryUncertain(false);
+					setDeliveryRecoveryNotice(null);
+				}
 				setTextDraftPersistenceError(cleared.ok ? null : "chat.draft.saveFailed");
 				setSendError(apiErrorMessage(error));
 				return;
