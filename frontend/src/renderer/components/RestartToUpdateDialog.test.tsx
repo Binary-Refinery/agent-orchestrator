@@ -72,6 +72,28 @@ it("shows what the build changes", async () => {
 	expect(screen.queryByText(/Leave AO closed until it reopens/)).toBeNull();
 });
 
+it("shows stable notes without repository attribution and links to the product changelog", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	renderDialog({
+		state: "downloaded",
+		version: "0.13.1",
+		releaseNotes: [
+			"### Added",
+			"",
+			"- Add useful workflows by @person in [#123](https://github.com/Untrivial-ai/agent-orchestrator/pull/123)",
+			"",
+			"**Full Changelog**: https://github.com/Untrivial-ai/agent-orchestrator/compare/v0.13.0...v0.13.1",
+		].join("\n"),
+	});
+
+	expect(await screen.findByText(/Add useful workflows/)).toBeVisible();
+	expect(screen.queryByText(/@person|#123|v0\.13\.0\.\.\.v0\.13\.1/)).toBeNull();
+	expect(screen.getByRole("link", { name: "View changelog" })).toHaveAttribute(
+		"href",
+		"https://orchestrator.inc/changelog",
+	);
+});
+
 it("renders the nightly build date from the UTC instant", async () => {
 	// The stamp 202609070300 encodes 03:00 UTC. Near the UTC day boundary the
 	// date-only dialog label must show the device-local calendar day of the
