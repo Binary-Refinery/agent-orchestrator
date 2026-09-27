@@ -2196,7 +2196,7 @@
 	"remote.loadConversationFailed": "无法加载此远程对话。",
 	"remote.message": "消息",
 	"remote.sendFailed": "无法发送消息。",
-	"remote.limitations": "远程预览支持聊天、终端和停止会话。编辑器、文件、浏览器和审批目前仍需在主机上使用。",
+	"remote.limitations": "远程预览支持聊天、终端和停止会话。编辑器、文件和浏览器目前仍需在主机上使用。",
 	"remote.terminalAria": "远程会话终端",
 	"remote.startingTerminal": "正在启动终端…",
 	"remote.reconnectingTerminal": "正在重新连接远程终端…",

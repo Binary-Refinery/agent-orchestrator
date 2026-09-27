@@ -2244,7 +2244,7 @@
 	"remote.loadConversationFailed": "Impossible de charger cette conversation distante.",
 	"remote.message": "Message",
 	"remote.sendFailed": "Impossible d’envoyer le message.",
-	"remote.limitations": "L’aperçu distant permet le chat, le terminal et l’arrêt de session. L’éditeur, les fichiers, le navigateur et les approbations restent pour l’instant sur l’hôte.",
+	"remote.limitations": "L’aperçu distant permet le chat, le terminal et l’arrêt de session. L’éditeur, les fichiers et le navigateur restent pour l’instant sur l’hôte.",
 	"remote.terminalAria": "Terminal de la session distante",
 	"remote.startingTerminal": "Démarrage du terminal…",
 	"remote.reconnectingTerminal": "Reconnexion au terminal distant…",

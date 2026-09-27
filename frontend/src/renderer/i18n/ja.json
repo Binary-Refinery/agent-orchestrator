@@ -2214,7 +2214,7 @@
 	"remote.loadConversationFailed": "リモートの会話を読み込めませんでした。",
 	"remote.message": "メッセージ",
 	"remote.sendFailed": "メッセージを送信できませんでした。",
-	"remote.limitations": "リモート表示ではチャット、ターミナル、停止を利用できます。エディター、ファイル、ブラウザー、承認は現在ホスト上で操作してください。",
+	"remote.limitations": "リモート表示ではチャット、ターミナル、停止を利用できます。エディター、ファイル、ブラウザーは現在ホスト上で操作してください。",
 	"remote.terminalAria": "リモートセッションのターミナル",
 	"remote.startingTerminal": "ターミナルを起動中…",
 	"remote.reconnectingTerminal": "リモートターミナルに再接続中…",

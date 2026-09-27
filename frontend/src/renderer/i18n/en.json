@@ -2194,7 +2194,7 @@
 	"remote.loadConversationFailed": "Could not load this remote conversation.",
 	"remote.message": "Message",
 	"remote.sendFailed": "Could not send the message.",
-	"remote.limitations": "Remote preview supports Chat, terminal, and stop. Editor, files, browser, and approvals stay on the host for now.",
+	"remote.limitations": "Remote preview supports Chat, terminal, and stop. Editor, files, and browser stay on the host for now.",
 	"remote.terminalAria": "Remote session terminal",
 	"remote.startingTerminal": "Starting terminal…",
 	"remote.reconnectingTerminal": "Reconnecting to remote terminal…",

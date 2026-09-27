@@ -92,7 +92,11 @@ test("two desktop clients continue Box A without confusing Box B's identical ses
 	await expect.poll(() => state.actions).toContain("box-b:kill");
 	expect(state.actions).not.toContain("box-a:kill");
 
+	await section.locator('[data-host-id="box-a"]').getByRole("button", { name: "Start on Box A" }).click();
+	await expect(page.getByRole("heading", { name: "Start on Box A" })).toBeVisible();
+	await page.keyboard.press("Escape");
 	await section.locator('[data-host-id="box-b"]').getByRole("button", { name: "Start on Box B" }).click();
+	await expect(page.getByRole("heading", { name: "Start on Box B" })).toBeVisible();
 	await page.getByRole("textbox", { name: "Task" }).fill("Investigate auth");
 	await page.getByRole("button", { name: "Start on remote host" }).click();
 	await expect.poll(() => state.actions).toContain("box-b:spawn");

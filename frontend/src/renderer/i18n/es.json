@@ -2244,7 +2244,7 @@
 	"remote.loadConversationFailed": "No se pudo cargar esta conversación remota.",
 	"remote.message": "Mensaje",
 	"remote.sendFailed": "No se pudo enviar el mensaje.",
-	"remote.limitations": "La vista remota permite usar el chat, la terminal y detener la sesión. Por ahora, el editor, los archivos, el navegador y las aprobaciones siguen en el equipo anfitrión.",
+	"remote.limitations": "La vista remota permite usar el chat, la terminal y detener la sesión. Por ahora, el editor, los archivos y el navegador siguen en el equipo anfitrión.",
 	"remote.terminalAria": "Terminal de la sesión remota",
 	"remote.startingTerminal": "Iniciando terminal…",
 	"remote.reconnectingTerminal": "Reconectando a la terminal remota…",

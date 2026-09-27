@@ -2214,7 +2214,7 @@
 	"remote.loadConversationFailed": "Diese Remote-Unterhaltung konnte nicht geladen werden.",
 	"remote.message": "Nachricht",
 	"remote.sendFailed": "Die Nachricht konnte nicht gesendet werden.",
-	"remote.limitations": "Die Remote-Ansicht unterstützt Chat, Terminal und das Beenden von Sitzungen. Editor, Dateien, Browser und Freigaben bleiben vorerst auf dem Host.",
+	"remote.limitations": "Die Remote-Ansicht unterstützt Chat, Terminal und das Beenden von Sitzungen. Editor, Dateien und Browser bleiben vorerst auf dem Host.",
 	"remote.terminalAria": "Terminal der Remote-Sitzung",
 	"remote.startingTerminal": "Terminal wird gestartet…",
 	"remote.reconnectingTerminal": "Verbindung zum Remote-Terminal wird wiederhergestellt…",

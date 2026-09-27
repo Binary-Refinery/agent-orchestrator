@@ -1026,7 +1026,9 @@ function ShellLayout() {
 					<Dialog.Portal>
 						<Dialog.Overlay className="dialog-overlay" />
 						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl">
-							<Dialog.Title className="mb-2 text-lg font-semibold">{t("remote.startTitle")}</Dialog.Title>
+							<Dialog.Title className="mb-2 text-lg font-semibold">{remoteStartHostId
+								? t("remote.startOn", { label: remoteHosts.find((host) => host.hostId === remoteStartHostId)?.label ?? remoteStartHostId })
+								: t("remote.startTitle")}</Dialog.Title>
 							<Dialog.Description className="mb-4 text-sm text-muted-foreground">{t("remote.startDescription")}</Dialog.Description>
 							{remoteStartHostId && <RemoteSpawnSession key={remoteStartHostId} hostId={remoteStartHostId} onCreated={(sessionId) => {
 								void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteStartHostId) });
