@@ -121,6 +121,20 @@ describe("TaskComposerView", () => {
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
 	});
 
+	it("renders execution context before the task prompt", () => {
+		const { container } = render(
+			<TaskComposerView
+				{...viewProps({ context: <div data-testid="execution-context">project context</div> })}
+			/>,
+		);
+
+		const context = screen.getByTestId("execution-context");
+		const prompt = screen.getByRole("textbox", { name: "Task" });
+		expect(context).toBeInTheDocument();
+		expect(Boolean(context.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+		expect(container.querySelector("form")?.firstElementChild).toBe(context);
+	});
+
 	it("claims the caret when asked to autofocus, and reclaims it from a surface that steals it", async () => {
 		render(<TaskComposerView {...viewProps({ autoFocusPrompt: true })} />);
 		const prompt = screen.getByRole("textbox", { name: "Task" });
@@ -174,6 +188,32 @@ describe("TaskComposerView", () => {
 
 		rerender(<TaskComposerView {...viewProps({ canSubmit: false })} />);
 		expect(screen.getByRole("button", { name: "Start task" })).toBeDisabled();
+	});
+
+	it("starts from the chat send arrow and names its pending state", () => {
+		const props = viewProps();
+		const { rerender } = render(<TaskComposerView {...props} />);
+		const start = screen.getByRole("button", { name: "Start task" });
+		expect(start).toHaveTextContent("");
+		expect(start.querySelector(".lucide-arrow-up")).not.toBeNull();
+		expect(start).toHaveClass("rounded-full", "bg-foreground");
+
+		rerender(<TaskComposerView {...viewProps({ submission: { ...props.submission, isSubmitting: true } })} />);
+		const pending = screen.getByRole("button", { name: "Starting..." });
+		expect(pending).toBeDisabled();
+		expect(pending).toHaveClass("bg-primary");
+		expect(pending.querySelector(".animate-spin")).not.toBeNull();
+	});
+
+	it("blocks form and Enter submission while project context is unavailable", () => {
+		const props = viewProps({ canSubmit: false });
+		const { container } = render(<TaskComposerView {...props} />);
+		const prompt = screen.getByRole("textbox", { name: "Task" });
+
+		fireEvent.keyDown(prompt, { key: "Enter", shiftKey: false, altKey: false });
+		fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+		expect(props.submission.onSubmit).not.toHaveBeenCalled();
 	});
 
 	it("forwards picked, pasted, dropped, and removed attachments", () => {
@@ -298,6 +338,21 @@ describe("TaskComposerView", () => {
 		);
 
 		expect(lastAttachmentTransition.current).toEqual({ duration: 0 });
+	});
+
+	it("gives a model warning one of the prompt's reserved lines instead of growing the composer", () => {
+		const props = viewProps();
+		const { rerender } = render(<TaskComposerView {...props} />);
+		const prompt = screen.getByRole("textbox", { name: "Task" });
+		expect(prompt).toHaveClass("min-h-[calc(3lh+1.75rem)]");
+
+		const warning = "claude-code model discovery: no credential could be resolved for this provider";
+		rerender(<TaskComposerView {...viewProps({ submission: { ...props.submission, modelWarning: warning } })} />);
+		expect(prompt).toHaveClass("min-h-[calc(2lh+1.75rem)]");
+		const status = screen.getByRole("status");
+		expect(status).toHaveTextContent(warning);
+		expect(status).toHaveAttribute("title", warning);
+		expect(status).toHaveClass("truncate");
 	});
 
 	it("shows attachment and submission errors with a fallback action", () => {

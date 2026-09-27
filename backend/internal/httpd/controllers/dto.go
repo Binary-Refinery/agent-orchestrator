@@ -20,6 +20,61 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
+// CreateReportRequest is the local caller-to-daemon report submission contract.
+// SessionID attributes the report; like the rest of AO's unauthenticated
+// loopback API, it is not cryptographic proof of worker authorship. Reports do
+// not mutate or derive authoritative session status.
+type CreateReportRequest struct {
+	SessionID string                `json:"sessionId"`
+	State     string                `json:"state,omitempty" enum:"checkpoint,needs_input,stuck,done"`
+	Note      string                `json:"note,omitempty" maxLength:"1000"`
+	Message   string                `json:"message,omitempty" maxLength:"1000"`
+	Outputs   []ReportOutputRequest `json:"outputs,omitempty"`
+}
+
+// ReportOutputRequest is one ordered structured output reference.
+type ReportOutputRequest struct {
+	Kind      string `json:"kind" enum:"artifact,pr_created,pr_reviewed"`
+	Reference string `json:"reference" minLength:"1"`
+	Label     string `json:"label,omitempty"`
+}
+
+// CreateReportResponse returns only the durable identifier needed to correlate
+// a successful submission without echoing report contents.
+type CreateReportResponse struct {
+	ID string `json:"id"`
+}
+
+// ReportOutputResponse is one ordered output reference in the read projection.
+type ReportOutputResponse struct {
+	Kind      string `json:"kind"`
+	Reference string `json:"reference"`
+	Label     string `json:"label,omitempty"`
+}
+
+// ReportResponse is one persisted worker claim, independent of delivery state.
+type ReportResponse struct {
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"sessionId"`
+	ProjectID   string                 `json:"projectId"`
+	State       string                 `json:"state,omitempty"`
+	Note        string                 `json:"note,omitempty"`
+	Message     string                 `json:"message,omitempty"`
+	Outputs     []ReportOutputResponse `json:"outputs,omitempty"`
+	CreatedAt   time.Time              `json:"createdAt"`
+	RepeatCount int64                  `json:"repeatCount"`
+}
+
+// ListReportsResponse contains a project's ordered persisted reports.
+type ListReportsResponse struct {
+	Reports []ReportResponse `json:"reports"`
+}
+
+// ListReportsQuery selects reports by stable project identity.
+type ListReportsQuery struct {
+	ProjectID string `query:"projectId" required:"true" description:"Stable project identifier."`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served
@@ -33,6 +88,11 @@ import (
 // as the path parameter.
 type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
+}
+
+// TaskPreparationTokenParam identifies an unclaimed speculative task workspace.
+type TaskPreparationTokenParam struct {
+	Token string `path:"token" description:"Opaque speculative task-worktree token."`
 }
 
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
@@ -62,6 +122,11 @@ type CodexAccountIDParam struct {
 // CodexAccountLoginIDParam documents a Codex login operation route identifier.
 type CodexAccountLoginIDParam struct {
 	OperationID string `path:"operationId" description:"In-memory Codex account login operation identifier."`
+}
+
+// CodexAccountSwitchIDParam documents a durable Codex account switch identifier.
+type CodexAccountSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable Codex account switch identifier."`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
@@ -138,6 +203,11 @@ type SessionIDParam struct {
 	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
 }
 
+// PRNumberParam is the associated pull-request number in Files routes.
+type PRNumberParam struct {
+	PRNumber int `path:"prNumber" description:"Associated pull request number." minimum:"1"`
+}
+
 // AgentSwitchIDParam is the {switchId} path parameter for one durable switch saga.
 type AgentSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable agent-switch identifier."`
@@ -200,6 +270,26 @@ type WorkspaceFileRevisionQuery struct {
 	WorkspaceVersion string `query:"workspaceVersion,omitempty" description:"Opaque workspace snapshot token used for consistency checks."`
 	ExpectedRevision string `query:"expectedRevision,omitempty" description:"Opaque revision token used for optimistic consistency checks."`
 	CommitSHA        string `query:"commitSha,omitempty" description:"Exact commit SHA for a committed-scope comparison."`
+}
+
+// PRFilesQuery selects the associated pull request when multiple providers or
+// repositories can have the same pull-request number.
+type PRFilesQuery struct {
+	SourceURL string `query:"sourceUrl,omitempty" description:"Stable URL of the selected associated pull request."`
+}
+
+// PRFileQuery identifies one file in an associated pull request.
+type PRFileQuery struct {
+	Path         string `query:"path" required:"true" description:"Repository-relative file path."`
+	PreviousPath string `query:"previousPath,omitempty" description:"Previous repository-relative path supplied by the selected PR file summary for rename detection."`
+	SourceURL    string `query:"sourceUrl,omitempty" description:"Stable URL of the selected associated pull request."`
+}
+
+// PRFileRevisionQuery selects one immutable side of a pull-request comparison.
+type PRFileRevisionQuery struct {
+	Path      string `query:"path" required:"true" description:"Repository-relative file path."`
+	Side      string `query:"side,omitempty" enum:"before,after" description:"Comparison side. Defaults to after."`
+	SourceURL string `query:"sourceUrl,omitempty" description:"Stable URL of the selected associated pull request."`
 }
 
 // WorkspaceSearchQuery is the query string accepted by the workspace path search.
@@ -278,11 +368,14 @@ type ListSessionsResponse struct {
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
 	// ProjectID is omitted for a standalone worker session.
-	ProjectID       domain.ProjectID       `json:"projectId,omitempty"`
-	IssueID         domain.IssueID         `json:"issueId,omitempty"`
+	ProjectID domain.ProjectID `json:"projectId,omitempty"`
+	IssueID   domain.IssueID   `json:"issueId,omitempty"`
+	// ParentSessionID is supplied by `ao spawn` inside an AO session. The daemon
+	// validates it before deriving inherited worker settings.
+	ParentSessionID domain.SessionID       `json:"parentSessionId,omitempty"`
 	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
 	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand"`
+	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,unreal-agent"`
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
@@ -291,19 +384,22 @@ type SpawnSessionRequest struct {
 	// never mutates existing sessions automatically; compatible sessions may later
 	// switch through the durable interface-transition endpoint. An unsupported
 	// explicit request fails rather than quietly producing the other kind of session.
-	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
-	Prompt string             `json:"prompt,omitempty" maxLength:"16384"`
+	Mode domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
+	// ApprovalMode overrides the project/default policy for this spawn.
+	// Read-only requires a Chat driver that can enforce it.
+	ApprovalMode domain.PermissionMode `json:"approvalMode,omitempty" enum:"read-only,default,accept-edits,auto,bypass-permissions"`
+	Prompt       string                `json:"prompt,omitempty" maxLength:"16384"`
 	// Model is an optional agent model override scoped to this single spawn. Empty
 	// keeps the resolved project/role default. The daemon validates that the
 	// selected harness can honor the model before launching.
 	Model string `json:"model,omitempty" maxLength:"256"`
-	// Permissions overrides the project default for this session. Read-only requires a capable Chat driver.
-	Permissions domain.PermissionMode `json:"permissions,omitempty" enum:"read-only,default,accept-edits,auto,bypass-permissions"`
+	// Effort is the optional reasoning level for the selected model.
+	Effort string `json:"effort,omitempty" maxLength:"32"`
 
-	// DisplayName is the sidebar label for the session, capped at 20 characters.
+	// DisplayName is the sidebar label for the session, capped at 100 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
-	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	DisplayName string `json:"displayName,omitempty" maxLength:"100"`
 	// Attachments are files pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
@@ -417,10 +513,22 @@ type ListWorkspaceFilesResponse struct {
 	// Commits are the commits between the compare base and HEAD, newest first.
 	Commits []WorkspaceCommitSummary `json:"commits"`
 	Summary WorkspaceSummary         `json:"summary"`
+	// Degraded indicates that the primary file list is available but optional
+	// Git-state enrichment failed and can be retried.
+	Degraded     bool   `json:"degraded"`
+	DegradedCode string `json:"degradedCode,omitempty"`
 	// Ahead and Behind are omitted when no push/pull data is available (no
 	// upstream, detached HEAD).
 	Ahead  *int `json:"ahead,omitempty"`
 	Behind *int `json:"behind,omitempty"`
+}
+
+// ListPRFilesResponse is the exact base...head changed-file set for one PR.
+type ListPRFilesResponse struct {
+	SessionID domain.SessionID       `json:"sessionId"`
+	Files     []WorkspaceFileSummary `json:"files"`
+	Truncated bool                   `json:"truncated"`
+	Summary   WorkspaceSummary       `json:"summary"`
 }
 
 // WorkspaceFileSections groups a session workspace's changed files by git
@@ -578,7 +686,7 @@ type SessionPreviewResponse struct {
 
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
-	DisplayName string `json:"displayName" minLength:"1"`
+	DisplayName string `json:"displayName" minLength:"1" maxLength:"100"`
 }
 
 // SetSessionReviewerRequest sets the durable reviewer preference for a session.
@@ -612,9 +720,11 @@ func (r *SetSessionAutoReviewRequest) UnmarshalJSON(data []byte) error {
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
-// session workspace; a non-empty url is used verbatim as the preview target.
+// session workspace; a non-empty url is resolved as a workspace file when
+// possible and otherwise retained as an external target.
 type SetSessionPreviewRequest struct {
-	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
+	URL                  string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
+	RequireWorkspaceFile bool   `json:"requireWorkspaceFile,omitempty" description:"Reject the target unless it resolves to an existing file in the session workspace."`
 }
 
 // StartPreviewServerRequest selects one named entry from .ao/launch.json. The
@@ -860,8 +970,11 @@ type SendSessionMessageResponse struct {
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"16384"`
-	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,fake"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,unreal-agent,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
+	// Effort is an explicit, provider-advertised model tuning override. Nil
+	// inherits the project default; an empty string selects the provider default.
+	Effort *string `json:"effort,omitempty" maxLength:"64"`
 	// ApprovalMode is an optional per-session override. The UI uses the explicit
 	// bypass value only after the user accepts an approval-less Chat fallback.
 	ApprovalMode domain.PermissionMode `json:"approvalMode,omitempty" enum:"read-only,default,accept-edits,auto,bypass-permissions"`
@@ -873,6 +986,15 @@ type DelegateTaskRequest struct {
 	// daemon writes them into the spawned worker worktree and appends path
 	// references to the worker prompt.
 	Attachments []AttachmentInput `json:"attachments,omitempty"`
+	// TaskPreparation is the opaque worktree token returned while the New Task
+	// dialog is open. Missing or expired tokens fall back to normal creation.
+	TaskPreparation string `json:"taskPreparation,omitempty"`
+}
+
+// PrepareTaskResponse returns the opaque token for a speculative task workspace.
+type PrepareTaskResponse struct {
+	OK              bool   `json:"ok"`
+	TaskPreparation string `json:"taskPreparation,omitempty"`
 }
 
 // DelegateTaskResponse confirms which worker was spawned and, when available,
@@ -1115,6 +1237,7 @@ type ClaimPRResponse struct {
 // state-only semantics.
 // AgentSessionID may arrive without State on metadata-only SessionStart hooks.
 type SetActivityRequest struct {
+	ObservedAt                   time.Time                           `json:"observedAt,omitempty" description:"Time the local hook process observed the event, before delivery to the daemon."`
 	State                        string                              `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
 	Event                        string                              `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
 	ToolName                     string                              `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
@@ -1123,6 +1246,7 @@ type SetActivityRequest struct {
 	LatestUserPrompt             string                              `json:"latestUserPrompt,omitempty" maxLength:"16384" description:"Latest real user prompt exposed by the provider hook."`
 	LatestAssistantUpdate        string                              `json:"latestAssistantUpdate,omitempty" maxLength:"16384" description:"Latest assistant update exposed by the provider hook."`
 	ConversationCheckpointOrigin domain.ConversationCheckpointOrigin `json:"conversationCheckpointOrigin,omitempty" enum:"human,coordination" description:"Whether the main-turn boundary came from a human or AO coordination."`
+	CoordinationID               string                              `json:"coordinationId,omitempty" description:"Opaque identity of an AO-authored semantic prompt accepted by the native agent."`
 	ProviderTurnID               string                              `json:"providerTurnId,omitempty" description:"Native main-turn identity reported by the hook, when supported."`
 	SubmissionID                 string                              `json:"submissionId,omitempty" maxLength:"36" description:"AO prompt-hook context correlation UUID, when supported."`
 	TranscriptPath               string                              `json:"transcriptPath,omitempty" maxLength:"4096" description:"Read-only provider-native transcript path exposed by the hook."`
@@ -1176,6 +1300,11 @@ type ReviewSessionIDParam struct {
 	ID string `path:"reviewSessionID" description:"Reviewer session identifier, currently the per-harness review row id."`
 }
 
+// ReviewIDParam identifies a durable reviewer-owned conversation.
+type ReviewIDParam struct {
+	ReviewID string `path:"reviewId" description:"Reviewer conversation identifier."`
+}
+
 // SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.
 type SpawnOrchestratorRequest struct {
 	ProjectID domain.ProjectID `json:"projectId"`
@@ -1184,6 +1313,9 @@ type SpawnOrchestratorRequest struct {
 	// idempotent ensure returns the existing orchestrator unchanged, and a clean
 	// replacement inherits the existing orchestrator's currently committed mode.
 	Mode domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
+	// ApprovalMode is an optional per-session override. The UI uses the explicit
+	// bypass value only after the user accepts an approval-less Chat fallback.
+	ApprovalMode domain.PermissionMode `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
 }
 
 // SpawnOrchestratorResponse is the body of POST /api/v1/orchestrators.
@@ -1219,13 +1351,25 @@ type EnsureAgentReadinessRequest struct {
 
 // CodexAccountsResponse is the controller-owned, redacted cached account view.
 type CodexAccountsResponse struct {
-	ActiveAccountID        string                               `json:"activeAccountId,omitempty"`
-	AccountRevision        int64                                `json:"accountRevision"`
-	Accounts               []CodexAccountResponse               `json:"accounts"`
-	Capabilities           CodexAccountCapabilitiesResponse     `json:"capabilities"`
-	UnmanagedGlobalAccount *CodexUnmanagedGlobalAccountResponse `json:"unmanagedGlobalAccount,omitempty"`
-	ActiveLogin            *CodexActiveLoginResponse            `json:"activeLogin,omitempty"`
-	CurrentSwitch          *CodexAccountSwitchResponse          `json:"currentSwitch,omitempty"`
+	ActiveAccountID      string                            `json:"activeAccountId,omitempty"`
+	AccountRevision      int64                             `json:"accountRevision"`
+	Accounts             []CodexAccountResponse            `json:"accounts"`
+	Capabilities         CodexAccountCapabilitiesResponse  `json:"capabilities"`
+	DeviceReconciliation CodexDeviceReconciliationResponse `json:"deviceReconciliation"`
+	ActiveLogin          *CodexActiveLoginResponse         `json:"activeLogin,omitempty"`
+	CurrentSwitch        *CodexAccountSwitchResponse       `json:"currentSwitch,omitempty"`
+}
+
+// CodexDeviceReconciliationResponse reports whether the device credential was
+// locally associated with a saved account.
+type CodexDeviceReconciliationResponse struct {
+	Status                string     `json:"status" enum:"not_checked,checking,verified,temporarily_unavailable,blocked"`
+	ActiveAccountVerified bool       `json:"activeAccountVerified"`
+	ReasonCode            string     `json:"reasonCode"`
+	Retryable             bool       `json:"retryable"`
+	AttemptedAt           *time.Time `json:"attemptedAt,omitempty"`
+	VerifiedAt            *time.Time `json:"verifiedAt,omitempty"`
+	NextRetryAt           *time.Time `json:"nextRetryAt,omitempty"`
 }
 
 // CodexAccountResponse contains UI account facts without provider or storage identity.
@@ -1319,19 +1463,12 @@ type CodexAccountCapabilitiesResponse struct {
 	GlobalSwitch       CodexCapabilityObservationResponse `json:"globalSwitch"`
 }
 
-// CodexUnmanagedGlobalAccountResponse explains a device identity AO cannot manage.
-type CodexUnmanagedGlobalAccountResponse struct {
-	Label        string  `json:"label"`
-	AuthMethod   string  `json:"authMethod" enum:"chatgpt,api_key,other,unknown"`
-	AccountEmail *string `json:"accountEmail,omitempty"`
-	ReasonCode   string  `json:"reasonCode"`
-	Reason       string  `json:"reason"`
-}
-
 // EnsureCodexAccountsRequest selects accounts for display reads.
 type EnsureCodexAccountsRequest struct {
-	AccountIDs   []string `json:"accountIds,omitempty"`
-	IncludeUsage bool     `json:"includeUsage,omitempty"`
+	AccountIDs                []string `json:"accountIds,omitempty"`
+	IncludeUsage              bool     `json:"includeUsage,omitempty"`
+	ForceAuthentication       bool     `json:"forceAuthentication,omitempty"`
+	ForceDeviceReconciliation bool     `json:"forceDeviceReconciliation,omitempty"`
 }
 
 // ConsumeCodexAccountResetCreditRequest identifies one idempotent provider
@@ -1351,7 +1488,7 @@ type OpenCodexAccountLoginTerminalResponse struct {
 type CodexAccountLoginResponse struct {
 	OperationID string                `json:"operationId"`
 	AccountID   string                `json:"accountId,omitempty"`
-	Status      string                `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	Status      string                `json:"status" enum:"pending,verifying,unauthorized,retryable,completed,cancelled,failed,expired"`
 	ReasonCode  string                `json:"reasonCode"`
 	Reason      string                `json:"reason"`
 	Account     *CodexAccountResponse `json:"account,omitempty"`
@@ -1362,7 +1499,7 @@ type CodexAccountLoginResponse struct {
 type CodexActiveLoginResponse struct {
 	OperationID   string                            `json:"operationId"`
 	AccountID     string                            `json:"accountId,omitempty"`
-	Status        string                            `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	Status        string                            `json:"status" enum:"pending,verifying,unauthorized,retryable,completed,cancelled,failed,expired"`
 	ReasonCode    string                            `json:"reasonCode"`
 	Reason        string                            `json:"reason"`
 	ExpiresAt     time.Time                         `json:"expiresAt"`
@@ -1380,14 +1517,10 @@ type CodexAccountLoginTerminalResponse struct {
 
 // StartCodexAccountSwitchRequest requests an idempotent global account change.
 type StartCodexAccountSwitchRequest struct {
-	TargetAccountID         string `json:"targetAccountId" minLength:"1"`
-	ExpectedAccountRevision int64  `json:"expectedAccountRevision" minimum:"0"`
+	TargetAccountID string `json:"targetAccountId" minLength:"1"`
+	// ExpectedAccountRevision is accepted temporarily for older clients and ignored.
+	ExpectedAccountRevision *int64 `json:"expectedAccountRevision,omitempty" minimum:"0" deprecated:"true"`
 	IdempotencyKey          string `json:"idempotencyKey" minLength:"1"`
-}
-
-// CodexAccountSwitchIDParam describes the durable switch path parameter.
-type CodexAccountSwitchIDParam struct {
-	SwitchID string `path:"switchId" description:"Durable Codex account switch identifier."`
 }
 
 // CodexAccountSwitchPhase is the retained public switch lifecycle.
@@ -1395,29 +1528,16 @@ type CodexAccountSwitchPhase string
 
 // CodexAccountSwitchResponse contains only safe AO identifiers and progress.
 type CodexAccountSwitchResponse struct {
-	ID                     string                              `json:"id"`
-	SourceAccountID        string                              `json:"sourceAccountId"`
-	TargetAccountID        string                              `json:"targetAccountId"`
-	Phase                  CodexAccountSwitchPhase             `json:"phase" enum:"requested,stopping_sessions,sessions_stopped,checkpointing_source,activating_target,verifying_target,restarting_sessions,rollback_required,recovery_required,completed,failed"`
-	FailureCode            string                              `json:"failureCode,omitempty"`
-	Sessions               []CodexAccountSwitchSessionResponse `json:"sessions"`
-	CanRecover             bool                                `json:"canRecover"`
-	CredentialsCommittedAt *time.Time                          `json:"credentialsCommittedAt,omitempty"`
-	CreatedAt              time.Time                           `json:"createdAt"`
-	UpdatedAt              time.Time                           `json:"updatedAt"`
-	CompletedAt            *time.Time                          `json:"completedAt,omitempty"`
-}
-
-// CodexAccountSwitchSessionResponse is safe AO session progress for a switch.
-type CodexAccountSwitchSessionResponse struct {
-	SessionID     string     `json:"sessionId"`
-	InterfaceMode string     `json:"interfaceMode" enum:"tui,chat"`
-	WasRunning    bool       `json:"wasRunning"`
-	StopState     string     `json:"stopState"`
-	RestartState  string     `json:"restartState"`
-	ErrorCode     string     `json:"errorCode,omitempty"`
-	StoppedAt     *time.Time `json:"stoppedAt,omitempty"`
-	RestartedAt   *time.Time `json:"restartedAt,omitempty"`
+	ID                     string                  `json:"id"`
+	SourceKind             string                  `json:"sourceKind" enum:"managed,device,none"`
+	SourceAccountID        string                  `json:"sourceAccountId,omitempty"`
+	TargetAccountID        string                  `json:"targetAccountId"`
+	Phase                  CodexAccountSwitchPhase `json:"phase" enum:"requested,checkpointing_source,activating_target,recovery_required,completed,failed"`
+	FailureCode            string                  `json:"failureCode,omitempty"`
+	CredentialsCommittedAt *time.Time              `json:"credentialsCommittedAt,omitempty"`
+	CreatedAt              time.Time               `json:"createdAt"`
+	UpdatedAt              time.Time               `json:"updatedAt"`
+	CompletedAt            *time.Time              `json:"completedAt,omitempty"`
 }
 
 // AgentReadinessSnapshot is one normalized harness readiness view.
@@ -1539,6 +1659,113 @@ type StartInstallResponse = systeminstall.Job
 
 // InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
 type InstallStatusResponse = systeminstall.Job
+
+// AutomationIDParam identifies a recurring definition.
+type AutomationIDParam struct {
+	AutomationID string `path:"automationId" description:"Automation identifier."`
+}
+
+// ListAutomationsQuery describes filters and pagination for automation definitions.
+type ListAutomationsQuery struct {
+	ProjectID string `query:"projectId,omitempty"`
+	Enabled   *bool  `query:"enabled,omitempty"`
+	Limit     int    `query:"limit,omitempty" minimum:"1" maximum:"100"`
+	Cursor    string `query:"cursor,omitempty"`
+}
+
+// ListAutomationRunsQuery describes pagination for an automation's run history.
+type ListAutomationRunsQuery struct {
+	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100"`
+	Cursor string `query:"cursor,omitempty"`
+}
+
+// CreateAutomationRequest is the body accepted when creating an automation.
+type CreateAutomationRequest struct {
+	ProjectID   string `json:"projectId"`
+	DisplayName string `json:"displayName"`
+	Prompt      string `json:"prompt"`
+	Kind        string `json:"kind" enum:"worker,orchestrator"`
+	Harness     string `json:"harness,omitempty"`
+	RRule       string `json:"rrule,omitempty"`
+	Cron        string `json:"cron,omitempty"`
+	Timezone    string `json:"timezone"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+// UpdateAutomationRequest is the partial body accepted when updating an automation.
+type UpdateAutomationRequest struct {
+	DisplayName *string `json:"displayName,omitempty"`
+	Prompt      *string `json:"prompt,omitempty"`
+	Kind        *string `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness     *string `json:"harness,omitempty"`
+	RRule       *string `json:"rrule,omitempty"`
+	Cron        *string `json:"cron,omitempty"`
+	Timezone    *string `json:"timezone,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`
+}
+
+// AutomationRunSummaryResponse is the latest-run projection attached to a definition.
+type AutomationRunSummaryResponse struct {
+	ID           string     `json:"id"`
+	Status       string     `json:"status" enum:"pending,spawning,running,completed,failed"`
+	ScheduledFor time.Time  `json:"scheduledFor"`
+	SessionID    string     `json:"sessionId,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+}
+
+// AutomationResponse is the API representation of an automation definition.
+type AutomationResponse struct {
+	ID          string                        `json:"id"`
+	ProjectID   string                        `json:"projectId"`
+	DisplayName string                        `json:"displayName"`
+	Prompt      string                        `json:"prompt"`
+	Kind        string                        `json:"kind" enum:"worker,orchestrator"`
+	Harness     string                        `json:"harness,omitempty"`
+	RRule       string                        `json:"rrule"`
+	Timezone    string                        `json:"timezone"`
+	Enabled     bool                          `json:"enabled"`
+	NextRunAt   time.Time                     `json:"nextRunAt"`
+	LastRunAt   *time.Time                    `json:"lastRunAt,omitempty"`
+	CreatedAt   time.Time                     `json:"createdAt"`
+	UpdatedAt   time.Time                     `json:"updatedAt"`
+	LatestRun   *AutomationRunSummaryResponse `json:"latestRun,omitempty"`
+}
+
+// AutomationEnvelope wraps one automation response.
+type AutomationEnvelope struct {
+	Automation AutomationResponse `json:"automation"`
+}
+
+// ListAutomationsResponse is one page of automation definitions.
+type ListAutomationsResponse struct {
+	Automations []AutomationResponse `json:"automations"`
+	NextCursor  string               `json:"nextCursor,omitempty"`
+}
+
+// AutomationRunResponse is the API representation of one scheduled occurrence.
+type AutomationRunResponse struct {
+	ID             string     `json:"id"`
+	AutomationID   string     `json:"automationId"`
+	ScheduledFor   time.Time  `json:"scheduledFor"`
+	SessionID      string     `json:"sessionId,omitempty"`
+	Status         string     `json:"status" enum:"pending,spawning,running,completed,failed"`
+	AttemptCount   int64      `json:"attemptCount"`
+	ClaimedAt      *time.Time `json:"claimedAt,omitempty"`
+	LeaseExpiresAt *time.Time `json:"leaseExpiresAt,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
+	ErrorMessage   string     `json:"errorMessage,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+// ListAutomationRunsResponse is one page of automation run history.
+type ListAutomationRunsResponse struct {
+	Runs       []AutomationRunResponse `json:"runs"`
+	NextCursor string                  `json:"nextCursor,omitempty"`
+}
 
 // AgentInstallResponse is shared by the agent harness start and status routes.
 type AgentInstallResponse = systeminstall.Job
@@ -1669,6 +1896,14 @@ type MarkAllNotificationsReadResponse struct {
 	UpdatedCount  int64                  `json:"updatedCount" description:"Number of notifications changed from unread to read."`
 }
 
+// ClearNotificationsResponse is the body of DELETE /api/v1/notifications.
+type ClearNotificationsResponse struct {
+	ClearedCount  int64  `json:"clearedCount" description:"Number of notifications deleted."`
+	ClearID       string `json:"clearId" description:"Identifier shared with the ordered notification_cleared stream event."`
+	ClearEpoch    string `json:"clearEpoch" description:"Daemon epoch for ordering notification clears across one daemon lifetime."`
+	ClearSequence int64  `json:"clearSequence" description:"Monotonic notification-clear sequence within clearEpoch."`
+}
+
 // ImportStatusResponse is the body of GET /api/v1/import: whether a legacy AO
 // install is available to import, and the root the daemon would read from.
 type ImportStatusResponse struct {
@@ -1680,6 +1915,26 @@ type ImportStatusResponse struct {
 // of the import run (counts + notes), reused verbatim from the import engine.
 type ImportRunResponse struct {
 	Report legacyimport.Report `json:"report"`
+}
+
+// ListDirsQuery is the query string accepted by GET /api/v1/fs/dirs.
+type ListDirsQuery struct {
+	Path string `query:"path,omitempty" description:"Absolute directory on the daemon host to list. When omitted, the daemon user's home directory."`
+}
+
+// FSEntry is one directory in a /api/v1/fs/dirs listing.
+type FSEntry struct {
+	Name    string `json:"name" description:"Directory name."`
+	Path    string `json:"path" description:"Absolute path of the directory on the daemon host."`
+	GitRepo bool   `json:"gitRepo" description:"True when the directory carries a .git entry (clone or worktree checkout)."`
+}
+
+// ListDirsResponse is the body of GET /api/v1/fs/dirs.
+type ListDirsResponse struct {
+	Path      string    `json:"path" description:"Absolute path that was listed."`
+	Parent    string    `json:"parent" description:"Absolute path of the listed directory's parent; equals path at the filesystem root."`
+	Entries   []FSEntry `json:"entries" description:"Subdirectories, excluding dotted names."`
+	Truncated bool      `json:"truncated,omitempty" description:"True when the listing hit the entry cap and more subdirectories exist."`
 }
 
 // DevImportProjectsRequest is the body of POST /api/v1/dev/import-projects.
@@ -1713,6 +1968,8 @@ type MergePRResponse struct {
 
 // ResolveCommentsRequest is the optional body of POST /api/v1/prs/{id}/resolve-comments.
 type ResolveCommentsRequest struct {
+	// CommentIDs accepts provider comment ids and review thread ids. Comment
+	// ids are mapped to their owning thread before resolving.
 	CommentIDs []string `json:"commentIds,omitempty"`
 }
 
@@ -1736,6 +1993,23 @@ type EndpointsResponse struct {
 type IdentityResponse struct {
 	HostID     string `json:"hostId"`
 	APIVersion int    `json:"apiVersion"`
+}
+
+// LinkPreviewQuery selects the external page to unfurl.
+type LinkPreviewQuery struct {
+	URL string `query:"url" description:"Absolute http(s) URL of the page to preview."`
+}
+
+// LinkPreviewResponse is the body of GET /api/v1/link-preview (200). Only URL
+// is guaranteed; every other field is omitted when the page does not provide
+// it, so the renderer renders whatever subset arrived.
+type LinkPreviewResponse struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	ImageURL    string `json:"imageUrl,omitempty"`
+	SiteName    string `json:"siteName,omitempty"`
+	FaviconURL  string `json:"faviconUrl,omitempty"`
 }
 
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
@@ -1762,6 +2036,21 @@ type MobileStatusResponse struct {
 	Password      string              `json:"password"`
 	Warning       string              `json:"warning"`
 	SecurePairing SecurePairingStatus `json:"securePairing"`
+	KeepAwake     KeepAwakeStatus     `json:"keepAwake"`
+}
+
+// KeepAwakeStatus describes the macOS-only option that stops the machine from
+// idle-sleeping while Connect Mobile is on, so a paired phone stays connected.
+type KeepAwakeStatus struct {
+	Supported  bool `json:"supported"`  // this platform can hold the machine awake (macOS)
+	Enabled    bool `json:"enabled"`    // the user turned the option on
+	Active     bool `json:"active"`     // the sleep assertion is currently held
+	HasBattery bool `json:"hasBattery"` // a laptop, where closing the lid still sleeps it
+}
+
+// SetKeepAwakeRequest is the body of POST /api/v1/mobile/keep-awake.
+type SetKeepAwakeRequest struct {
+	Enabled bool `json:"enabled"`
 }
 
 // SecurePairingStatus describes the optional TLS-over-Tailscale pairing mode,
@@ -1915,6 +2204,17 @@ type SteerConversationResponse struct {
 	// ActivityID is the timeline row recording the guidance, so an optimistic bubble
 	// can be reconciled with the durable one rather than shown twice.
 	ActivityID string `json:"activityId,omitempty"`
+}
+
+// SteerOrSendConversationResponse reports the single durable outcome selected by
+// the atomic steer-or-send operation.
+type SteerOrSendConversationResponse struct {
+	Outcome        string           `json:"outcome" enum:"steered,sent"`
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	ActivityID     string           `json:"activityId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
+	Duplicate      bool             `json:"duplicate"`
 }
 
 // EditConversationMessageRequest changes the readable text of one durable human

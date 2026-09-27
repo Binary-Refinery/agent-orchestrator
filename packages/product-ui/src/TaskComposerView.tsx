@@ -12,12 +12,14 @@ import {
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+	ArrowUpIcon as ArrowUp,
 	FileTextIcon as FileText,
 	LoaderCircleIcon as Loader2,
 	PaperclipIcon as Paperclip,
 	XIcon as X,
 } from "./icons";
 import { useOverlayAutoFocus } from "./overlay-auto-focus";
+import { cn } from "./utils";
 
 // One fixed-height, non-wrapping row: 56px attachment tiles plus 6px top and
 // 8px bottom padding. Keeping this numeric avoids Motion's auto-height layout
@@ -26,7 +28,9 @@ const ATTACHMENT_ROW_HEIGHT = 70;
 
 export type TaskComposerAgentOption = {
 	authentication: {
-		state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+		// "configured" means a credential exists locally but nothing has proven
+		// it valid — neither signed in nor signed out.
+		state: "authorized" | "unauthorized" | "unknown" | "not_applicable" | "configured";
 		freshness: "fresh" | "stale" | "checking";
 	};
 	effectiveReadiness: "ready" | "not_ready" | "unknown";
@@ -51,16 +55,24 @@ export type TaskComposerAgentControl = {
 };
 
 export type TaskComposerModelOption = {
+	// Efforts are the reasoning levels this specific model accepts, in the
+	// provider's order. Absent or empty means the model takes no effort
+	// setting, which is a real answer rather than a missing one.
+	efforts?: string[];
 	id: string;
 	isDefault?: boolean;
 	label: string;
 	provider?: string;
+	defaultEffort?: string;
 };
 
 export type TaskComposerModelCatalog = {
 	allowCustom: boolean;
 	customModelEntry: "none" | "direct" | "configured";
 	models: TaskComposerModelOption[];
+	refreshError?: string;
+	refreshState?: "idle" | "queued" | "refreshing" | "error";
+	retryAt?: string | null;
 	selectionMode: "catalog" | "text" | "mode";
 };
 
@@ -117,6 +129,7 @@ export type TaskComposerViewProps = {
 	attachments: TaskComposerAttachments;
 	autoFocusPrompt?: boolean;
 	canSubmit: boolean;
+	context?: ReactNode;
 	initialPrompt?: string;
 	labels: TaskComposerLabels;
 	model: Omit<TaskComposerModelControl, "id">;
@@ -135,6 +148,8 @@ type TaskPromptProps = {
 	onChange: (value: string) => void;
 	onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
 	placeholder: string;
+	/** A one-line notice follows the prompt and takes one of its reserved lines. */
+	withNotice: boolean;
 };
 
 const TaskPrompt = memo(function TaskPrompt({
@@ -146,6 +161,7 @@ const TaskPrompt = memo(function TaskPrompt({
 	onChange,
 	onPaste,
 	placeholder,
+	withNotice,
 }: TaskPromptProps) {
 	const [value, setValue] = useState(initialValue);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -156,7 +172,7 @@ const TaskPrompt = memo(function TaskPrompt({
 		if (!el) return;
 		el.style.height = "auto";
 		el.style.height = `${el.scrollHeight}px`;
-	}, [value]);
+	}, [value, withNotice]);
 
 	return (
 		<>
@@ -166,7 +182,10 @@ const TaskPrompt = memo(function TaskPrompt({
 			<textarea
 				ref={textareaRef}
 				id={id}
-				className="min-h-[calc(3lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
+				className={cn(
+					withNotice ? "min-h-[calc(2lh+1.75rem)]" : "min-h-[calc(3lh+1.75rem)]",
+					"max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50",
+				)}
 				disabled={disabled}
 				placeholder={placeholder}
 				value={value}
@@ -192,6 +211,7 @@ export function TaskComposerView({
 	attachments,
 	autoFocusPrompt,
 	canSubmit,
+	context,
 	initialPrompt = "",
 	labels,
 	model,
@@ -207,6 +227,7 @@ export function TaskComposerView({
 	const promptRef = useRef(initialPrompt);
 	const prefersReducedMotion = useReducedMotion();
 	const [isDragging, setIsDragging] = useState(false);
+	const modelWarning = submission.error ? undefined : submission.modelWarning || undefined;
 	const handlePromptChange = useCallback(
 		(value: string) => {
 			promptRef.current = value;
@@ -217,6 +238,7 @@ export function TaskComposerView({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		if (!canSubmit || submission.isSubmitting) return;
 		submission.onSubmit(promptRef.current);
 	};
 
@@ -256,6 +278,7 @@ export function TaskComposerView({
 				if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDragging(false);
 			}}
 		>
+			{context}
 			<TaskPrompt
 				autoFocus={autoFocusPrompt}
 				disabled={submission.isSubmitting}
@@ -265,6 +288,7 @@ export function TaskComposerView({
 				onChange={handlePromptChange}
 				onPaste={handlePaste}
 				placeholder={labels.taskPlaceholder}
+				withNotice={modelWarning !== undefined}
 			/>
 
 			<AnimatePresence initial={false}>
@@ -349,30 +373,30 @@ export function TaskComposerView({
 				<p className="px-4 pb-2 text-caption text-destructive" role="alert">{attachments.error}</p>
 			)}
 
-			{(submission.error || submission.modelWarning) && (
+			{submission.error && (
 				<div className="px-3 pb-2">
-					{submission.error && (
-						<div
-							className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-							role="alert"
-						>
-							<span>{submission.error}</span>
-							{submission.showFallbackAction ? (
-								<button
-									type="button"
-									disabled={submission.isSubmitting}
-									onClick={() => submission.onFallbackAction(promptRef.current)}
-									className="inline-flex h-control-md shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-								>
-									{labels.fallbackAction}
-								</button>
-							) : null}
-						</div>
-					)}
-					{!submission.error && submission.modelWarning && (
-						<p className="text-caption text-warning" role="status">{submission.modelWarning}</p>
-					)}
+					<div
+						className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+						role="alert"
+					>
+						<span>{submission.error}</span>
+						{submission.showFallbackAction ? (
+							<button
+								type="button"
+								disabled={submission.isSubmitting}
+								onClick={() => submission.onFallbackAction(promptRef.current)}
+								className="inline-flex h-control-md shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+							>
+								{labels.fallbackAction}
+							</button>
+						) : null}
+					</div>
 				</div>
+			)}
+			{modelWarning && (
+				<p className="truncate px-4 pb-1 text-caption text-warning" role="status" title={modelWarning}>
+					{modelWarning}
+				</p>
 			)}
 
 			<div className="composer-toolbar">
@@ -380,7 +404,6 @@ export function TaskComposerView({
 					<div className="composer-toolbar-slot">
 						{renderAgentControl({ ...agent, id: agentId })}
 					</div>
-					<span className="composer-toolbar-divider" aria-hidden="true" />
 					<div className="composer-toolbar-slot">
 						{renderModelControl({ ...model, id: modelId })}
 					</div>
@@ -398,13 +421,23 @@ export function TaskComposerView({
 					<Paperclip className="size-icon-base" aria-hidden="true" />
 				</button>
 
+				{/* The chat composer's send button, so starting a task reads the same as sending a message. */}
 				<button
 					type="submit"
 					disabled={submission.isSubmitting || !canSubmit}
-					className="inline-flex h-(--size-settings-action-height) min-w-(--size-composer-start-button) shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground transition-colors hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
+					aria-label={submission.isSubmitting ? labels.starting : labels.start}
+					className={cn(
+						"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,color,transform,opacity] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96] active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
+						canSubmit && !submission.isSubmitting
+							? "bg-foreground text-background hover:bg-foreground/90"
+							: "bg-primary text-primary-foreground",
+					)}
 				>
-					{submission.isSubmitting ? <Loader2 className="size-icon-base animate-spin" aria-hidden="true" /> : null}
-					{submission.isSubmitting ? labels.starting : labels.start}
+					{submission.isSubmitting ? (
+						<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+					) : (
+						<ArrowUp className="size-3.5" aria-hidden="true" />
+					)}
 				</button>
 			</div>
 		</form>

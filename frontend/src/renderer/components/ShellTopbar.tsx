@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
-import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { Archive, CalendarClock, Folder, LayoutDashboard, Plus } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -11,12 +11,14 @@ import { useProjectOrchestratorAction } from "../hooks/useProjectOrchestratorAct
 import {
 	CLOUD_PROJECT_KIND,
 	isOrchestratorSession,
+	resolveNextNavigationAfterSessionKill,
 	sessionIsActive,
 	STANDALONE_PROJECT_KIND,
 	STANDALONE_WORKSPACE_ID,
 	type WorkspaceSession,
+	type WorkspaceSummary,
 } from "../types/workspace";
-import { useWorkspaceScope } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceScope, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
 	clearTerminateSessionState,
 	useProjectTerminateSessionStates,
@@ -32,7 +34,7 @@ import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarActionError, TopbarButton, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
-import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { SessionArchiveDialog } from "./SessionArchiveDialog";
 import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
 import {
 	agentSwitchStatusVisual,
@@ -79,12 +81,11 @@ export function ShellTopbar({
 	compactActions?: boolean;
 } = {}) {
 	const { t } = useTranslation();
+	const location = useLocation();
+	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
-	const isInspectorOpen = useUiStore((state) =>
-		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
-	);
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
@@ -112,7 +113,11 @@ export function ShellTopbar({
 	const workspaceScope = workspaceQuery.data;
 	const session = workspaceScope?.session;
 	const isSessionRoute = Boolean(params.sessionId);
+	const isAutomationsRoute = location.pathname === "/automations";
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	const isInspectorOpen = useUiStore((state) =>
+		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? !isOrchestrator) : false,
+	);
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
 	// projectId that no longer resolves (stale route after the project was
@@ -120,7 +125,7 @@ export function ShellTopbar({
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
-	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
+	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute && !isAutomationsRoute;
 	const project = workspaceScope?.project;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
 	const orchestrator = workspaceScope?.orchestrator;
@@ -168,6 +173,13 @@ export function ShellTopbar({
 						)}
 						<span aria-hidden="true" className="workspace-topbar__identity-separator" />
 						<SessionStatusPill session={session} />
+					</div>
+				) : isAutomationsRoute ? (
+					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="automations-topbar-label">
+						<span className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}>
+							<CalendarClock aria-hidden="true" className="size-icon-md" />
+							{t("automations.title")}
+						</span>
 					</div>
 				) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
@@ -273,15 +285,18 @@ export function ShellTopbar({
 							>
 								{sessionAction ? <div className="inline-flex shrink-0 items-center">{sessionAction}</div> : null}
 								{sessionIsActive(session) ? (
-									<TopbarKillButton
+									<TopbarArchiveButton
 										key={session.id}
 										session={session}
 										orchestratorId={orchestrator?.id}
-										onKilled={(workspaceId, orchestratorId) => {
-											if (orchestratorId) {
+										onKilled={(workspaceId) => {
+											const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
+											const fullWorkspace = workspaces.find((w: WorkspaceSummary) => w.id === workspaceId);
+											const nextRoute = resolveNextNavigationAfterSessionKill(fullWorkspace, session.id);
+											if (nextRoute.target === "session") {
 												void navigate({
 													to: "/projects/$projectId/sessions/$sessionId",
-													params: { projectId: workspaceId, sessionId: orchestratorId },
+													params: { projectId: workspaceId, sessionId: nextRoute.sessionId },
 												});
 												return;
 											}
@@ -317,7 +332,7 @@ export function ShellTopbar({
 						) : null}
 					</>
 				) : null}
-				{isSessionRoute && !isOrchestrator ? (
+				{isSessionRoute ? (
 					/* The pinned controls are owned by SessionView so they stay at the
 					   window's right edge. Reserve their width only when the rail is closed. */
 					<div
@@ -337,9 +352,11 @@ export function ShellTopbar({
 
 // Confirmation is modal, but teardown progress is not: confirming closes the
 // dialog and returns to the project's orchestrator while the daemon finishes.
+// The control archives rather than deletes, so it carries the Archive icon and
+// the neutral icon treatment instead of the danger-red kill affordance.
 // Mutation-cache state is filtered by worker ID so rapid route switches never
-// carry another worker's Killing/error state into the current topbar.
-export function TopbarKillButton({
+// carry another worker's Archiving/error state into the current topbar.
+export function TopbarArchiveButton({
 	session,
 	orchestratorId,
 	onKilled,
@@ -365,27 +382,29 @@ export function TopbarKillButton({
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<span className="inline-flex">
-						<SessionTerminationPopover
+						<SessionArchiveDialog
 							onConfirm={confirmKill}
 							onOpenChange={setConfirmOpen}
 							open={confirmOpen}
 							session={session}
 							trigger={
 								<TopbarButton
-									aria-label={isPending ? t("shell.killing") : t("shell.killSession")}
+									aria-label={isPending ? t("shell.archiving") : t("shell.archiveSession")}
 									disabled={isPending}
 									onClick={() => {
 										clearTerminateSessionState(queryClient, session.id);
+										// Always open the confirm; the modal owns its own dismissal.
+										setConfirmOpen(true);
 									}}
-									variant="killIcon"
+									variant="icon"
 								>
-									<Trash2 className="size-icon-md" aria-hidden="true" />
+									<Archive className="size-icon-md" aria-hidden="true" />
 								</TopbarButton>
 							}
 						/>
 					</span>
 				</TooltipTrigger>
-				<TooltipContent side="bottom">{t("shell.killSession")}</TooltipContent>
+				<TooltipContent side="bottom">{t("shell.archiveSession")}</TooltipContent>
 			</Tooltip>
 			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
@@ -409,9 +428,9 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 						className="max-w-40 truncate text-caption text-muted-foreground"
 						key={state.session.id}
 						role="status"
-						title={t("shell.killingNamed", { title: state.session.title })}
+						title={t("shell.archivingNamed", { title: state.session.title })}
 					>
-						{t("shell.killingNamed", { title: state.session.title })}
+						{t("shell.archivingNamed", { title: state.session.title })}
 					</span>
 				),
 			)}
