@@ -524,7 +524,9 @@ export const ChatComposer = memo(function ChatComposer({
 	// A delivery journal owns the exact submitted draft until we know whether the
 	// agent accepted it. Never rehydrate that same payload into the editable surface
 	// on a remount: that makes a message appear unsent (and can invite a duplicate).
-	const draftSeedText = durableDelivery ? "" : (draftSeed?.text ?? persistedText);
+	const draftSeedText = durableDelivery?.kind === "send"
+		? ""
+		: (draftSeed?.text ?? persistedText);
 	const draftPersistenceError =
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
 
@@ -749,10 +751,12 @@ export const ChatComposer = memo(function ChatComposer({
 				})),
 			);
 		}
-		const committedSeedText = durableDelivery
-			? ""
-			: (draftSeed?.text ??
-				(committedDraft ? committedDraft.composer.text : draftSeedText));
+		const committedSeedText = durableDelivery?.kind === "send"
+			? committedDraft?.composer.text === durableDelivery.composerText
+				? ""
+				: committedDraft?.composer.text ?? ""
+			: draftSeed?.text ??
+				(committedDraft ? committedDraft.composer.text : draftSeedText);
 		if (committedSeedText === undefined) {
 			restoredSeedKey.current = undefined;
 			return;
