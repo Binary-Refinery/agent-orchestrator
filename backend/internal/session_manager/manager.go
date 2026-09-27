@@ -5382,11 +5382,26 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 		m.cleanupPreparedAgentWorkspace(ctx, agent, id, workspacePath, env)
 		return fmt.Errorf("install hooks: %w", err)
 	}
-	if pl, ok := agent.(preLauncher); ok {
-		if err := pl.PreLaunch(ctx, ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath}); err != nil {
-			m.cleanupPreparedAgentWorkspace(ctx, agent, id, workspacePath, env)
-			return fmt.Errorf("pre-launch: %w", err)
-		}
+	if err := m.prepareAgentPreLaunch(ctx, agent, id, workspacePath); err != nil {
+		m.cleanupPreparedAgentWorkspace(ctx, agent, id, workspacePath, env)
+		return err
+	}
+	return nil
+}
+
+// prepareAgentPreLaunch runs adapter setup that must happen before the provider
+// process starts but is independent of terminal-only workspace hooks. Chat
+// controllers use this too: for example, Claude needs the AO worktree marked as
+// trusted before its ACP process is launched.
+func (m *Manager) prepareAgentPreLaunch(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+	pl, ok := agent.(preLauncher)
+	if !ok {
+		return nil
+	}
+	if err := pl.PreLaunch(ctx, ports.LaunchConfig{
+		DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath,
+	}); err != nil {
+		return fmt.Errorf("pre-launch: %w", err)
 	}
 	return nil
 }
