@@ -75,6 +75,7 @@
 	"browser.annotationActive": "Annotation en cours",
 	"browser.annotationCount_one": "{{count}} annotation",
 	"browser.annotationCount_other": "{{count}} annotations",
+	"browser.annotationEmptyHint": "Cliquez sur un élément de la page",
 	"browser.annotationCount_many": "{{count}} annotations",
 	"browser.annotationDiscardAll": "Tout supprimer",
 	"browser.annotationDiscardAllComments": "Supprimer tous les commentaires",
