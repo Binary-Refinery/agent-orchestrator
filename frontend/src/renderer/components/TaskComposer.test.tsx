@@ -722,7 +722,7 @@ describe("TaskComposer", () => {
 		expect(model).toHaveTextContent("GPT Test · High");
 	});
 
-	it("goes straight to effort after picking a model that has it, even from one that has none", async () => {
+	it("leaves effort closed after picking a model that has it", async () => {
 		h.get.mockImplementation(async (path: string) => path.includes("/models")
 			? { data: { agent: "codex", selectionMode: "catalog", models: [
 				{ id: "plain", label: "Plain", isDefault: true },
@@ -736,7 +736,10 @@ describe("TaskComposer", () => {
 		await userEvent.click(model);
 		expect(screen.queryByRole("menuitem", { name: /Reasoning effort/ })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: "GPT Test" }));
-		await userEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+		expect(screen.queryByRole("menuitemradio", { name: "High" })).not.toBeInTheDocument();
+		await userEvent.click(model);
+		await userEvent.click(await screen.findByRole("menuitem", { name: /Reasoning effort/ }));
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
 		expect(model).toHaveTextContent("GPT Test · High");
 	});
 

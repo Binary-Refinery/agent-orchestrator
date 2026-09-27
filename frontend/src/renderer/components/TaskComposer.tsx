@@ -475,8 +475,8 @@ export function TaskComposer({
 		selectedAgent !== "" &&
 		settings?.defaultSessionMode === "chat" &&
 		!settings.chatHarnesses.includes(selectedAgent);
-	// Effort is chosen inside the model menu, so picking a model can go straight
-	// to its levels. The menu shows only a level the selected model lists, and
+	// Effort stays inside the model menu and opens only when the user asks.
+	// The menu shows only a level the selected model lists, and
 	// reports the model's own default as "" (no override): keep the level itself
 	// so choosing it still overrides an inherited project effort.
 	const modelTuning: ModelEffortSelection | undefined = requiresTuiFallback

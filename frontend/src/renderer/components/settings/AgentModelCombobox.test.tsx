@@ -48,17 +48,8 @@ describe("AgentModelCombobox", () => {
 		expect(screen.getByRole("menuitem", { name: /Reasoning effort/ })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: "Plain" }));
 		expect(picker).toHaveTextContent("Plain · Low");
-		expect(screen.queryByRole("menuitemradio", { name: "High" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("menuitemradio", { name: "Provider default" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("menuitemradio", { name: "Default" })).not.toBeInTheDocument();
-		expect(screen.getByRole("menuitemradio", { name: "Low" })).toHaveAttribute("aria-checked", "true");
-		await userEvent.hover(screen.getByRole("menuitem", { name: "Capable" }));
-		expect(screen.getByRole("menuitemradio", { name: "Low" })).toBeInTheDocument();
-		await userEvent.hover(screen.getByRole("menuitemradio", { name: "Low" }));
-		expect(screen.getByRole("menuitemradio", { name: "Low" })).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("menuitemradio", { name: "Low" }));
-		expect(picker).toHaveTextContent("Plain · Low");
 		expect(screen.queryByRole("menuitem", { name: "Plain" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitemradio", { name: "Low" })).not.toBeInTheDocument();
 		await userEvent.click(picker);
 		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
 		await userEvent.click(screen.getByRole("menuitemradio", { name: "Low" }));
@@ -266,6 +257,97 @@ describe("AgentModelCombobox", () => {
 		await userEvent.type(search, "private/model-id");
 		await userEvent.click(screen.getByRole("menuitem", { name: "Use “private/model-id” as a custom model" }));
 
+		expect(onCustom).toHaveBeenCalledWith("private/model-id");
+	});
+
+	it("focuses search on open and confirms the first match with Enter", async () => {
+		const { onChange } = renderCombobox(
+			Array.from({ length: 8 }, (_, index) => ({
+				id: index === 7 ? "claude-fable" : `model-${index}`,
+				label: index === 7 ? "Fable" : `Model ${index}`,
+			})),
+			{ allowCustom: false, compact: true },
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		expect(search).toHaveFocus();
+		expect(search).toHaveClass("h-control-form!", "rounded-[10px]");
+		await userEvent.type(search, "fab");
+		expect(screen.getByRole("menuitem", { name: "Fable" })).toHaveClass("bg-settings-menu-selected");
+		await userEvent.keyboard("{Enter}");
+		expect(onChange).toHaveBeenCalledWith("claude-fable");
+	});
+
+	it("does not pick a model when Enter is pressed in an empty search", async () => {
+		const { onChange } = renderCombobox(
+			Array.from({ length: 8 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` })),
+			{ allowCustom: false, compact: true },
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		await userEvent.keyboard("{Enter}");
+		expect(onChange).not.toHaveBeenCalled();
+		expect(screen.getByRole("menuitem", { name: "Model 0" })).toBeInTheDocument();
+	});
+
+	it("confirms the typed query on Enter before the filtered list repaints", async () => {
+		const { onChange } = renderCombobox(
+			[
+				{ id: "gpt-luna", label: "Luna" },
+				{ id: "claude-fable", label: "Fable" },
+				...Array.from({ length: 6 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` })),
+			],
+			{ allowCustom: false, compact: true },
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		search.value = "fab";
+		await userEvent.keyboard("{Enter}");
+		expect(onChange).toHaveBeenCalledWith("claude-fable");
+	});
+
+	it("lets Enter on the refresh control refresh instead of choosing a model", async () => {
+		const onRefresh = vi.fn();
+		const { onChange } = renderCombobox(
+			Array.from({ length: 8 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` })),
+			{ allowCustom: false, compact: true, onRefresh },
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		await userEvent.type(screen.getByRole("searchbox", { name: "Search worker model" }), "missing");
+		const refresh = screen.getByRole("button", { name: "Refresh models" });
+		refresh.focus();
+		await userEvent.keyboard("{Enter}");
+		expect(onRefresh).toHaveBeenCalledOnce();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it("selects the highlighted row after leaving the search, not the first match", async () => {
+		const { onChange } = renderCombobox(
+			[
+				{ id: "claude-fable", label: "Fable" },
+				{ id: "claude-fable-mini", label: "Fable Mini" },
+				...Array.from({ length: 6 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` })),
+			],
+			{ allowCustom: false, compact: true },
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		await userEvent.type(screen.getByRole("searchbox", { name: "Search worker model" }), "fable");
+		await userEvent.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+		expect(onChange).toHaveBeenCalledWith("claude-fable-mini");
+	});
+
+	it("confirms a typed custom model id with Enter", async () => {
+		const { onCustom } = renderCombobox([{ id: "gpt", label: "GPT" }], { compact: true });
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		expect(search).toHaveFocus();
+		await userEvent.type(search, "private/model-id");
+		await userEvent.keyboard("{Enter}");
 		expect(onCustom).toHaveBeenCalledWith("private/model-id");
 	});
 
