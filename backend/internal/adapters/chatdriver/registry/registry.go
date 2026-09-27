@@ -26,6 +26,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/unrealagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/auggieacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/autohandacp"
@@ -43,6 +44,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/opencodeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/piacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/qwenacp"
+	unrealchat "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/unrealagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/vibeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -76,14 +78,15 @@ func New(drivers ...ports.ChatDriver) *Registry {
 // Kimi, Kimchi, Pi, Qwen, Vibe, and OMP expose ACP themselves, so
 // AO launches the exact executable resolved by each existing agent plugin. No
 // path scrapes terminal output or packages a second provider CLI.
+// Unreal Agent is compiled into AO and runs behind the same detached host seam.
 //
 // Every other harness stays TUI-only until the same is true of it. The driver
 // reuses the harness's existing agent plugin for binary resolution and auth, so
 // registration adds no second answer to "is this agent installed and logged in".
-func Build(log *slog.Logger) *Registry {
+func Build(log *slog.Logger, onClaudeAuthRejected func()) *Registry {
 	return New(
 		codexappserver.New(codex.New(), log),
-		claudeacp.New(claudecode.New(), log),
+		claudeacp.New(claudecode.New(), log, onClaudeAuthRejected),
 		auggieacp.New(auggie.New(), log),
 		autohandacp.New(autohand.New(), log),
 		clineacp.New(cline.New(), log),
@@ -99,6 +102,7 @@ func Build(log *slog.Logger) *Registry {
 		cursoracp.New(cursor.New(), log),
 		ompacp.New(omp.New(), log),
 		qwenacp.New(qwen.New(), log),
+		unrealchat.New(unrealagent.New(), log),
 	)
 }
 
