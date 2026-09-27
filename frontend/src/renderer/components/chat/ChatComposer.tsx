@@ -752,7 +752,7 @@ export const ChatComposer = memo(function ChatComposer({
 			);
 		}
 		const committedSeedText = durableDelivery?.kind === "send"
-			? committedDraft?.composer.text === durableDelivery.composerText
+			? committedDraft?.composer.revision === durableDelivery.revision
 				? ""
 				: committedDraft?.composer.text ?? ""
 			: draftSeed?.text ??
