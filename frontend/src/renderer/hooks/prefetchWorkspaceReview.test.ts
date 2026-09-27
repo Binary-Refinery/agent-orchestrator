@@ -68,6 +68,12 @@ describe("prefetchDefaultWorkspaceReviewDiffs", () => {
 		}));
 	});
 
+	it("skips a files summary that has no review sections", async () => {
+		const queryClient = new QueryClient();
+		await prefetchDefaultWorkspaceReviewDiffs(queryClient, "sess-partial", { sessionId: "sess-partial", files: [file("README.md")] } as WorkspaceFilesResponse);
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
 	it("warms the default unstaged diff and the end-of-file contents the review pane waits on", async () => {
 		const queryClient = new QueryClient();
 		const sessionId = "sess-prefetch-unstaged";

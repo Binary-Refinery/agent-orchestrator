@@ -326,7 +326,7 @@ export function useSessionWorkspaceFilesChangedCount(sessionId: string | undefin
 		if (!sessionId || query.data === undefined) return;
 		const data = queryClient.getQueryData<WorkspaceFilesResponse>(sessionWorkspaceFilesQueryKey(sessionId));
 		if (!data) return;
-		void prefetchDefaultWorkspaceReviewDiffs(queryClient, sessionId, data);
+		void prefetchDefaultWorkspaceReviewDiffs(queryClient, sessionId, data).catch(() => {});
 	}, [query.data, query.dataUpdatedAt, queryClient, sessionId]);
 	return sessionId ? query.data : undefined;
 }
@@ -346,14 +346,18 @@ function isDeferredReviewFile(file: WorkspaceFileSummary) {
 }
 
 function defaultReviewFiles(data: WorkspaceFilesResponse): { commitSha?: string; files: WorkspaceFileSummary[]; scope: WorkspaceDiffScope } {
-	if (data.sections.unstaged.length > 0) return { scope: "unstaged", files: data.sections.unstaged };
-	if (data.sections.staged.length > 0) return { scope: "staged", files: data.sections.staged };
-	const commit = data.commits[0];
+	// The Files tab count can be seeded from a files array alone. Prefetch only
+	// runs against a full workspace response.
+	const sections = data.sections;
+	if (!sections) return { scope: "combined", files: [] };
+	if (sections.unstaged.length > 0) return { scope: "unstaged", files: sections.unstaged };
+	if (sections.staged.length > 0) return { scope: "staged", files: sections.staged };
+	const commit = data.commits?.[0];
 	if (commit) return { scope: "committed", commitSha: commit.sha, files: commit.files ?? [] };
-	const untracked = new Set(data.sections.untracked.map((file) => file.path));
+	const untracked = new Set(sections.untracked.map((file) => file.path));
 	return {
 		scope: "combined",
-		files: data.files.filter((file) => file.status !== "unmodified" && !untracked.has(file.path)),
+		files: (data.files ?? []).filter((file) => file.status !== "unmodified" && !untracked.has(file.path)),
 	};
 }
 
