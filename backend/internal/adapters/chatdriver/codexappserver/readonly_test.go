@@ -63,6 +63,25 @@ func assertReadOnlyTurn(t *testing.T, srv *scriptedServer) {
 	}
 }
 
+// readOnlySources are the two ways AO requests a read-only Codex thread. Both must
+// clear the same verification; see readOnlyRequested.
+var readOnlySources = []struct {
+	name   string
+	start  func(*ports.ChatStartConfig)
+	resume func(*ports.ChatResumeConfig)
+}{
+	{
+		name:   "permission floor",
+		start:  func(c *ports.ChatStartConfig) { c.Permissions = ports.PermissionModeReadOnly },
+		resume: func(c *ports.ChatResumeConfig) { c.Permissions = ports.PermissionModeReadOnly },
+	},
+	{
+		name:   "review-owned",
+		start:  func(c *ports.ChatStartConfig) { c.ReadOnly = true },
+		resume: func(c *ports.ChatResumeConfig) { c.ReadOnly = true },
+	},
+}
+
 func TestReadOnlyRequiresProviderConfirmation(t *testing.T) {
 	for _, response := range []string{
 		`{"thread":{"id":"thread-1"}}`,
@@ -70,22 +89,30 @@ func TestReadOnlyRequiresProviderConfirmation(t *testing.T) {
 		`{"thread":{"id":"thread-1"},"approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}`,
 		`{"thread":{"id":"thread-1"},"approvalPolicy":"never","sandbox":{"type":"workspaceWrite"}}`,
 	} {
-		for _, resume := range []bool{false, true} {
-			d, srv := newTestDriver(t)
-			srv.reply("thread/start", response)
-			srv.reply("thread/resume", response)
-			var conv ports.ChatConversation
-			var err error
-			if resume {
-				conv, err = d.Resume(context.Background(), ports.ChatResumeConfig{WorkspacePath: "/tmp/ws", ProviderConversationID: "thread-1", Permissions: ports.PermissionModeReadOnly})
-			} else {
-				conv, err = d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws", Permissions: ports.PermissionModeReadOnly})
-			}
-			if conv != nil || !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
-				t.Fatalf("resume=%v response=%s: conversation=%v error=%v", resume, response, conv, err)
-			}
-			if srv.sentMethod("turn/start") {
-				t.Fatal("unconfirmed controller dispatched work")
+		// A review-owned conversation (ReadOnly) reaches the same wire posture as a
+		// read-only permission floor, so it must fail closed on the same responses.
+		for _, source := range readOnlySources {
+			for _, resume := range []bool{false, true} {
+				d, srv := newTestDriver(t)
+				srv.reply("thread/start", response)
+				srv.reply("thread/resume", response)
+				var conv ports.ChatConversation
+				var err error
+				if resume {
+					cfg := ports.ChatResumeConfig{WorkspacePath: "/tmp/ws", ProviderConversationID: "thread-1"}
+					source.resume(&cfg)
+					conv, err = d.Resume(context.Background(), cfg)
+				} else {
+					cfg := ports.ChatStartConfig{WorkspacePath: "/tmp/ws"}
+					source.start(&cfg)
+					conv, err = d.Start(context.Background(), cfg)
+				}
+				if conv != nil || !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+					t.Fatalf("source=%s resume=%v response=%s: conversation=%v error=%v", source.name, resume, response, conv, err)
+				}
+				if srv.sentMethod("turn/start") {
+					t.Fatal("unconfirmed controller dispatched work")
+				}
 			}
 		}
 	}
@@ -101,33 +128,37 @@ func TestReadOnlyReconnectRequiresRetainedProviderState(t *testing.T) {
 		{"different thread", map[string]bool{"other": true}, false},
 		{"confirmed", map[string]bool{"thread-1": true}, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d, srv := newTestDriver(t)
-			proc, err := d.spawn(context.Background(), "codex", "/tmp/ws", nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			d.persistent = true
-			d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
-				return &persistenthost.Transport{Stdin: proc.stdin, Stdout: proc.stdout, Reconnected: true, CodexReadOnly: tc.state}, nil
-			}
-			conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{SessionID: "readonly", DataDir: t.TempDir(), WorkspacePath: "/tmp/ws", ProviderConversationID: "thread-1", Permissions: ports.PermissionModeReadOnly})
-			if tc.accepted {
+		for _, source := range readOnlySources {
+			t.Run(tc.name+"/"+source.name, func(t *testing.T) {
+				d, srv := newTestDriver(t)
+				proc, err := d.spawn(context.Background(), "codex", "/tmp/ws", nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer func() { _ = conv.Close() }()
-				if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "continue reading"}); err != nil {
-					t.Fatal(err)
+				d.persistent = true
+				d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+					return &persistenthost.Transport{Stdin: proc.stdin, Stdout: proc.stdout, Reconnected: true, CodexReadOnly: tc.state}, nil
 				}
-				assertReadOnlyTurn(t, srv)
-			} else if conv != nil || !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
-				t.Fatalf("unknown/broader reconnect = %v, %v", conv, err)
-			}
-			if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
-				t.Fatal("reattachment restarted the live provider")
-			}
-		})
+				cfg := ports.ChatResumeConfig{SessionID: "readonly", DataDir: t.TempDir(), WorkspacePath: "/tmp/ws", ProviderConversationID: "thread-1"}
+				source.resume(&cfg)
+				conv, err := d.Resume(context.Background(), cfg)
+				if tc.accepted {
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = conv.Close() }()
+					if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "continue reading"}); err != nil {
+						t.Fatal(err)
+					}
+					assertReadOnlyTurn(t, srv)
+				} else if conv != nil || !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+					t.Fatalf("unknown/broader reconnect = %v, %v", conv, err)
+				}
+				if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
+					t.Fatal("reattachment restarted the live provider")
+				}
+			})
+		}
 	}
 }
 

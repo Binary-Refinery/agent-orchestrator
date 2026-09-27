@@ -351,7 +351,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, errors.New("thread/start returned no thread id")
 	}
 
-	if err := conv.confirmPermissions(cfg.Permissions, resp.threadPermissions); err != nil {
+	if err := conv.confirmPermissions(readOnlyRequested(cfg.Permissions, cfg.ReadOnly), resp.threadPermissions); err != nil {
 		_ = conv.Terminate()
 		return nil, err
 	}
@@ -384,8 +384,8 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		// across the daemon detach without waiting for the active turn to settle.
 		conv.readOnly = cfg.ReadOnly
 		// A reconnect has no thread/start response to run confirmPermissions
-		// against, so a read-only floor is honoured only against recorded proof.
-		if cfg.Permissions == ports.PermissionModeReadOnly {
+		// against, so read-only is honoured only against recorded proof.
+		if readOnlyRequested(cfg.Permissions, cfg.ReadOnly) {
 			if !conv.proc.codexReadOnly[cfg.ProviderConversationID] {
 				_ = conv.Close()
 				return nil, fmt.Errorf("%w: surviving Codex host has no confirmed read-only policy", ports.ErrChatRecoveryInconclusive)
@@ -435,7 +435,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 
-	if err := conv.confirmPermissions(cfg.Permissions, resp.threadPermissions); err != nil {
+	if err := conv.confirmPermissions(readOnlyRequested(cfg.Permissions, cfg.ReadOnly), resp.threadPermissions); err != nil {
 		_ = conv.Terminate()
 		return nil, err
 	}
@@ -590,8 +590,15 @@ func approvalReviewer(mode ports.PermissionMode) string {
 	return "user"
 }
 
+// readOnlyRequested reports whether either read-only source applies: a review-owned
+// conversation (ChatStartConfig.ReadOnly) and a read-only permission floor reach the
+// same wire posture, so both must clear the same verification.
+func readOnlyRequested(mode ports.PermissionMode, readOnly bool) bool {
+	return readOnly || ports.NormalizePermissionMode(mode) == ports.PermissionModeReadOnly
+}
+
 func launchApprovalSettings(mode ports.PermissionMode, readOnly bool) (policy, sandbox, reviewer string) {
-	if readOnly {
+	if readOnlyRequested(mode, readOnly) {
 		return "never", "read-only", "user"
 	}
 	policy, sandbox = approvalSettings(mode)
@@ -694,8 +701,8 @@ type threadPermissions struct {
 	} `json:"sandbox"`
 }
 
-func (c *conversation) confirmPermissions(requested ports.PermissionMode, effective threadPermissions) error {
-	if requested != ports.PermissionModeReadOnly {
+func (c *conversation) confirmPermissions(readOnly bool, effective threadPermissions) error {
+	if !readOnly {
 		return nil
 	}
 	// Other modes may return native granular policies. Only the fixed read-only
