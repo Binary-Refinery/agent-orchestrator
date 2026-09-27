@@ -483,6 +483,33 @@ describe("WorkspaceReviewPane", () => {
 		expect(onOpenFile).toHaveBeenCalledWith("README.md", { commitSha: "abcdef1234567890", mode: "diff", scope: "committed" });
 	});
 
+	it("opens the first commit when the combined diff is empty but commits have files", async () => {
+		const data = workspace([]);
+		data.commits = [{
+			author: "Ada Lovelace",
+			files: [{ path: "README.md", status: "modified", additions: 2, deletions: 1, size: 40, binary: false, editable: false, fileFingerprint: "c-1" }],
+			sha: "abcdef1234567890",
+			subject: "Revert back to base",
+			timestamp: "2026-09-10T10:00:00Z",
+		}];
+		postMock.mockResolvedValue({
+			data: {
+				sessionId: "sess-1",
+				workspaceVersion: "workspace-1",
+				groups: [{ repository: "", patch: "diff --git a/README.md b/README.md\n", truncated: false, includedPaths: ["README.md"], deferred: [] }],
+			},
+		});
+
+		renderWithQuery(<WorkspaceReviewPane annotation={annotation()} data={data} filter="" onBrowseAll={vi.fn()} sessionId="sess-1" split={false} />);
+
+		expect(screen.queryByRole("button", { name: /Changes/ })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Commits/ })).toHaveAttribute("aria-pressed", "true");
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/diffs", expect.objectContaining({
+			body: expect.objectContaining({ commitSha: "abcdef1234567890", paths: ["README.md"], scope: "committed" }),
+		})));
+		expect(await screen.findByTestId("code-view")).toBeInTheDocument();
+	});
+
 	it("offers the full file browser when there are no changes", async () => {
 		const onBrowseAll = vi.fn();
 		renderWithQuery(<WorkspaceReviewPane annotation={annotation()} data={workspace([])} filter="" onBrowseAll={onBrowseAll} sessionId="sess-1" split={false} />);
