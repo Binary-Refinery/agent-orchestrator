@@ -302,7 +302,7 @@ describe("AgentModelCombobox", () => {
 		);
 
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
-		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		const search = screen.getByRole<HTMLInputElement>("searchbox", { name: "Search worker model" });
 		search.value = "fab";
 		await userEvent.keyboard("{Enter}");
 		expect(onChange).toHaveBeenCalledWith("claude-fable");

@@ -317,9 +317,9 @@ export function AgentModelCombobox({
 			<DropdownMenuContent
 				align={menuAlign}
 				onCloseAutoFocus={onCloseAutoFocus}
-				onOpenAutoFocus={(event) => {
-					if (!showSearch) return;
-					// Land in the query before the menu's roving focus chooses a model.
+				onFocus={(event) => {
+					if (!showSearch || event.target !== event.currentTarget) return;
+					// The menu focuses its surface on open. Move that into the query.
 					event.preventDefault();
 					searchRef.current?.focus();
 				}}
