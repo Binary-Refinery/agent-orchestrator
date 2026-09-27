@@ -2920,6 +2920,14 @@ function Timeline({
 		syncPromptSpacer();
 		const node = scroller.current;
 		if (node && pinnedRef.current) {
+			const scrollToBottom = (behavior: ScrollBehavior) => {
+				if (typeof node.scrollTo === "function") {
+					node.scrollTo({ top: node.scrollHeight, behavior });
+				} else {
+					// jsdom and a few embedded webviews do not implement Element.scrollTo.
+					node.scrollTop = node.scrollHeight;
+				}
+			};
 			if (smoothScrollRequested.current) {
 				smoothScrollRequested.current = false;
 				smoothScrollActive.current = true;
@@ -2928,12 +2936,12 @@ function Timeline({
 					smoothScrollActive.current = false;
 					smoothScrollTimer.current = null;
 				}, 500);
-				node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+				scrollToBottom("smooth");
 			} else if (!smoothScrollActive.current) {
 				// Snapshot/layout effects can fire more than once for one send. Once the
 				// send's native smooth scroll is in flight, do not restart it; optimistic
 				// reconciliation keeps the prompt mounted in place.
-				node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
+				scrollToBottom("auto");
 			}
 		}
 		updateScrollbar();

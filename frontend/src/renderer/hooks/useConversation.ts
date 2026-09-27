@@ -17,7 +17,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { DEFINITIVE_CHAT_SEND_REJECTIONS } from "../lib/chat-send-errors";
@@ -103,6 +103,7 @@ export function conversationConfigOptionsQueryKey(sessionId: string) {
 
 const conversationDispatchTrackingQueryKey = ["conversation-dispatch-tracking"] as const;
 const conversationLocalEchosQueryKey = ["conversation-local-echos"] as const;
+const emptyConversationLocalEchos: ConversationLocalEchosBySession = {};
 type ConversationDispatchOperation = "edit" | "retry" | "send";
 interface ConversationDispatchDescriptor {
 	operation: ConversationDispatchOperation;
@@ -409,14 +410,23 @@ export function useConversationCommands(sessionId: string | undefined) {
 		gcTime: Number.POSITIVE_INFINITY,
 		staleTime: Number.POSITIVE_INFINITY,
 	}).data;
-	const localEchosBySession = useQuery({
-		queryKey: conversationLocalEchosQueryKey,
-		queryFn: async (): Promise<ConversationLocalEchosBySession> => ({}),
-		initialData: {} as ConversationLocalEchosBySession,
-		enabled: false,
-		gcTime: Number.POSITIVE_INFINITY,
-		staleTime: Number.POSITIVE_INFINITY,
-	}).data;
+	const subscribeToLocalEchos = useCallback(
+		(onStoreChange: () => void) =>
+			queryClient.getQueryCache().subscribe((event) => {
+				if (event.query.queryKey[0] === conversationLocalEchosQueryKey[0]) onStoreChange();
+			}),
+		[queryClient],
+	);
+	const getLocalEchosSnapshot = useCallback(
+		() => queryClient.getQueryData<ConversationLocalEchosBySession>(conversationLocalEchosQueryKey)
+			?? emptyConversationLocalEchos,
+		[queryClient],
+	);
+	const localEchosBySession = useSyncExternalStore(
+		subscribeToLocalEchos,
+		getLocalEchosSnapshot,
+		getLocalEchosSnapshot,
+	);
 	const trackedDispatch = sessionId ? trackedDispatches[sessionId] : undefined;
 	const invalidateSession = useCallback(
 		async (targetSessionId: string) => {

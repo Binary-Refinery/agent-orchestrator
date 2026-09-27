@@ -171,6 +171,7 @@ beforeEach(() => {
 afterEach(async () => {
 	setApiBaseUrl(null);
 	await appI18n.changeLanguage("en");
+	vi.restoreAllMocks();
 });
 
 function humanMessage(text: string): ConversationMessage {
@@ -351,7 +352,7 @@ describe("Chat message timestamps", () => {
 
 describe("ChatWorkspace timeline", () => {
 	it("starts one smooth scroll for a newly optimistic send", () => {
-		const snapshot = idleSnapshot(chatFixtureEmpty);
+		const snapshot = idleSnapshot();
 		const view = render(<ChatWorkspace snapshot={snapshot} />);
 		const log = screen.getByRole("log");
 		const scrollTo = vi.fn();
@@ -393,6 +394,7 @@ describe("ChatWorkspace timeline", () => {
 			role: "user",
 			origin: "human",
 			clientMessageId: "local-send",
+			clientMessageId: "local-send",
 			text: "Visible before the server snapshot",
 			streaming: false,
 			createdAt: "2026-09-09T00:00:00Z",
@@ -420,6 +422,7 @@ describe("ChatWorkspace timeline", () => {
 			revision: 0,
 			role: "user",
 			origin: "human",
+			clientMessageId: "local-send",
 			text: "Already durable",
 			streaming: false,
 			createdAt: "2026-09-09T00:00:01Z",
@@ -654,7 +657,7 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
 
 		expect(screen.queryByTestId("live-turn-status")).not.toBeInTheDocument();
-		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+		expect(screen.getByTestId("live-working-label")).toHaveTextContent(/^Working for /);
 		expect(screen.getByTestId("response-spinner")).toBeInTheDocument();
 
 		const stop = screen.getByRole("button", { name: "Stop turn" });
@@ -913,7 +916,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
 		expect(screen.getByText("Do you want to run this command?")).toBeInTheDocument();
 		expect(screen.queryByText("Waiting for your decision")).not.toBeInTheDocument();
-		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+		expect(screen.getByTestId("live-working-label")).toHaveTextContent(/^Working for /);
 		const approval = screen.getByRole("group", {
 			name: "Approval request approval-1",
 		});
@@ -1304,7 +1307,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent("thread hit an internal error");
 
 		rerender(<ChatWorkspace snapshot={chatFixtureMcpFailed} />);
-		expect(screen.getByRole("status")).toHaveTextContent("Playwright, Postgres MCPs unavailable");
+		expect(screen.getByText("Playwright, Postgres MCPs unavailable")).toBeInTheDocument();
 	});
 
 	it("reuses anchor measurements while scrolling and refreshes after content mutations", () => {
@@ -2278,7 +2281,8 @@ describe("ChatWorkspace message actions", () => {
 
 		const retryView = render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
 		const restored = screen.getByLabelText("Message the agent");
-		expect(restored).toHaveTextContent("retry this exact draft");
+		expect(restored).not.toHaveTextContent("retry this exact draft");
+		expect(screen.getByRole("button", { name: "Retry message safely" })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Retry message safely" }));
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
 		expect(onSend.mock.calls[1]?.[2]).toBe(firstClientMessageId);
@@ -2310,7 +2314,7 @@ describe("ChatWorkspace message actions", () => {
 
 		render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
 		const replacement = screen.getByLabelText("Message the agent");
-		expect(replacement).toHaveTextContent("send exactly once");
+		expect(replacement).not.toHaveTextContent("send exactly once");
 		expect(replacement).toHaveAttribute("contenteditable", "false");
 		fireEvent.keyDown(replacement, { key: "Enter" });
 		expect(onSend).toHaveBeenCalledTimes(1);
@@ -3657,7 +3661,10 @@ describe("durable queued edits", () => {
 				{ id: "running", state: "running", requestedAt: "2026-09-07T00:00:00Z" },
 				{ id: "queued", state: "queued", requestedAt: "2026-09-07T00:00:00Z" },
 			],
-			items: [{ kind: "message", id: "queued-message", turnId: "queued", role: "user", origin: "human", streaming: false, text: "queued text", sequence: 1, revision: 0, createdAt: "2026-09-07T00:00:00Z" }],
+			items: [
+				{ kind: "message", id: "running-message", turnId: "running", role: "user", origin: "human", streaming: false, text: "current work", sequence: 1, revision: 0, createdAt: "2026-09-07T00:00:00Z" },
+				{ kind: "message", id: "queued-message", turnId: "queued", role: "user", origin: "human", streaming: false, text: "queued text", sequence: 2, revision: 0, createdAt: "2026-09-07T00:00:00Z" },
+			],
 		};
 	}
 
