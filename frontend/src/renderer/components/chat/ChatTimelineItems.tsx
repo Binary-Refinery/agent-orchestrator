@@ -165,7 +165,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	// text. Keep that first durable burst visible; only later deltas need smoothing.
 	const [visibleText, setVisibleText] = useState(() => message.text);
 	const visibleRef = useRef(visibleText);
-	const targetStateRef = useRef<{ id: string; text: string; graphemes: string[] }>();
+	const targetStateRef = useRef<{ id: string; text: string; graphemes: string[] } | undefined>(undefined);
 	const targetGraphemes = useMemo(() => {
 		const next = appendStreamGraphemes(targetStateRef.current, message.id, message.text);
 		targetStateRef.current = next;

@@ -1370,7 +1370,7 @@ describe("SessionInspector Activity section", () => {
   });
 
   it("does not offer agent resume when the session worktree is unavailable", async () => {
-    vi.spyOn(window.ao.editorHandoff, "getState").mockResolvedValueOnce({
+    vi.spyOn(window.ao!.editorHandoff, "getState").mockResolvedValueOnce({
       targets: [],
       preferredEditorId: "cursor",
       workspaceAvailable: false,

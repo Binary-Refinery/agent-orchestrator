@@ -255,7 +255,9 @@ function renderPane(
 ) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
+	if (!previousAO) throw new Error("AO bridge is required to render the terminal pane");
 	window.ao = {
+		...previousAO,
 		editorHandoff: {
 			getState: vi.fn().mockResolvedValue({
 				targets: [],
@@ -263,7 +265,7 @@ function renderPane(
 				workspaceAvailable: true,
 			}),
 		},
-	} as typeof window.ao;
+	};
 	const result = render(
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
