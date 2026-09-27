@@ -32,7 +32,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 });
 
 describe("PRSummaryParts", () => {
-	it("links authors while keeping compact check labels static", () => {
+	it("links authors and compact check status", () => {
 		render(
 			<>
 				<PRSummaryMeta pr={summary()} />
@@ -45,8 +45,10 @@ describe("PRSummaryParts", () => {
 			"src",
 			"https://avatars.githubusercontent.com/u/123?v=4",
 		);
-		expect(screen.getByText("Checks passing")).toBeInTheDocument();
-		expect(screen.queryByRole("link", { name: "Checks passing" })).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Checks passing" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/7/checks",
+		);
 	});
 
 	it("shows pending checks, review, and merge state as separate rows", () => {
@@ -88,7 +90,10 @@ describe("PRSummaryParts", () => {
 		expect(action.parentElement?.parentElement).toContainElement(screen.getByText("Ready to merge"));
 		expect(container).toContainElement(supportingStatus);
 		expect(screen.getByText("PR approved")).toBeInTheDocument();
-		expect(screen.queryByRole("link", { name: "Ready to merge" })).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Ready to merge" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/7",
+		);
 	});
 
 	it("renders failing check links with visible error contrast", () => {
