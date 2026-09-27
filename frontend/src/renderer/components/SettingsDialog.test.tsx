@@ -125,6 +125,7 @@ describe("SettingsDialog", () => {
 		const dialog = await screen.findByRole("dialog");
 		expect(overlay).toHaveClass("dialog-overlay");
 		expect(dialog).toHaveClass("z-[calc(var(--z-overlay)+1)]");
+		expect(dialog).not.toHaveClass("z-overlay");
 	});
 
 	it("opens Harness and forwards its agent focus target without redirecting to Codex Accounts", async () => {
