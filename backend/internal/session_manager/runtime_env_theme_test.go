@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/termtheme"
@@ -44,5 +45,34 @@ func TestAugmentAgentRuntimeEnvLeavesThemeUnsetWithoutHint(t *testing.T) {
 	}
 	if _, ok := env[termtheme.EnvColorFgBg]; ok {
 		t.Fatalf("env = %v, want no theme hints", env)
+	}
+}
+
+// Windows semantics: a project override in any key case wins and is the only
+// variant left, so ConPTY's case-folding dedupe cannot drop it.
+func TestAugmentAgentRuntimeEnvWindowsKeepsCaseVariantOverride(t *testing.T) {
+	previous := envKeysCaseInsensitive
+	envKeysCaseInsensitive = true
+	t.Cleanup(func() { envKeysCaseInsensitive = previous })
+
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, termtheme.FileName), []byte("light\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{dataDir: dataDir}
+	env := map[string]string{"term_theme": "dark"}
+	m.augmentAgentRuntimeEnv(fakeAgent{}, env)
+
+	var variants []string
+	for key := range env {
+		if strings.EqualFold(key, termtheme.EnvTheme) {
+			variants = append(variants, key)
+		}
+	}
+	if len(variants) != 1 || env["term_theme"] != "dark" {
+		t.Fatalf("TERM_THEME variants = %v (env %v), want only the project's term_theme=dark", variants, env)
+	}
+	if env[termtheme.EnvColorFgBg] != "0;15" {
+		t.Fatalf("COLORFGBG = %q, want 0;15", env[termtheme.EnvColorFgBg])
 	}
 }
