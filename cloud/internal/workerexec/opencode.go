@@ -3,12 +3,66 @@ package workerexec
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
+
+// openCodeBakedModelsCache is the read-only, image-baked copy of opencode's
+// models.dev catalog (see cloud/scripts/bake-coder-azure-image.sh). opencode is
+// a multi-provider aggregator that downloads the whole ~5MB catalog on startup,
+// so on a fresh sandbox (cold per-session HOME) that adds ~10s before the TUI
+// appears — unlike claude/codex, which have no such fetch. Seeding it warms the
+// cache so opencode starts fast.
+const openCodeBakedModelsCache = "/opt/ao/opencode/models.json"
+
+// seedOpenCodeModelsCache copies the baked models.dev catalog into the launch
+// HOME's opencode cache when absent, so opencode reads a warm cache instead of
+// fetching at startup. Best effort: any failure just leaves opencode to fetch at
+// runtime (the prior behavior), so a missing baked file or old image is safe.
+func seedOpenCodeModelsCache(env map[string]string) {
+	src, err := os.Open(openCodeBakedModelsCache)
+	if err != nil {
+		return
+	}
+	defer func() { _ = src.Close() }()
+	home := strings.TrimSpace(env["HOME"])
+	if home == "" {
+		home = strings.TrimSpace(os.Getenv("HOME"))
+	}
+	if home == "" {
+		return
+	}
+	cacheDir := strings.TrimSpace(env["XDG_CACHE_HOME"])
+	if cacheDir == "" {
+		cacheDir = filepath.Join(home, ".cache")
+	}
+	dir := filepath.Join(cacheDir, "opencode")
+	dest := filepath.Join(dir, "models.json")
+	if _, err := os.Stat(dest); err == nil {
+		return // already warm (a prior launch or opencode itself wrote it)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(dir, ".ao-models-*")
+	if err != nil {
+		return
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = tmp.Close()
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(tmpPath, dest)
+}
 
 // opencode's launch + prompt-config business logic lives in the cloud module
 // (not backend/agentruntime) so the cloud worker stays self-contained and can be

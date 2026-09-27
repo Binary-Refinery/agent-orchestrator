@@ -225,6 +225,9 @@ func (b HarnessBuilder) BuildInteractive(
 		if configPath != "" {
 			command.Env["OPENCODE_CONFIG"] = configPath
 		}
+		// Warm opencode's models.dev cache from the baked catalog so the TUI is not
+		// blocked on a ~5MB startup download on a fresh sandbox.
+		seedOpenCodeModelsCache(command.Env)
 	}
 	return command, nil
 }

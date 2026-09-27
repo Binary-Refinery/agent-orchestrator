@@ -88,6 +88,20 @@ opencode --version || echo 'opencode MISSING'
 gh --version | head -1 || echo 'gh MISSING'
 # opencode must resolve on the default PATH (the worker guard does LookPath).
 command -v opencode || echo 'opencode NOT ON PATH'
+# Pre-warm opencode's models.dev catalog into a baked, read-only path. opencode
+# (a multi-provider aggregator) downloads the whole ~5MB catalog on startup, so a
+# fresh sandbox otherwise pays ~10s before the TUI appears (claude/codex have no
+# such fetch). The worker copies this into the per-session HOME before launch
+# (seedOpenCodeModelsCache), so opencode starts from a warm cache.
+opencode models >/dev/null 2>&1 || echo 'opencode models warm failed'
+sudo mkdir -p /opt/ao/opencode
+if [ -f \"\$HOME/.cache/opencode/models.json\" ]; then
+  sudo cp \"\$HOME/.cache/opencode/models.json\" /opt/ao/opencode/models.json
+  sudo chmod 0644 /opt/ao/opencode/models.json
+  echo \"baked opencode models.json: \$(wc -c < /opt/ao/opencode/models.json) bytes\"
+else
+  echo 'opencode models.json NOT FOUND to bake'
+fi
 # make the freshly installed tools available to the coder user by default
 ls -l /usr/local/bin/cursor-agent
 " --query 'value[0].message' -o tsv
