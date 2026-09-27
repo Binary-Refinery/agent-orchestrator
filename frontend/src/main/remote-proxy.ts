@@ -191,6 +191,12 @@ export async function startRemoteProxy(entry: RemoteEntry, rendererOrigin = REND
 			});
 			res.end('{"error":"remote daemon unreachable"}');
 		});
+		// Closing an EventSource or tab must also close its upstream stream.
+		// Otherwise the remote daemon keeps the SSE request alive after the
+		// renderer is gone, and proxy shutdown can leave orphaned connections.
+		res.once("close", () => {
+			if (!res.writableFinished) proxied.destroy();
+		});
 		req.pipe(proxied);
 	});
 

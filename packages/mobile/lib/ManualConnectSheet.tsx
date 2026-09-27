@@ -1,8 +1,8 @@
 import { Feather } from "./icons";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { ApiError, pingServer } from "./api";
-import { DEFAULT_CONFIG, loadConfig, saveConfig, type ServerConfig } from "./config";
+import { DEFAULT_CONFIG, saveConfig, type ServerConfig } from "./config";
 import { saveHost, setActiveHost } from "./hosts";
 import { adoptManualConnection } from "./manualConnect";
 import { probeIdentity } from "./connectRuntime";
@@ -29,16 +29,10 @@ import { iconSize, space, type } from "./tokens";
 export function ManualConnectSheet({ onConnected }: { onConnected: () => void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
+	// This form adds a new machine. Never prefill another machine's address or bearer.
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<ConnectionErrorCopy | null>(null);
-
-	// Load whatever is already saved when the sheet opens, so a user who closes it
-	// to re-try the scanner doesn't lose what they typed. Mount is the open now
-	// that this is a route rather than an always-rendered component.
-	useEffect(() => {
-		loadConfig().then(setCfg);
-	}, []);
 
 	const set = (k: keyof ServerConfig) => (v: string) => setCfg((prev) => ({ ...prev, [k]: v }));
 

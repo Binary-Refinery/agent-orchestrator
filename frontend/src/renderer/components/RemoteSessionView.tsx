@@ -1,8 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { toSnapshot } from "../hooks/useConversation";
 import { baseUrlForHost, clientForHost, subscribeConnectedHosts } from "../lib/host-clients";
+import { apiErrorCode } from "../lib/api-client";
 import { useWorkspaceSession, remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import type { ConversationActivity } from "../types/conversation";
+import { ApprovalCard } from "./chat/ChatTimelineItems";
 import { RemoteTerminalView } from "./RemoteTerminalView";
 
 /** A safe remote surface until native desktop actions have host-aware implementations. */
@@ -24,6 +28,21 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 			if (error) throw error;
 			return data;
 		},
+	});
+	const approvals = useMemo(() => conversation.data
+		? toSnapshot(conversation.data).items.filter((item): item is ConversationActivity =>
+			item.kind === "activity" && item.activityKind === "approval" && item.status === "pending" && !!item.requestId)
+		: [], [conversation.data]);
+	const resolve = useMutation({
+		mutationFn: async ({ requestId, decisionId }: { requestId: string; decisionId: string }) => {
+			const { error } = await clientForHost(hostId).POST("/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", {
+				params: { path: { sessionId, requestId } },
+				body: { decisionId },
+			});
+			// Another client may have answered while this card was on screen.
+			if (error && apiErrorCode(error) !== "CHAT_REQUEST_NOT_PENDING") throw error;
+		},
+		onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey }),
 	});
 	const send = useMutation({
 		mutationFn: async ({ text, id }: { text: string; id: string }) => {
@@ -78,10 +97,14 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 				</div>)}
 				{conversation.isError && <p role="alert">{t("remote.loadConversationFailed")}</p>}
 			</div>
-			<form className="flex gap-2" onSubmit={onSubmit}>
+			{approvals.map((approval) => <div key={approval.id}>
+				<ApprovalCard activity={approval} onDecide={(requestId, decisionId) => resolve.mutate({ requestId, decisionId })} busy={resolve.isPending} />
+				{resolve.isError && resolve.variables?.requestId === approval.requestId && <p role="alert">{t("inspector.resolveReviewFailed")}</p>}
+			</div>)}
+			{approvals.length === 0 && <form className="flex gap-2" onSubmit={onSubmit}>
 				<input className="min-w-0 flex-1 rounded-md border bg-background p-2" aria-label={t("remote.message")} value={message} onChange={(event) => { deliveryId.current = null; setMessage(event.target.value); }} />
 				<button type="submit" className="rounded-md border px-4" disabled={!message.trim() || send.isPending || session.data.isTerminated}>{t("browser.annotationSend")}</button>
-			</form>
+			</form>}
 			{send.isError && <p role="alert">{t("remote.sendFailed")}</p>}
 		</> : session.data && proxyBase ? (
 			<RemoteTerminalView hostId={hostId} proxyBase={proxyBase} terminalHandleId={session.data.terminalHandleId ?? sessionId} />

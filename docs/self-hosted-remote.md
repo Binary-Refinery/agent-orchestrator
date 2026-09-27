@@ -30,8 +30,8 @@ copied AO data directory. Desktop connection passwords live in
 `~/.ao/remotes.json` (or `AO_DATA_DIR/remotes.json`) with owner-only permissions.
 
 The first desktop remote surface supports starting workers, Chat messages,
-terminal attach, and stopping sessions. Native editor, files, browser, and
-approval controls are not exposed in that remote view yet. Push notifications
+Chat approvals, terminal attach, and stopping sessions. Native editor, files,
+and browser are not exposed in that remote view yet. Push notifications
 carry the owning host ID; a tap for a different selected host opens the board
 instead of acting on a same-ID session there. Older pushes without a host ID
 also open the board. AO Cloud placement remains its existing separate flow;

@@ -32,6 +32,7 @@ beforeEach(() => {
 afterEach(async () => {
 	vi.restoreAllMocks();
 	await proxy?.close();
+	upstream?.closeAllConnections();
 	await new Promise<void>((resolve) => (upstream ? upstream.close(() => resolve()) : resolve()));
 	upstream = undefined;
 	proxy = undefined;
@@ -452,7 +453,9 @@ describe("startRemoteProxy streams", () => {
 	// right away; otherwise it reports CONNECTING forever, which is exactly what
 	// "not receiving live updates" looked like before this was found.
 	it("flushes response headers before the first SSE byte arrives", async () => {
+		let upstreamClosed = false;
 		upstream = createServer((_req, res) => {
+			res.once("close", () => { upstreamClosed = true; });
 			res.writeHead(200, { "content-type": "text/event-stream" });
 			// The real daemon flushes its own headers immediately (confirmed by a
 			// direct curl against it) — this upstream must too, or the test would
@@ -497,6 +500,7 @@ describe("startRemoteProxy streams", () => {
 		// block well before that proves the proxy flushes headers on their own
 		// rather than only when they can piggyback on the first body write.
 		expect(headersArrivedAfterMs).toBeLessThan(300);
+		await vi.waitFor(() => expect(upstreamClosed).toBe(true), { timeout: 1_000 });
 	});
 
 	it("delivers SSE chunks as they are written, not on close", async () => {
