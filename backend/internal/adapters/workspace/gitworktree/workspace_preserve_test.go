@@ -102,6 +102,15 @@ func TestWorkspaceIntegrationStashApplyRoundTrip(t *testing.T) {
 	if string(readmeBytes) != "edited by agent\n" {
 		t.Fatalf("README content = %q, want %q", string(readmeBytes), "edited by agent\n")
 	}
+	// The restored worktree remains usable for ongoing session work after the
+	// archived edits have been put back.
+	if err := os.WriteFile(filepath.Join(restored.Path, "continued-work.txt"), []byte("agent continued after restore\n"), 0o644); err != nil {
+		t.Fatalf("write continued-work.txt after apply: %v", err)
+	}
+	continued, err := os.ReadFile(filepath.Join(restored.Path, "continued-work.txt"))
+	if err != nil || string(continued) != "agent continued after restore\n" {
+		t.Fatalf("continued-work.txt after restore = %q, %v", continued, err)
+	}
 
 	// New non-ignored file must reappear.
 	if _, err := os.Stat(filepath.Join(restored.Path, "agent-work.go")); err != nil {

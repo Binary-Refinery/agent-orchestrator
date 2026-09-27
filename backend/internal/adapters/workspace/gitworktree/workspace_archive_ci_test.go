@@ -64,8 +64,11 @@ func TestArchiveDropsIgnoredCheckout(t *testing.T) {
 	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("checkout still on disk after archive")
 	}
-	if grew := dirBytes(t, filepath.Join(repo, ".git")) - gitBefore; grew > payload/4 {
-		t.Fatalf("git grew by %d bytes after dropping a %d byte ignored file", grew, payload)
+	gitAfter := dirBytes(t, filepath.Join(repo, ".git"))
+	gitGrowth := gitAfter - gitBefore
+	t.Logf("archive removed %d checkout bytes; git object store grew by %d bytes for a %d-byte ignored payload", checkoutBefore, gitGrowth, payload)
+	if gitGrowth > payload/4 {
+		t.Fatalf("git grew by %d bytes after dropping a %d byte ignored file", gitGrowth, payload)
 	}
 
 	restored, err := ws.Restore(ctx, cfg)
@@ -161,6 +164,101 @@ func TestStashUncommittedDoesNotReplaceAnExistingSnapshot(t *testing.T) {
 	}
 	if _, err := ws.run(ctx, git, "-C", repo, "show", ref+":notes.txt"); err == nil {
 		t.Fatal("second edit was written into the earlier snapshot")
+	}
+}
+
+func TestApplyPreservedRefDeleteFailureStaysVisibleAndCanBeRetried(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-ref-delete-retry", Branch: "feature/ref-delete-retry"}
+	info, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	readmePath := filepath.Join(info.Path, "README.md")
+	if err := os.WriteFile(readmePath, []byte("saved edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := ws.StashUncommitted(ctx, info)
+	if err != nil || ref == "" {
+		t.Fatalf("capture ref=%q err=%v", ref, err)
+	}
+	firstSHA := gitOutput(t, git, repo, "rev-parse", ref)
+	if err := ws.ForceDestroy(ctx, info); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ws.Restore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	baseRun := ws.run
+	failDelete := true
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		if failDelete && len(args) == 5 && args[0] == "-C" && args[2] == "update-ref" && args[3] == "-d" && args[4] == ref {
+			return nil, errors.New("injected preserve-ref deletion failure")
+		}
+		return baseRun(ctx, binary, args...)
+	}
+
+	if err := ws.ApplyPreserved(ctx, restored, ref); err == nil || !strings.Contains(err.Error(), "could not delete preserve ref") {
+		t.Fatalf("ApplyPreserved error = %v, want visible preserve-ref deletion failure", err)
+	}
+	if got := gitOutput(t, git, restored.Path, "show", "HEAD:README.md"); got == "saved edit" {
+		t.Fatal("ApplyPreserved unexpectedly committed the saved edit")
+	}
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readme); got != "saved edit\n" {
+		t.Fatalf("README after apply = %q, want saved edit", got)
+	}
+	if got := gitOutput(t, git, repo, "rev-parse", ref); got != firstSHA {
+		t.Fatalf("preserve ref moved from %s to %s after failed deletion", firstSHA, got)
+	}
+
+	if err := os.WriteFile(filepath.Join(restored.Path, "later.txt"), []byte("later edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.StashUncommitted(ctx, restored); err == nil {
+		t.Fatal("archive succeeded while the prior preserve ref was still pending cleanup")
+	}
+	later, err := os.ReadFile(filepath.Join(restored.Path, "later.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(later); got != "later edit\n" {
+		t.Fatalf("later edit after blocked archive = %q, want unchanged", got)
+	}
+	if got := gitOutput(t, git, repo, "rev-parse", ref); got != firstSHA {
+		t.Fatalf("blocked archive replaced preserve ref with %s, want %s", got, firstSHA)
+	}
+
+	// Retrying the same apply after cleanup becomes available must not lose the
+	// edits made since the first apply, and should clear the stale ref.
+	failDelete = false
+	if err := ws.ApplyPreserved(ctx, restored, ref); err != nil {
+		t.Fatalf("retry ApplyPreserved: %v", err)
+	}
+	if _, err := ws.run(ctx, git, revParseVerifyArgs(repo, ref)...); err == nil {
+		t.Fatal("preserve ref remains after successful cleanup retry")
+	}
+	newRef, err := ws.StashUncommitted(ctx, restored)
+	if err != nil || newRef == "" {
+		t.Fatalf("archive after cleanup retry ref=%q err=%v", newRef, err)
+	}
+	if got := gitOutput(t, git, repo, "show", newRef+":README.md"); got != "saved edit" {
+		t.Fatalf("new snapshot README = %q, want saved edit", got)
+	}
+	if got := gitOutput(t, git, repo, "show", newRef+":later.txt"); got != "later edit" {
+		t.Fatalf("new snapshot later.txt = %q, want later edit", got)
 	}
 }
 

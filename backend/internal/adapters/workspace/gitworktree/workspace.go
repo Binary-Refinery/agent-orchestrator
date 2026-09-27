@@ -1197,6 +1197,8 @@ func (w *Workspace) countIgnoredPaths(ctx context.Context, worktree string) (int
 // On clean success, the preserve ref is deleted.
 // On conflict, the ref is kept, conflict markers are left in the affected files,
 // and ErrPreservedConflict (wrapped) is returned so the caller can surface it.
+// If applying succeeds but deleting the ref fails, an error is returned and the
+// ref remains available for retry. Callers must not treat that state as consumed.
 //
 // NEVER deletes the preserve ref on a failed or conflicted apply.
 func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo, ref string) error {
@@ -1238,12 +1240,7 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 
 	// Clean apply: remove the preserve ref so it is never replayed twice.
 	if _, err := w.run(ctx, w.binary, deleteRefArgs(info.Path, ref)...); err != nil {
-		// Log but do not fail: the work is already applied. A dangling preserve
-		// ref is harmless; the next StashUncommitted will overwrite it.
-		slog.WarnContext(ctx, "gitworktree: ApplyPreserved could not delete preserve ref",
-			"ref", ref,
-			"err", err,
-		)
+		return fmt.Errorf("gitworktree: preserved edits were applied but could not delete preserve ref %q: %w", ref, err)
 	}
 	return nil
 }
