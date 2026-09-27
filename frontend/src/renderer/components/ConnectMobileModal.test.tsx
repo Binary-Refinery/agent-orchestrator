@@ -488,9 +488,19 @@ test("shows the QR when there is no tunnel to wait for", () => {
 		qrIsReady({
 			enabled: true,
 			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
-			tunnel: { running: false, ready: false, hostname: "", location: "", lastError: "" },
+			tunnel: { supported: false, running: false, ready: false, hostname: "", location: "", lastError: "" },
 		}),
 	).toBe(true);
+});
+
+test("holds the QR back before a supported tunnel starts", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { supported: true, running: false, ready: false, hostname: "", location: "", lastError: "" },
+		}),
+	).toBe(false);
 });
 
 test("holds the QR back when nothing is reachable yet", () => {
@@ -512,7 +522,18 @@ test("withholds the QR from a daemon that reports no endpoints", () => {
 // daemon went advertisable seconds later.
 test("polls while the connector is starting", () => {
 	expect(
-		mobileStatusRefetchInterval({ tunnel: { running: true, ready: false } }),
+		mobileStatusRefetchInterval({
+			enabled: true,
+			endpoints: [],
+			tunnel: { supported: true, running: false, ready: false },
+		}),
+	).toBeGreaterThan(0);
+	expect(
+		mobileStatusRefetchInterval({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { supported: true, running: true, ready: false },
+		}),
 	).toBeGreaterThan(0);
 });
 
@@ -520,12 +541,25 @@ test("polls while the connector is starting", () => {
 // there is no transient state left, and the modal should not keep hitting the
 // daemon for the rest of the session.
 test("stops polling once the tunnel is advertisable", () => {
-	expect(mobileStatusRefetchInterval({ tunnel: { running: true, ready: true } })).toBe(false);
+	expect(
+		mobileStatusRefetchInterval({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { supported: true, running: true, ready: true },
+		}),
+	).toBe(false);
 });
 
 test("does not poll when there is no tunnel to wait for", () => {
-	expect(mobileStatusRefetchInterval({ tunnel: { running: false, ready: false } })).toBe(false);
-	expect(mobileStatusRefetchInterval({ tunnel: undefined })).toBe(false);
+	const endpoints = [{ kind: "lan" as const, host: "192.168.1.42", port: 3011, secure: false }];
+	expect(
+		mobileStatusRefetchInterval({
+			enabled: true,
+			endpoints,
+			tunnel: { supported: false, running: false, ready: false },
+		}),
+	).toBe(false);
+	expect(mobileStatusRefetchInterval({ enabled: true, endpoints, tunnel: undefined })).toBe(false);
 	expect(mobileStatusRefetchInterval(undefined)).toBe(false);
 });
 

@@ -104,11 +104,28 @@ export function qrValueFor(input: {
  * Polls only while there is a transient state to wait out, so an idle modal
  * does not keep hitting the daemon for the rest of the session.
  */
-export function mobileStatusRefetchInterval(
-	status: { tunnel?: { running: boolean; ready: boolean } } | undefined,
-): number | false {
-	const tunnel = status?.tunnel;
-	return tunnel?.running && !tunnel.ready ? MOBILE_STATUS_POLL_MS : false;
+type PairingReadinessStatus = {
+	enabled: boolean;
+	endpoints?: readonly PairingEndpoint[];
+	tunnel?: {
+		supported?: boolean;
+		running: boolean;
+		ready: boolean;
+		lastError?: string;
+		[k: string]: unknown;
+	};
+};
+
+function pairingIsPending(status: PairingReadinessStatus | undefined): boolean {
+	if (!status?.enabled) return false;
+	if (!status.endpoints || status.endpoints.length === 0) return true;
+	const tunnel = status.tunnel;
+	if (!tunnel || tunnel.ready || tunnel.lastError) return false;
+	return tunnel.supported === true || tunnel.running;
+}
+
+export function mobileStatusRefetchInterval(status: PairingReadinessStatus | undefined): number | false {
+	return pairingIsPending(status) ? MOBILE_STATUS_POLL_MS : false;
 }
 
 const MOBILE_STATUS_POLL_MS = 2_000;
@@ -122,25 +139,23 @@ const MOBILE_STATUS_POLL_MS = 2_000;
  * else — with nothing on either side to indicate why. Holding the code back is
  * the same discipline the daemon already applies to advertising the endpoint.
  *
- * A tunnel that is not running at all is not worth waiting for: LAN-only is a
- * legitimate setup, and blocking pairing forever would be worse than the wait.
+ * A supported tunnel is also pending before its process reports running. That
+ * startup window is the important edge case: showing the LAN-only QR there
+ * makes it disappear again as soon as the next status response observes the
+ * connector starting. Unsupported or failed tunnels are terminal LAN-only
+ * states, so they do not block the QR.
  *
  * A daemon that does not report endpoints at all predates the endpoint race.
  * It has no tunnel to wait for, and its QR still works, so it is shown — the
  * absence of the field is not the same as an empty list.
  */
-export function qrIsReady(status: {
-	enabled: boolean;
-	endpoints?: readonly PairingEndpoint[];
-	tunnel?: { running: boolean; ready: boolean; [k: string]: unknown };
-}): boolean {
+export function qrIsReady(status: PairingReadinessStatus): boolean {
 	if (!status.enabled) return false;
 	// Nothing to encode: a v2 code carries the endpoint list, and there is no
 	// longer a v1 form to fall back to. An absent list is as unready as an empty
 	// one — it means the daemon has not told us where it can be reached.
 	if (!status.endpoints || status.endpoints.length === 0) return false;
-	if (status.tunnel?.running && !status.tunnel.ready) return false;
-	return true;
+	return !pairingIsPending(status);
 }
 
 /** The app's registered scheme (app.json `expo.scheme`), not a universal link:
@@ -250,8 +265,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		queryKey: mobileStatusQueryKey,
 		queryFn: fetchMobileStatus,
 		enabled: active,
-		// Only while the connector is coming up — see
-		// mobileStatusRefetchInterval.
+		// Keep refreshing through every enabled-but-not-advertisable startup
+		// state — see mobileStatusRefetchInterval.
 		refetchInterval: (q) => mobileStatusRefetchInterval(q.state.data),
 	});
 
