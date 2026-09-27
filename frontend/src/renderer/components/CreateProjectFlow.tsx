@@ -271,11 +271,18 @@ export function CreateProjectFlow({
 
 	const prepareDefaultBranchConfirm = async (path: string, validation: ImportValidationResult | null, kind: ProjectKind) => {
 		const remoteless = validation?.root.hasOrigin === false;
+		// Remoteless single-repo imports always confirm (#4679). Workspace roots
+		// confirm only when a checked-out branch is detectable; unborn/plain
+		// parents get AO's init default instead of blocking on an empty field.
 		if (kind !== "workspace" && !remoteless) {
 			setDefaultBranchCandidate(null);
 			return;
 		}
 		const branch = (await aoBridge.app.getRepositoryBranch(path))?.trim() ?? "";
+		if (kind === "workspace" && branch === "") {
+			setDefaultBranchCandidate(null);
+			return;
+		}
 		setDefaultBranchCandidate(branch);
 	};
 
