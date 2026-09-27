@@ -1484,6 +1484,17 @@ func mobileOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/keep-awake", id: "setMobileKeepAwake", tag: "mobile",
+			summary: "Keep this Mac from idle-sleeping while Connect Mobile is on",
+			reqBody: controllers.SetKeepAwakeRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
 	}
 }
 

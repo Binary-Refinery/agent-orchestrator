@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Check, Coffee, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
@@ -12,6 +12,7 @@ import { PairingQr } from "./PairingQr";
 import { scramblePairingCodes } from "./qrScramble";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 
@@ -206,6 +207,14 @@ interface MobileStatus {
 		port: number;
 		reason: string;
 	};
+	/** macOS-only option to hold the machine awake while the bridge is on.
+	 * Optional: a daemon predating it does not send the block. */
+	keepAwake?: {
+		supported: boolean;
+		enabled: boolean;
+		active: boolean;
+		hasBattery: boolean;
+	};
 }
 
 export async function fetchMobileStatus(): Promise<MobileStatus> {
@@ -319,6 +328,15 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
+	const setKeepAwake = useMutation({
+		mutationFn: async (keepAwake: boolean) => {
+			const { data, error } = await apiClient.POST("/api/v1/mobile/keep-awake", { body: { enabled: keepAwake } });
+			if (error) throw new Error(apiErrorMessage(error));
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	// TLS turns itself on wherever Tailscale exists — it is not a switch, and it
 	// is deliberately not tied to the connection picker. iOS refuses cleartext
 	// to a 100.x address, so a Tailscale pairing without it works on Android and
@@ -364,7 +382,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		startRemoteAccess.isPending ||
 		regenerate.isPending ||
 		disable.isPending ||
-		setSecure.isPending;
+		setSecure.isPending ||
+		setKeepAwake.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
@@ -372,6 +391,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		regenerate.reset();
 		disable.reset();
 		setSecure.reset();
+		setKeepAwake.reset();
 	};
 
 	const copyPassword = async () => {
@@ -406,6 +426,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		(regenerate.error instanceof Error && regenerate.error.message) ||
 		(disable.error instanceof Error && disable.error.message) ||
 		(setSecure.error instanceof Error && setSecure.error.message) ||
+		(setKeepAwake.error instanceof Error && setKeepAwake.error.message) ||
 		null;
 
 	if (query.isLoading) {
@@ -661,6 +682,34 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					)}
 					</div>
 			</div>
+
+			{/* macOS only — the daemon reports it unsupported elsewhere. Shown
+			    whether or not the bridge is on: the choice is remembered and takes
+			    effect whenever the mobile connection is. */}
+			{status.keepAwake?.supported && (
+				<div className="flex items-start gap-3" data-testid="mobile-keep-awake">
+					<Coffee className="mt-0.5 size-4 shrink-0 text-settings-muted" aria-hidden="true" />
+					<div className="min-w-0 flex-1">
+						<div className="text-sm leading-5 text-settings-label">{t("mobile.keepAwake.label")}</div>
+						<p className="mt-0.5 text-pretty text-xs leading-4 text-settings-muted">{t("mobile.keepAwake.help")}</p>
+						{status.keepAwake.hasBattery && (
+							<p className="mt-1 text-pretty text-xs leading-4 text-settings-muted" data-testid="mobile-keep-awake-laptop">
+								{t("mobile.keepAwake.laptopNote")}
+							</p>
+						)}
+					</div>
+					<Switch
+						className="mt-0.5"
+						aria-label={t("mobile.keepAwake.label")}
+						checked={setKeepAwake.isPending ? (setKeepAwake.variables ?? false) : status.keepAwake.enabled}
+						disabled={setKeepAwake.isPending}
+						onCheckedChange={(next) => {
+							clearActionErrors();
+							setKeepAwake.mutate(next);
+						}}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

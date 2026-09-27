@@ -841,6 +841,9 @@ func Run() error {
 	}
 
 	bs.HostID = hostIdentity.HostID
+	if mobilebridge.KeepAwakeSupported() {
+		bs.KeepAwake = mobilebridge.NewKeepAwake(os.Getpid())
+	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
@@ -1049,6 +1052,7 @@ func Run() error {
 	// public hostname resolving to a port that is about to close. Stopping it
 	// does not disable the bridge — boot restore starts a new one.
 	bs.ShutdownTunnel()
+	bs.ShutdownKeepAwake()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

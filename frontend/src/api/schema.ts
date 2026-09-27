@@ -756,6 +756,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mobile/keep-awake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Keep this Mac from idle-sleeping while Connect Mobile is on */
+        post: operations["setMobileKeepAwake"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/regenerate": {
         parameters: {
             query?: never;
@@ -3190,6 +3207,12 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersKeepAwakeStatus: {
+            active: boolean;
+            enabled: boolean;
+            hasBattery: boolean;
+            supported: boolean;
+        };
         ControllersRequestRereviewRequest: {
             /** @description Tracked pull request URL. Required when the session has multiple PRs. */
             pullRequestUrl?: string;
@@ -3266,6 +3289,9 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+        };
+        ControllersSetKeepAwakeRequest: {
+            enabled: boolean;
         };
         ControllersSetSecurePairingRequest: {
             enabled: boolean;
@@ -3943,6 +3969,7 @@ export interface components {
             endpoints: components["schemas"]["MobileEndpoint"][];
             host: string;
             hostId: string;
+            keepAwake: components["schemas"]["ControllersKeepAwakeStatus"];
             password: string;
             port: number;
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];
@@ -7215,6 +7242,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setMobileKeepAwake: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSetKeepAwakeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Forbidden */

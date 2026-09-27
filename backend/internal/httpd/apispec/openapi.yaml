@@ -1695,6 +1695,43 @@ paths:
       summary: Enable the Connect Mobile LAN bridge and issue a fresh password
       tags:
       - mobile
+  /api/v1/mobile/keep-awake:
+    post:
+      operationId: setMobileKeepAwake
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetKeepAwakeRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Keep this Mac from idle-sleeping while Connect Mobile is on
+      tags:
+      - mobile
   /api/v1/mobile/regenerate:
     post:
       operationId: regenerateMobile
@@ -9211,6 +9248,22 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersKeepAwakeStatus:
+      properties:
+        active:
+          type: boolean
+        enabled:
+          type: boolean
+        hasBattery:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - supported
+      - enabled
+      - active
+      - hasBattery
+      type: object
     ControllersRequestRereviewRequest:
       properties:
         pullRequestUrl:
@@ -9461,6 +9514,13 @@ components:
       - kanbanColumn
       - displayStatus
       - prs
+      type: object
+    ControllersSetKeepAwakeRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
       type: object
     ControllersSetSecurePairingRequest:
       properties:
@@ -11281,6 +11341,8 @@ components:
           type: string
         hostId:
           type: string
+        keepAwake:
+          $ref: '#/components/schemas/ControllersKeepAwakeStatus'
         password:
           type: string
         port:
@@ -11304,6 +11366,7 @@ components:
       - password
       - warning
       - securePairing
+      - keepAwake
       type: object
     MobileTunnelStatus:
       properties:
