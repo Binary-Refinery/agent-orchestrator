@@ -4003,10 +4003,9 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
-	// The public Send surface is interactive for terminal sessions. Chat keeps
-	// its established relay attribution unless a trusted caller supplies the
-	// explicit user-authored fact through SendWithOptions.
-	return m.SendWithOptions(ctx, id, message, attachment, ports.MessageDeliveryOptions{AuthoredByUser: true})
+	// Chat keeps its established automation relay attribution unless a trusted
+	// caller supplies the explicit user-authored fact through SendWithOptions.
+	return m.SendWithOptions(ctx, id, message, attachment, ports.MessageDeliveryOptions{})
 }
 
 // SendWithOptions delivers a message with caller-supplied authorship facts that
@@ -4146,7 +4145,7 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	}
 	var afterWrite func(context.Context) error
 	_, internalReportDelivery := domain.ReportDeliveryID(message)
-	if authoredByUser && strings.TrimSpace(message) != "" && !internalReportDelivery {
+	if strings.TrimSpace(message) != "" && !internalReportDelivery {
 		if recorder, ok := m.store.(latestUserPromptRecorder); ok {
 			afterWrite = func(writeCtx context.Context) error {
 				if _, recordErr := recorder.RecordSessionLatestUserPrompt(writeCtx, id, boundedConversationFact(message), m.clock()); recordErr != nil {
