@@ -670,6 +670,17 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 											{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
 										</p>
 									</div>
+								) : enabled ? (
+									<div
+										className="flex size-full flex-col items-center justify-center gap-3 bg-(--color-bg-settings-input) p-4 text-settings-muted"
+										data-testid="mobile-pairing-preparing"
+										role="status"
+									>
+										<Loader2 className="size-6 animate-spin" aria-hidden="true" />
+										<p className="text-center text-caption leading-(--leading-settings-mobile-hint)">
+											{t("mobile.tunnelStarting")}
+										</p>
+									</div>
 								) : (
 									<>
 										{/* The QR stays dark on white so Android can scan it. */}

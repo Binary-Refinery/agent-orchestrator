@@ -125,6 +125,25 @@ test("encodes the LAN address by default", async () => {
 	);
 });
 
+test("shows an explicit preparing state instead of a blurred QR while startup is incomplete", async () => {
+	mobileStatus.endpoints = [];
+	mobileStatus.tunnel = {
+		supported: true,
+		running: false,
+		ready: false,
+		hostname: "",
+		location: "",
+		lastError: "",
+	};
+
+	renderMobileSettings();
+
+	expect(await screen.findByTestId("mobile-pairing-preparing")).toHaveTextContent(
+		"Preparing remote access",
+	);
+	expect(screen.queryByRole("button", { name: "Generate" })).not.toBeInTheDocument();
+});
+
 test("can turn off the generated mobile connection", async () => {
 	renderMobileSettings();
 	const button = await screen.findByRole("button", { name: "Turn off mobile connection" });
