@@ -125,7 +125,7 @@ test("encodes the LAN address by default", async () => {
 	);
 });
 
-test("shows an explicit preparing state instead of a blurred QR while startup is incomplete", async () => {
+test("shows a quiet preparing state instead of a blurred QR while startup is incomplete", async () => {
 	mobileStatus.endpoints = [];
 	mobileStatus.tunnel = {
 		supported: true,
@@ -138,9 +138,8 @@ test("shows an explicit preparing state instead of a blurred QR while startup is
 
 	renderMobileSettings();
 
-	expect(await screen.findByTestId("mobile-pairing-preparing")).toHaveTextContent(
-		"Preparing remote access",
-	);
+	expect(await screen.findByTestId("mobile-pairing-preparing")).toBeInTheDocument();
+	expect(screen.queryByText(/Preparing remote access/i)).not.toBeInTheDocument();
 	expect(screen.queryByRole("button", { name: "Generate" })).not.toBeInTheDocument();
 });
 

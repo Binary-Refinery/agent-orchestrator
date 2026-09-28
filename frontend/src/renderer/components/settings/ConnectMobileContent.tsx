@@ -665,14 +665,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									</div>
 								) : enabled ? (
 									<div
-										className="flex size-full flex-col items-center justify-center gap-3 bg-(--color-bg-settings-input) p-4 text-settings-muted"
+										className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4 text-settings-muted"
 										data-testid="mobile-pairing-preparing"
 										role="status"
+										aria-label={t("mobile.checkingStatus")}
 									>
 										<Loader2 className="size-6 animate-spin" aria-hidden="true" />
-										<p className="text-center text-caption leading-(--leading-settings-mobile-hint)">
-											{t("mobile.tunnelStarting")}
-										</p>
 									</div>
 								) : (
 									<>
