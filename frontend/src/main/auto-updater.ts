@@ -8,6 +8,7 @@ import { startMacUpdateProgress } from "./mac-update-progress";
 import { markUpdateRelaunch } from "./update-relaunch-flag";
 import { accessSync, constants as fsConstants, existsSync, lstatSync, readFileSync, readdirSync, statfsSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import semver from "semver";
@@ -368,6 +369,82 @@ function shortStagingError(err: unknown): Error {
   return Object.assign(new Error(raw), { [STAGE_FAILURE_KIND]: kind });
 }
 
+/**
+ * Kill the extraction that has stopped making progress.
+ *
+ * Squirrel unzips IN THIS PROCESS: SQRLUpdater spawns /usr/bin/ditto as an
+ * NSTask child of the app, and SQRLZipArchiver never calls terminate on it.
+ * Disposing the signal does not help either, because it is replayed and the task
+ * was launched eagerly. So a wedged ditto holds SQRLUpdater's RACCommand in
+ * `executing` forever, and every later staging request is refused with
+ * RACCommandErrorNotEnabled. Killing the child is the only way to end it.
+ *
+ * Safe at this point in the sequence. SQRLInstaller does not touch the installed
+ * app until its rename/acquire phases, which run from ShipIt after the app quits.
+ * Extraction and signature checking are read-only with respect to /Applications,
+ * so an interrupted stage leaves only a scratch directory, which Squirrel's own
+ * error path removes. This is NOT true of interrupting the later swap.
+ *
+ * Matched by parent pid rather than by path: only this process's own children can
+ * be ours, so another app's update can never be hit.
+ */
+function killStalledStagingTask(): number {
+  if (process.platform !== "darwin") return 0;
+  let pids: number[] = [];
+  try {
+    pids = execFileSync("/usr/bin/pgrep", ["-P", String(process.pid), "-x", "ditto"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    })
+      .split("\n")
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    // pgrep exits non-zero when nothing matches, which is a normal outcome.
+    return 0;
+  }
+  let killed = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+      killed += 1;
+    } catch {
+      // Already gone between the scan and the signal.
+    }
+  }
+  return killed;
+}
+
+/**
+ * The one recovery ladder for a staged build that could not be installed.
+ *
+ * Shared by the Squirrel error event and the stall watchdog so both get the same
+ * counting, the same cache purge and the same wording. They used to diverge, and
+ * the stall half ended up with no recovery at all.
+ */
+function recordRetriableStageFailure(kind: StageFailureKind, err: unknown): void {
+  const failures = recordInstallRejection(stagedVersion);
+  handledInstallRejection = { version: stagedVersion };
+  discardStagedBuild();
+  // Purged on EVERY failure, including the first. electron-updater re-serves a
+  // cached file on existence alone, so without this the next attempt hands
+  // Squirrel byte-identical input and fails identically: a "retry" that cannot
+  // possibly succeed.
+  //
+  // Queued on the operation chain rather than fired and forgotten:
+  // discardStagedBuild() re-enables auto-download, so the next check can start a
+  // download into the very directory this is emptying.
+  void runSerializedUpdaterOperation("cache-clear", clearPendingUpdateCache).catch(() => undefined);
+  console.error(
+    `staged update ${kind === "stall" ? "stalled while preparing" : "rejected at install time"} (attempt ${failures}, discarding cached download so the next attempt re-downloads):`,
+    err,
+  );
+  // Never red, at any attempt count. AO is still recovering on its own, and a red
+  // failure for a condition the user cannot act on and the app is already
+  // handling is exactly the alarm this path exists to remove.
+  broadcast(withActiveRequest({ state: "retry-scheduled", message: stageRetryMessage(failures) }));
+}
+
 function blockNativePreparation(error: Error): void {
   nativePreparationBlocked = error;
   autoUpdater.autoDownload = false;
@@ -379,12 +456,18 @@ function blockNativePreparation(error: Error): void {
 // deterministically. A fresh module import restores the defaults.
 let readStagingBytes: (dir: string | undefined) => number | undefined = shipItStagingBytes;
 let stagingDiskIsFull: (requiredBytes: number) => boolean = insufficientDiskForStaging;
+// Overridable because the real one signals a process: a test can observe that
+// the stall actually tries to stop the stage, which is the whole difference
+// between a bounded retry and the latch this replaced.
+let killStagingTask: () => number = killStalledStagingTask;
 export function __setStagingProbesForTesting(probes: {
   readStagingBytes?: (dir: string | undefined) => number | undefined;
   stagingDiskIsFull?: (requiredBytes: number) => boolean;
+  killStagingTask?: () => number;
 }): void {
   if (probes.readStagingBytes) readStagingBytes = probes.readStagingBytes;
   if (probes.stagingDiskIsFull) stagingDiskIsFull = probes.stagingDiskIsFull;
+  if (probes.killStagingTask) killStagingTask = probes.killStagingTask;
 }
 
 function beginNativePreparation(version: string, archiveBytes?: number): void {
@@ -433,16 +516,21 @@ function beginNativePreparation(version: string, archiveBytes?: number): void {
   let lastBytes = readStagingBytes(stagingDir);
   let lastProgressAt = startedAt;
   const trip = (): void => {
-    // No cancel API, so never stage again on top of a stalled request even if
-    // its JS transfer settles later; recovery is a clean relaunch.
-    console.error(`native update preparation stalled after ${Math.round((Date.now() - startedAt) / 1000)}s with no staging progress`);
-    blockNativePreparation(stageError("stall", STAGE_STALL_MESSAGE));
-    preparation.finish(nativePreparationBlocked);
-    // Purge the archive too, so the retry the message promises is a real
-    // download on the next launch rather than a replay of the bytes that just
-    // failed to extract.
-    void runSerializedUpdaterOperation("cache-clear", clearPendingUpdateCache).catch(() => undefined);
-    broadcast(stagedDownloadedStatus());
+    const stalledFor = Math.round((Date.now() - startedAt) / 1000);
+    // Stop the stage before anything else. Until the wedged ditto is dead,
+    // SQRLUpdater's command stays `executing` and refuses every later staging
+    // request, so a retry would be rejected before it began. This is what makes
+    // the attempt bounded instead of terminal: the app used to latch here and
+    // wait for a relaunch, which left the one failure class with no recovery.
+    const killed = killStagingTask();
+    console.error(
+      `native update preparation stalled after ${stalledFor}s with no staging progress; killed ${killed} extraction task(s)`,
+    );
+    const stall = stageError("stall", STAGE_STALL_MESSAGE);
+    preparation.finish(stall);
+    // Same ladder as a verification rejection: count it, drop the archive so the
+    // next attempt re-downloads, and report it calmly.
+    recordRetriableStageFailure("stall", stall);
   };
   const watchdog = setInterval(() => {
     const now = Date.now();
@@ -2139,38 +2227,7 @@ function wireUpdaterEvents(): void {
       // different reason, but the remedy is identical and neither is actionable
       // by the user, so treating them separately only meant one of them had no
       // recovery at all.
-      const kind = stageFailureKind(err);
-      const failures = recordInstallRejection(stagedVersion);
-      handledInstallRejection = { version: stagedVersion };
-      discardStagedBuild();
-      // Purged on EVERY failure, including the first. electron-updater re-serves
-      // a cached file on existence alone, so without this the next attempt hands
-      // Squirrel byte-identical input and fails identically: a "retry" that
-      // cannot possibly succeed. Re-preparing the cached copy once was cheaper,
-      // but it made the promise in the status line untrue.
-      //
-      // Queued on the operation chain rather than fired and forgotten:
-      // discardStagedBuild() re-enables auto-download, so the next check can
-      // start a download into the very directory this is emptying.
-      void runSerializedUpdaterOperation(
-        "cache-clear",
-        clearPendingUpdateCache,
-      ).catch(() => undefined);
-      console.error(
-        `staged update ${kind === "stall" ? "stalled while preparing" : "rejected at install time"} (attempt ${failures}, discarding cached download so the next attempt re-downloads):`,
-        err,
-      );
-      // Never red, at any attempt count. AO is still recovering on its own, and a
-      // red failure for a condition the user cannot act on and the app is already
-      // handling is exactly the alarm this path exists to remove. The message says
-      // what AO is doing and when, and names the manual routes once the fast
-      // attempts are gone, without ever becoming a dead end.
-      broadcast(
-        withActiveRequest({
-          state: "retry-scheduled",
-          message: stageRetryMessage(failures),
-        }),
-      );
+      recordRetriableStageFailure(stageFailureKind(err), err);
       return;
     }
     if (activeUpdaterOperation === "automatic-check" && activeUpdaterPhase === "check") {

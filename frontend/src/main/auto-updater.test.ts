@@ -3451,14 +3451,14 @@ describe("quitAndInstallUpdate", () => {
         updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
         return transfer.promise;
       });
-      const assertion = expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
+      const assertion = expect(module.quitAndInstallUpdate()).rejects.toThrow();
       await flushMicrotasks();
       await vi.advanceTimersByTimeAsync(180_000);
       await assertion;
       nativeAutoUpdater.emit("update-downloaded");
       transfer.resolve();
       await flushMicrotasks();
-      await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
+      await expect(module.quitAndInstallUpdate()).rejects.toThrow();
       expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
       expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); restore(); }
@@ -4548,9 +4548,11 @@ it("keeps timed-out native preparation non-installable even after a late event",
     await vi.advanceTimersByTimeAsync(3 * 60_000);
     // A stall is AO's to retry, not the user's to fix, so it reports calmly even
     // though Squirrel's missing cancel API means the retry waits for a restart.
-    expect(module.getUpdateStatus()).toMatchObject({ state: "retry-scheduled", staged: { ready: false } });
-    expect(module.getUpdateStatus().message).toContain("nothing on your Mac changed");
-    await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
+    // The stalled stage is killed and the build dropped, so there is nothing
+    // installable left and the retry rides the normal ladder.
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    await expect(module.quitAndInstallUpdate()).rejects.toThrow();
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
     nativeUpdaterEvents.get("update-downloaded")?.({}, "notes", "2.0.0");
     expect(module.getUpdateStatus().state).toBe("retry-scheduled");
@@ -4575,7 +4577,8 @@ it("gives the signature-verification plateau a grace before calling a stall", as
     expect(module.getUpdateStatus().state).toBe("preparing");
     // Past the grace with the plateau unbroken: now it is a stall.
     await vi.advanceTimersByTimeAsync(2 * 60_000);
-    expect(module.getUpdateStatus()).toMatchObject({ state: "retry-scheduled", staged: { ready: false } });
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
+    expect(module.getUpdateStatus().staged).toBeUndefined();
   } finally { restore(); vi.useRealTimers(); }
 });
 
@@ -4656,11 +4659,12 @@ it("purges the archive when preparation stalls, so the next launch re-downloads"
   } finally { restore(); vi.useRealTimers(); }
 });
 
-it("answers a manual check made after a stall instead of silently dropping it", async () => {
-  // Once preparation stalls the latch never clears in this process, so EVERY
-  // later manual check throws that same error before anything is broadcast. The
-  // renderer only releases its Check button on a status carrying that request's
-  // id, so dropping the error left the button spinning for the whole watchdog.
+it("lets a manual check run normally after a stall, instead of wedging the app", async () => {
+  // The stall used to latch nativePreparationBlocked for the rest of the
+  // process, so every later operation threw before doing anything and the one
+  // guard meant to dedupe a repeat delivery swallowed the user's click, leaving
+  // the Check button spinning. Killing the stalled extraction removes the latch,
+  // so a manual check is just a check again.
   vi.useFakeTimers();
   const restore = stubProcess("darwin", process.execPath);
   const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -4678,9 +4682,11 @@ it("answers a manual check made after a stall instead of silently dropping it", 
     await flushMicrotasks();
 
     const after = statusMessages().slice(before).map((m) => m.payload as { requestId?: string; state: string });
+    // Answered, so the renderer can release the Check button...
     expect(after.some((s) => s.requestId === "req-after-stall")).toBe(true);
-    // ...and the answer is still the calm standing status, not a fresh red error.
-    expect(after.at(-1)?.state).toBe("retry-scheduled");
+    // ...and it really ran rather than being refused by a latch.
+    expect(after.some((s) => s.state === "checking")).toBe(true);
+    expect(module.getUpdateStatus().state).not.toBe("error");
   } finally {
     consoleDebugSpy.mockRestore();
     consoleErrorSpy.mockRestore();
@@ -4730,5 +4736,54 @@ it("carries the retry budget across a restart instead of granting three more", a
     expect(shown.message).not.toContain("attempt 1 of 3");
   } finally {
     consoleErrorSpy.mockRestore();
+  }
+});
+
+it("kills a stalled stage and retries it, three times, then keeps the 15 minute cadence", async () => {
+  // The required state transition: detect the stall, STOP it, retry. It used to
+  // latch instead, so this failure class had no recovery inside the process at
+  // all. Stopping it is what makes a retry possible: while the wedged extraction
+  // lives, Squirrel's command stays executing and refuses every later stage.
+  vi.useFakeTimers();
+  const restore = stubProcess("darwin", process.execPath);
+  const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater({
+      enabled: true, channel: "latest", nightlyAck: true, feature: null,
+    }, { nativeReadyManually: true });
+    const killed = vi.fn(() => 1);
+    module.__setStagingProbesForTesting({ readStagingBytes: () => 1, killStagingTask: killed });
+    await module.startAutoUpdates(stateDir);
+
+    const messages: string[] = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      messages.push((statusMessages().at(-1)?.payload as { message?: string }).message ?? "");
+      // Each stall drops the archive, so the retry is a real download.
+      expect(module.getUpdateStatus().staged).toBeUndefined();
+    }
+
+    expect(messages[0]).toContain("Retrying Download (attempt 1 of 3)");
+    expect(messages[1]).toContain("Retrying Download (attempt 2 of 3)");
+    // Past the bound: the steady state, still calm, still on the 15 minute poll.
+    expect(messages[2]).toContain("Download failed");
+    expect(messages[2]).toContain("15 minutes");
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalled();
+    // The stage is actually STOPPED each time, not just given up on. Without
+    // this the wedged extraction keeps Squirrel's command executing and every
+    // retry below would be refused before it started.
+    expect(killed).toHaveBeenCalledTimes(3);
+
+    // Never latched: automatic download stays armed for the next periodic check.
+    const checksBefore = autoUpdater.checkForUpdates.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    await flushMicrotasks();
+    expect(autoUpdater.checkForUpdates.mock.calls.length).toBeGreaterThan(checksBefore);
+    expect(autoUpdater.autoDownload).toBe(true);
+  } finally {
+    consoleErrorSpy.mockRestore();
+    restore();
+    vi.useRealTimers();
   }
 });
