@@ -518,6 +518,30 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
 	});
 
+	it("shows live provider context usage beside the composer settings", () => {
+		const reported = {
+			...idleSnapshot(chatFixture),
+			usage: {
+				contextUsed: 18_055,
+				contextWindow: 258_400,
+				inputTokens: 18_050,
+				outputTokens: 5,
+				cachedTokens: 0,
+				totalTokens: 18_055,
+			},
+		};
+		const view = render(<ChatWorkspace snapshot={reported} />);
+		const composer = screen.getByLabelText("Message the agent").closest("form") as HTMLElement;
+		const gauge = within(composer).getByRole("progressbar", { name: "Context window used" });
+		expect(gauge).toHaveAttribute("aria-valuetext", "18,055 / 258,400 tokens (7%)");
+		gauge.focus();
+		fireEvent.click(gauge.querySelector("svg") as SVGSVGElement);
+		expect(gauge).toHaveFocus();
+
+		view.rerender(<ChatWorkspace snapshot={{ ...reported, usage: { ...reported.usage, contextUsed: 129_200 } }} />);
+		expect(within(composer).getByRole("progressbar", { name: "Context window used" })).toHaveAttribute("aria-valuetext", "129,200 / 258,400 tokens (50%)");
+	});
+
 	it("refreshes the owning workspace after renaming the primary chat tab", async () => {
 		const user = userEvent.setup();
 		const onSessionRenamed = vi.fn().mockResolvedValue(undefined);
@@ -1777,6 +1801,7 @@ Annotation 1 (adjustment):
 Target: div.badge
 Selector: body > div.badge
 Dimensions: 120×24
+Element text: "New"
 Requested visual changes:
 - Text color: "rgb(0, 0, 0)" → "#d7193f"
 - Background: "transparent" → "#32c873"
@@ -1794,6 +1819,7 @@ Task: Address the feedback below according to its wording. Visual adjustments ar
 		expect(screen.getByText("1 annotation on Google")).toBeInTheDocument();
 		expect(screen.getByText("2 visual changes")).toBeInTheDocument();
 		expect(screen.getByText("div.badge")).toBeInTheDocument();
+		expect(screen.getByText("New")).toBeInTheDocument();
 		expect(screen.getByText("1 reference screenshot")).toBeInTheDocument();
 		expect(screen.queryByText(/body > div\.badge/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Task: Address/)).not.toBeInTheDocument();

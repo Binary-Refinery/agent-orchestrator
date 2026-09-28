@@ -50,6 +50,9 @@ vi.mock("./ProjectSettingsForm", () => ({
 			>
 				Trigger failed save
 			</button>
+			<button type="button" onClick={() => onSaveState?.({ phase: "saved" })}>
+				Complete save
+			</button>
 		</>
 	),
 }));
@@ -85,10 +88,13 @@ describe("SettingsDialog", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: "Start pending save" }));
 		const closeButton = screen.getByRole("button", { name: "Close settings" });
-		expect(closeButton).toBeDisabled();
+		await userEvent.click(closeButton);
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 
 		await userEvent.keyboard("{Escape}");
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		await userEvent.click(screen.getByRole("button", { name: "Complete save" }));
+		expect(useUiStore.getState().settingsModal).toBeNull();
 	});
 
 	it("renders visible error message when project settings save fails", async () => {
@@ -109,6 +115,30 @@ describe("SettingsDialog", () => {
 			"/api/v1/agents/codex/accounts/ensure",
 			{ body: { accountIds: [], includeUsage: true, forceAuthentication: true, forceDeviceReconciliation: true } },
 		));
+	});
+
+	it("keeps the settings surface above its blurred backdrop", async () => {
+		useUiStore.getState().openGlobalSettings("mobile");
+		renderSettingsDialog();
+
+		const overlay = screen.getByTestId("settings-dialog-overlay");
+		const dialog = await screen.findByRole("dialog");
+		expect(overlay).toHaveClass("dialog-overlay");
+		// Same layer as the scrim, not above it: the content portals after its
+		// overlay, so DOM order wins the tie. Going one higher (the #5873/#5944
+		// z-[calc(var(--z-overlay)+1)]) buried every ConfirmDialog opened from
+		// inside Settings — including the confirm-gated Cloud toggle. The e2e
+		// spec settings-cloud-confirm-stacking.spec.ts pins the full invariant.
+		expect(dialog).toHaveClass("z-overlay");
+		expect(dialog).not.toHaveClass("z-[calc(var(--z-overlay)+1)]");
+	});
+
+	it("does not apply a backdrop filter behind settings content", async () => {
+		useUiStore.getState().openGlobalSettings("mobile");
+		renderSettingsDialog();
+
+		const overlay = screen.getByTestId("settings-dialog-overlay");
+		expect(overlay.style.backdropFilter).toBe("none");
 	});
 
 	it("opens Harness and forwards its agent focus target without redirecting to Codex Accounts", async () => {

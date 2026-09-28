@@ -27,6 +27,17 @@ func TestModelCommandUsesProjectWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestNormalizeShowsConcreteNameForDefaultCatalogModel(t *testing.T) {
+	got := normalize([]ports.AgentModelInfo{
+		{ID: "opus", Label: "Opus (default)"},
+		{ID: "sonnet", Label: "Default (recommended)"},
+	})
+	if len(got) != 2 || got[0].ID != "opus" || got[0].Label != "Opus" || !got[0].IsDefault ||
+		got[1].ID != "sonnet" || got[1].Label != "sonnet" || !got[1].IsDefault {
+		t.Fatalf("normalized models = %#v", got)
+	}
+}
+
 func environmentContains(env []string, wanted string) bool {
 	for _, item := range env {
 		if item == wanted {
@@ -178,6 +189,7 @@ func TestOMPAndHelpBackedAgentsUseDocumentedDiscoveryCommands(t *testing.T) {
 		{agent: "copilot", want: []string{"help", "config"}},
 		{agent: "droid", want: []string{"exec", "--help"}},
 		{agent: "crush", want: []string{"models"}},
+		{agent: "fx", want: []string{"models", "--json"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -192,6 +204,44 @@ func TestOMPAndHelpBackedAgentsUseDocumentedDiscoveryCommands(t *testing.T) {
 				t.Fatalf("%s discovery parser is nil", tc.agent)
 			}
 		})
+	}
+}
+
+func TestParseFXModelsUsesOnlyIDsAndPreservesThem(t *testing.T) {
+	got, err := parseFXModels([]byte(`{
+		"ids": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.6-sol-high"],
+		"models": [{"id": "must-not-be-used"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "anthropic/claude-sonnet-4-6", Label: "anthropic/claude-sonnet-4-6"},
+		{ID: "openai/gpt-5.6-sol-high", Label: "openai/gpt-5.6-sol-high"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseFXModelsPreservesEveryNonEmptyIDExactly(t *testing.T) {
+	got, err := parseFXModels([]byte(`{"ids":["  padded/model  ","","   ","plain"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "  padded/model  ", Label: "  padded/model  "},
+		{ID: "   ", Label: "   "},
+		{ID: "plain", Label: "plain"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want exact non-empty IDs %#v", got, want)
+	}
+}
+
+func TestParseFXModelsRejectsMalformedJSON(t *testing.T) {
+	if _, err := parseFXModels([]byte(`{"ids":`)); err == nil {
+		t.Fatal("parseFXModels error = nil, want malformed JSON error")
 	}
 }
 
@@ -333,6 +383,7 @@ func TestCustomModelEntryPolicy(t *testing.T) {
 		{agent: "kimchi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "prime-agent", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "autohand", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "fx", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 	}
 
 	for _, tc := range tests {

@@ -161,6 +161,12 @@ var shippedMigrations = map[int64]string{
 	156: "0156_session_provisioning.sql",
 	157: "0157_task_preparations.sql",
 	158: "0158_prepared_worktree_creation_sha.sql",
+	159: "0159_pr_discussion_comment_count.sql",
+	160: "0160_pr_discussion_commenters.sql",
+	161: "0161_automations.sql",
+	162: "0162_drop_pr_discussion_columns.sql",
+	163: "0163_allow_fx_harness.sql",
+	164: "0164_allow_gemini_harness.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
