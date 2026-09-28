@@ -107,7 +107,7 @@ describe("terminalCopyOnSelect flag", () => {
 	it("reads a stored opt-out back at startup", async () => {
 		window.localStorage.setItem("ao.terminalCopyOnSelect", "false");
 		expect((await bootStore()).getState().terminalCopyOnSelect).toBe(false);
- 	});
+	});
 });
 
 describe("onboarding handoff", () => {
