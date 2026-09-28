@@ -3920,13 +3920,11 @@ describe("staged install rejection", () => {
       "code failed to satisfy specified code requirement(s)",
   );
 
-  it("keeps the verified download on a first failure and re-stages instead", async () => {
-    // Squirrel verifies the copy it extracted, in-process, before ShipIt exists.
-    // A rejection therefore indicts the EXTRACTION, not the zip — which
-    // electron-updater already checked against the feed sha512. Observed on a
-    // real failure: the cached zip was byte-identical to the feed and the next
-    // attempt extracted it cleanly. Purging here would force a 176 MB
-    // re-download to fix a bad untar.
+  it("purges the cached archive on the very first failure", async () => {
+    // Every retry must be a real download. electron-updater re-serves a cached
+    // file on existence alone, so keeping the archive made the next attempt hand
+    // Squirrel byte-identical input and fail identically. Re-preparing the cached
+    // copy was cheaper, but it made the retry the user is promised impossible.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -3937,20 +3935,19 @@ describe("staged install rejection", () => {
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
     updaterEvents.get("error")?.(rejection);
 
+    // Deferred onto the operation chain, so it has not run at the instant the
+    // rejection is handled; draining one operation proves it did.
     expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
-    // Still disarmed: that copy cannot install, and leaving it staged would
-    // promise a restart that fails. This also re-enables auto-download, which
-    // is what drives the re-extraction.
-    expect(module.getUpdateStatus().staged).toBeUndefined();
+    await module.checkForUpdatesNow(stateDir);
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
     // A recoverable first failure: reported calmly, not as a red error.
-    expect(statusMessages().at(-1)?.payload).toMatchObject({
-      state: "retry-scheduled",
-      message: expect.stringContaining("Downloading it again and retrying in about 15 minutes"),
-    });
+    expect(statusMessages().map((m) => (m.payload as { message?: string }).message)).toContainEqual(
+      expect.stringContaining("Retrying Download (attempt 1 of 3)"),
+    );
     consoleErrorSpy.mockRestore();
   });
 
-  it("discards the download from the second failure so the retry re-downloads", async () => {
+  it("purges again on a repeat failure so every retry re-downloads", async () => {
     // A re-extraction failing too is the first real evidence the bytes are
     // suspect, so the zip goes and the NEXT attempt is a genuine download.
     // Without this the "retrying" the user is promised replays identical bytes.
@@ -3978,7 +3975,7 @@ describe("staged install rejection", () => {
     // the queue behind the cleanup, which is the property that stops a download
     // starting into a pending directory that is still being emptied.
     await module.checkForUpdatesNow(stateDir);
-    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(2);
     consoleErrorSpy.mockRestore();
   });
 
@@ -3995,7 +3992,7 @@ describe("staged install rejection", () => {
     }
   };
 
-  it("stops automatically re-downloading a build that used up its retries", async () => {
+  it("keeps re-downloading on the ordinary cadence after the attempts are used up", async () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -4006,7 +4003,9 @@ describe("staged install rejection", () => {
 
     await module.startAutoUpdates(stateDir);
 
-    expect(autoUpdater.autoDownload).toBe(false);
+    // Never latches. The contract for the settled state is a plain 15 minute
+    // retry, so automatic download stays armed rather than being suppressed.
+    expect(autoUpdater.autoDownload).toBe(true);
     consoleErrorSpy.mockRestore();
   });
 
@@ -4114,7 +4113,7 @@ describe("staged install rejection", () => {
     expect(statusMessages().at(-1)?.payload).toEqual(afterFirstDelivery);
     expect(statusMessages().at(-1)?.payload).toMatchObject({
       state: "retry-scheduled",
-      message: expect.stringContaining("Downloading it again and retrying in about 15 minutes"),
+      message: expect.stringContaining("Retrying Download"),
     });
     // The repeat must not be miscounted as a genuine second failure, which
     // would discard a download that has only actually failed once.
@@ -4362,53 +4361,33 @@ describe("staged install rejection", () => {
     }
   });
 
-  it("keeps retrying on a slower cadence instead of giving up", async () => {
-    // The old behaviour latched after the bound and told the user to go and
-    // download the app by hand. A transient cause (a truncated CDN response, a
-    // half-written cache) then had no automatic way back. Now it only PACES:
-    // auto-download stays off inside the backoff window and comes back after it.
-    // Pin the clock: the backoff is measured with Date.now(), so a real clock
-    // makes the two windows below depend on how long the suite took to get here.
+  it("retries on the real 15 minute periodic check after the attempts are used up", async () => {
+    // Driven through the scheduler's own callback rather than by calling
+    // startAutoUpdates again with the clock moved: the contract is that the
+    // ORDINARY polling cadence keeps running, and only firing the real timer
+    // proves the periodic path still arms a download.
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     try {
-      // Automatic updates explicitly on: autoDownload is gated on the setting, so
-      // relying on the ambient default makes the two assertions below depend on
-      // whatever ran before this file.
       const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater({
         enabled: true, channel: "latest", nightlyAck: true, feature: null,
       });
-
-      await module.checkForUpdatesNow(stateDir);
+      await module.startAutoUpdates(stateDir);
       failUntilExhausted(updaterEvents);
 
       const shown = statusMessages().at(-1)?.payload as { state: string; message?: string };
       expect(shown.state).toBe("retry-scheduled");
-      expect(shown.message).toContain("keep trying in the background");
-      // The manual routes are offered, but never as the only way out.
-      expect(shown.message).toContain("check for updates again");
+      expect(shown.message).toContain("Download failed");
+      expect(shown.message).toContain("15 minutes");
 
-      // The clock is moved WITHOUT running timers. advanceTimersByTimeAsync also
-      // fires the periodic check, which sets automaticCheckInFlight and makes the
-      // startAutoUpdates below an early-returning no-op about half the time,
-      // leaving autoDownload at its stale value. The backoff is measured from
-      // Date.now(), so moving the clock is all this needs.
-      const base = Date.now();
-
-      // Inside the backoff window: still paused, so the app is not pulling the
-      // archive again every 15 minutes.
-      vi.setSystemTime(base + 30 * 60_000);
-      await module.startAutoUpdates(stateDir);
+      const checksBefore = autoUpdater.checkForUpdates.mock.calls.length;
+      // The scheduler's own 15 minute tick, not a hand-rolled call.
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
       await flushMicrotasks();
-      expect(autoUpdater.autoDownload).toBe(false);
 
-      // Past it: the retry resumes on its own, with no user action at all.
-      vi.setSystemTime(base + 61 * 60_000);
-      await module.startAutoUpdates(stateDir);
-      await flushMicrotasks();
+      expect(autoUpdater.checkForUpdates.mock.calls.length).toBeGreaterThan(checksBefore);
       expect(autoUpdater.autoDownload).toBe(true);
     } finally {
       consoleErrorSpy.mockRestore();
@@ -4740,9 +4719,15 @@ it("carries the retry budget across a restart instead of granting three more", a
     // A brand new process: fresh module registry, same state dir.
     const second = await importAutoUpdater(enabled);
     await second.module.startAutoUpdates(stateDir);
+    second.updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    second.updaterEvents.get("error")?.(squirrelRejection);
 
-    // The budget survived, so the restart does not re-arm the download.
-    expect(second.autoUpdater.autoDownload).toBe(false);
+    // The count carried over, so this reads as the fourth failure and stays in
+    // the settled state. Without persistence it would restart at "attempt 1 of
+    // 3" and the build would look freshly retriable on every relaunch.
+    const shown = second.statusMessages().at(-1)?.payload as { message?: string };
+    expect(shown.message).toContain("Download failed");
+    expect(shown.message).not.toContain("attempt 1 of 3");
   } finally {
     consoleErrorSpy.mockRestore();
   }

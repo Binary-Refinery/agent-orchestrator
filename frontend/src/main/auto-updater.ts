@@ -284,16 +284,17 @@ const STAGE_STALL_MESSAGE = "AO couldn't finish preparing the update, so nothing
  * is a diagnostic one: in both cases the remedy is the same, AO fetches the build
  * again, and neither is something the user can act on. So the user is told what
  * AO is doing, not which internal stage produced it.
+ *
+ * Never an error state and never red, at any attempt count. The first attempts
+ * say AO is retrying now; after that it settles into the steady line, which
+ * still promises the same 15 minute cadence because that is what actually runs.
  */
-function stageRetryMessage(kind: StageFailureKind, attempt: number, nextDelay: string): string {
-  const cause =
-    kind === "verification"
-      ? "AO couldn't verify the downloaded update"
-      : "AO couldn't finish preparing the update";
+function stageRetryMessage(attempt: number): string {
   return attempt < MAX_FAST_INSTALL_ATTEMPTS
-    ? `${cause}. Downloading it again and retrying in about ${nextDelay} (attempt ${attempt} of ${MAX_FAST_INSTALL_ATTEMPTS}).`
-    : `${cause} after ${MAX_FAST_INSTALL_ATTEMPTS} attempts. AO will keep trying in the background, about every ${nextDelay}. You can also check for updates again, or install the latest build manually from GitHub Releases.`;
+    ? `Retrying Download (attempt ${attempt} of ${MAX_FAST_INSTALL_ATTEMPTS}).`
+    : "Download failed. AO will try again in about 15 minutes.";
 }
+
 let nativePreparationBlocked: Error | undefined;
 let rejectNativeOperation: ((error: Error) => void) | undefined;
 let nativePreparation: { version: string; promise: Promise<void>; finish(error?: Error): void } | undefined;
@@ -1669,52 +1670,36 @@ let installRejections:
 let handledInstallRejection: { version: string | undefined } | undefined;
 
 /**
- * How many times one build is retried on the normal automatic cadence before
- * AO slows down.
+ * How many automatic attempts a build gets before AO stops calling them retries
+ * and settles into the steady "download failed, will try again" state.
  *
- * Three fast attempts, each on the ~15 minute automatic check:
- *   1. re-prepare from the archive already in the cache. The archive matched the
- *      feed's sha512 when it was fetched, so a bad EXTRACTED copy is the cheaper
- *      and more likely explanation, and this costs no bandwidth.
- *   2. cache cleared first, so this one is a genuine fresh download.
- *   3. same, one more real download.
+ * Every attempt re-downloads. The cached archive is purged on each failure,
+ * including the first, so a retry can never hand Squirrel the bytes that just
+ * failed. Re-preparing the cached copy once was cheaper, and is often enough
+ * when the extraction rather than the archive was at fault, but "retrying" has
+ * to mean a fresh download or the word is a lie to the user.
  *
- * Retries do not stop after that, they just slow to RETRY_BACKOFF_MS. Stopping
- * outright was the old behaviour and it stranded users on a dead end whenever the
- * cause was transient (a truncated CDN response, a half-written cache). Retrying
- * forever at 15 minutes was the other extreme: a permanently bad build would pull
- * the full archive four times an hour for as long as the app stayed open. The
- * backoff keeps recovery automatic without that cost.
+ * Nothing stops after three. The count only decides what the user is told: the
+ * first three read as an active retry, and after that AO keeps trying quietly on
+ * the ordinary 15 minute cadence for as long as it is running.
  */
 const MAX_FAST_INSTALL_ATTEMPTS = 3;
 
-/** Spacing between attempts once the fast ones are spent. */
-const RETRY_BACKOFF_MS = 60 * 60 * 1000;
-
-const RETRY_BACKOFF_LABEL = "hour";
-
-/** How long until the next attempt, as the user-facing phrase. */
-function nextAttemptLabel(attempt: number): string {
-  return attempt < MAX_FAST_INSTALL_ATTEMPTS ? "15 minutes" : RETRY_BACKOFF_LABEL;
-}
-
 /**
- * True while a build that keeps failing should NOT be downloaded again yet.
+ * Automatic recovery is never paused.
  *
- * Checked before an automatic check arms auto-download, which is the only place
- * the loop can be paced: the download is started by checkForUpdates() itself,
- * before the offered version is known, so this cannot discriminate by version at
- * that point. Cleared as soon as the feed offers something else, or the user asks
- * explicitly — see forgetInstallRejections.
+ * Kept as a named predicate rather than deleted at the call site because the
+ * question "may an automatic check arm a download for a build that keeps
+ * failing?" is a real one, and the answer being an unconditional yes is a
+ * deliberate decision worth reading at the call site.
  *
- * Before the fast attempts are spent this is always false, so recovery runs at
- * full speed. After that it gates on elapsed time rather than latching, which is
- * what makes the retries continue instead of ending.
+ * The cost is real and accepted: a build that can never install is re-fetched on
+ * every 15 minute check for as long as the app stays open. A backoff would cut
+ * that, but it also delays recovery from the far more common transient cause,
+ * and the contract for this state is a plain 15 minute retry.
  */
-function automaticRecoveryPaused(now = Date.now()): boolean {
-  if (installRejections === undefined) return false;
-  if (installRejections.count < MAX_FAST_INSTALL_ATTEMPTS) return false;
-  return now - installRejections.lastAt < RETRY_BACKOFF_MS;
+function automaticRecoveryPaused(): boolean {
+  return false;
 }
 
 /**
@@ -2158,23 +2143,21 @@ function wireUpdaterEvents(): void {
       const failures = recordInstallRejection(stagedVersion);
       handledInstallRejection = { version: stagedVersion };
       discardStagedBuild();
-      // Attempt 1 re-prepares the cached archive, which is free and fixes the
-      // likelier cause. From attempt 2 the archive is itself suspect, so it is
-      // purged and the next check performs a genuine re-download. Without this
-      // the "retrying" the user is promised would hand Squirrel byte-identical
-      // input every time and fail identically every time.
+      // Purged on EVERY failure, including the first. electron-updater re-serves
+      // a cached file on existence alone, so without this the next attempt hands
+      // Squirrel byte-identical input and fails identically: a "retry" that
+      // cannot possibly succeed. Re-preparing the cached copy once was cheaper,
+      // but it made the promise in the status line untrue.
       //
       // Queued on the operation chain rather than fired and forgotten:
       // discardStagedBuild() re-enables auto-download, so the next check can
       // start a download into the very directory this is emptying.
-      if (failures >= 2) {
-        void runSerializedUpdaterOperation(
-          "cache-clear",
-          clearPendingUpdateCache,
-        ).catch(() => undefined);
-      }
+      void runSerializedUpdaterOperation(
+        "cache-clear",
+        clearPendingUpdateCache,
+      ).catch(() => undefined);
       console.error(
-        `staged update ${kind === "stall" ? "stalled while preparing" : "rejected at install time"} (attempt ${failures}${failures >= MAX_FAST_INSTALL_ATTEMPTS ? `, backing off to one attempt per ${RETRY_BACKOFF_LABEL}` : ` of ${MAX_FAST_INSTALL_ATTEMPTS}`}${failures >= 2 ? ", discarding cached download so the next attempt re-downloads" : ""}):`,
+        `staged update ${kind === "stall" ? "stalled while preparing" : "rejected at install time"} (attempt ${failures}, discarding cached download so the next attempt re-downloads):`,
         err,
       );
       // Never red, at any attempt count. AO is still recovering on its own, and a
@@ -2185,7 +2168,7 @@ function wireUpdaterEvents(): void {
       broadcast(
         withActiveRequest({
           state: "retry-scheduled",
-          message: stageRetryMessage(kind, failures, nextAttemptLabel(failures)),
+          message: stageRetryMessage(failures),
         }),
       );
       return;
