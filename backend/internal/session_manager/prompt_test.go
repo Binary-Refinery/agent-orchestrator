@@ -150,6 +150,8 @@ func TestBuildSystemPrompt_WorkerDoesNotClaimReviewOnlyPR(t *testing.T) {
 		},
 	})
 	for _, want := range []string{
+		"other explicitly authorized work that continues or changes an existing PR/MR",
+		"other explicitly authorized work that continues or changes an existing PR",
 		"A review-only task is not PR/MR continuation",
 		"Do not claim or attach the PR/MR for review-only work",
 		"claiming mutates AO ownership metadata",
