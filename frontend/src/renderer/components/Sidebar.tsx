@@ -436,9 +436,12 @@ type SidebarProps = {
 	workspaces: WorkspaceSummary[];
 	remoteHosts?: RemoteHost[];
 	onStartRemoteHost?: (hostId: string) => void;
+	onAddRemoteProject?: (hostId: string) => void;
+	onRemoveRemoteProject?: (hostId: string, projectId: string) => Promise<void>;
 	onRetryRemoteHosts?: () => void;
 	remoteWorkspaces?: WorkspaceSummary[];
 	remoteFailedHostIds?: string[];
+	remoteLoadedProjectHostIds?: string[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
@@ -540,9 +543,12 @@ export function Sidebar({
 	workspaces,
 	remoteHosts = [],
 	onStartRemoteHost = () => undefined,
+	onAddRemoteProject = () => undefined,
+	onRemoveRemoteProject = async () => undefined,
 	onRetryRemoteHosts = () => undefined,
 	remoteWorkspaces = [],
 	remoteFailedHostIds = [],
+	remoteLoadedProjectHostIds = [],
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -974,7 +980,7 @@ export function Sidebar({
 								existingProjectPaths={existingProjectPaths}
 								hideTrigger={workspaces.length === 0 && remoteHosts.length === 0}
 								remoteHosts={remoteHosts}
-								onStartRemoteHost={onStartRemoteHost}
+								onAddRemoteProject={onAddRemoteProject}
 								onCloneProject={onCloneProject}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
@@ -1031,10 +1037,13 @@ export function Sidebar({
 											hosts={remoteHosts}
 											workspaces={remoteWorkspaces}
 											failedHostIds={remoteFailedHostIds}
+											loadedProjectHostIds={remoteLoadedProjectHostIds}
 											activeHostId={selection.activeRemoteHostId}
 											activeProjectId={selection.activeRemoteProjectId}
 											activeSessionId={selection.activeRemoteSessionId}
 											onStart={onStartRemoteHost}
+											onAddProject={onAddRemoteProject}
+											onRemoveProject={onRemoveRemoteProject}
 											onRetry={onRetryRemoteHosts}
 											onOpenSession={(hostId, projectId, sessionId) => {
 												void remoteNavigate(sessionNavigateTarget(projectId, sessionId, hostId));
@@ -3038,12 +3047,12 @@ function CreateProjectButton({
 	existingProjectPaths,
 	hideTrigger = false,
 	remoteHosts,
-	onStartRemoteHost,
+	onAddRemoteProject,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	onOpenExistingProject,
-}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject" | "remoteHosts" | "onStartRemoteHost"> & {
+}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject" | "remoteHosts" | "onAddRemoteProject"> & {
 	existingProjectPaths: readonly string[];
 	hideTrigger?: boolean;
 	onOpenExistingProject: (path: string) => void | Promise<void>;
@@ -3062,7 +3071,7 @@ function CreateProjectButton({
 			existingProjectPaths={existingProjectPaths}
 			mode="choose"
 			remoteHosts={remoteHosts}
-			onStartRemoteHost={onStartRemoteHost}
+			onAddRemoteProject={onAddRemoteProject}
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
 			onCreateStandaloneAgent={() => requestNewTask(STANDALONE_WORKSPACE_ID)}

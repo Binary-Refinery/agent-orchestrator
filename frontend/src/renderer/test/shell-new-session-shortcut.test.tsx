@@ -16,10 +16,12 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		openFolderPathListener: undefined as ((path: string) => void) | undefined,
-		routeParams: {} as { projectId?: string; sessionId?: string },
+		routeParams: {} as { hostId?: string; projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
 		matchRouteTarget: null as string | null,
 		workspaces: [] as WorkspaceSummary[],
+		remoteWorkspaces: [] as WorkspaceSummary[],
+		removeRemoteProject: undefined as ((hostId: string, projectId: string) => Promise<void>) | undefined,
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
 			dataUpdatedAt: 0,
@@ -100,6 +102,7 @@ const shellMocks = vi.hoisted(() => {
 			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
+		remoteDelete: vi.fn(),
 		state,
 	};
 });
@@ -150,11 +153,17 @@ vi.mock("../lib/bridge", () => ({
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
-	useRemoteWorkspaces: () => ({ data: [] }),
+	useRemoteWorkspaces: () => ({ data: shellMocks.state.remoteWorkspaces, loadedProjectHostIds: [] }),
 	useWorkspaceTraySessions: () => ({ data: [] }),
 	workspaceQueryKey: ["workspaces"],
 	remoteWorkspaceQueryKey: (hostId: string) => ["remote-workspaces", hostId],
 	workspaceQueryOptions: {},
+}));
+
+vi.mock("../lib/host-clients", () => ({
+	clientForHost: () => ({ DELETE: shellMocks.remoteDelete }),
+	connectedHosts: () => [],
+	subscribeConnectedHosts: () => () => undefined,
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
@@ -271,7 +280,8 @@ vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
 		SIDEBAR_DEFAULT_WIDTH: 240,
-		Sidebar: ({ topbarOffset }: { topbarOffset?: string }) => {
+		Sidebar: ({ topbarOffset, onRemoveRemoteProject }: { topbarOffset?: string; onRemoveRemoteProject: (hostId: string, projectId: string) => Promise<void> }) => {
+			shellMocks.state.removeRemoteProject = onRemoveRemoteProject;
 			const nonce = useStore((state) => state.createProjectNonce);
 			const folderDropRequest = useStore((state) => state.folderDropRequest);
 			return (
@@ -358,6 +368,9 @@ beforeEach(() => {
 	shellMocks.state.routeSearch = {};
 	shellMocks.state.matchRouteTarget = null;
 	shellMocks.state.workspaces = workspaces;
+	shellMocks.state.remoteWorkspaces = [];
+	shellMocks.state.removeRemoteProject = undefined;
+	shellMocks.remoteDelete.mockReset().mockResolvedValue({});
 	shellMocks.state.workspaceQuery = {
 		data: workspaces,
 		dataUpdatedAt: 0,
@@ -383,6 +396,20 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("leaves a remote session only when removing its project on the same host", async () => {
+		shellMocks.state.routeParams = { hostId: "box-a", sessionId: "same-session" };
+		shellMocks.state.remoteWorkspaces = [
+			{ hostId: "box-a", id: "project-a", sessions: [{ id: "same-session" }] },
+			{ hostId: "box-b", id: "project-b", sessions: [{ id: "same-session" }] },
+		] as WorkspaceSummary[];
+		await renderShell();
+
+		await shellMocks.state.removeRemoteProject?.("box-b", "project-b");
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
+		await shellMocks.state.removeRemoteProject?.("box-a", "project-a");
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/" });
+	});
+
 	it("routes duplicate-path project adds to the registered project and shows a toast", async () => {
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		vi.mocked(apiClient.POST).mockResolvedValueOnce({

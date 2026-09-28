@@ -60,7 +60,9 @@ import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 import * as Dialog from "@radix-ui/react-dialog";
 import { RemoteSpawnSession } from "../components/RemoteSpawnSession";
+import { RemoteAddProjectDialog } from "../components/RemoteAddProjectDialog";
 import { remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { clientForHost } from "../lib/host-clients";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -184,8 +186,9 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { hosts: remoteHosts, refresh: refreshRemoteHosts } = useRemoteHosts();
-	const { data: remoteWorkspaces, failedHostIds: remoteFailedHostIds } = useRemoteWorkspaces();
+	const { data: remoteWorkspaces, failedHostIds: remoteFailedHostIds, loadedProjectHostIds } = useRemoteWorkspaces();
 	const [remoteStartHostId, setRemoteStartHostId] = useState<string | null>(null);
+	const [remoteAddProjectHostId, setRemoteAddProjectHostId] = useState<string | null>(null);
 	// Global shortcut listeners need the latest workspace list, but recreating
 	// those subscriptions for every streamed activity update is avoidable.
 	const workspacesRef = useRef(workspaces);
@@ -728,6 +731,20 @@ function ShellLayout() {
 		},
 		[cloudClient, cloudOrg?.id, navigate, queryClient, updateWorkspaces, workspaces],
 	);
+	const removeRemoteProject = useCallback(async (hostId: string, projectId: string) => {
+		const selectedProject = routeParams.hostId === hostId && (
+			routeParams.projectId === projectId || remoteWorkspaces.some((workspace) =>
+				workspace.hostId === hostId && workspace.id === projectId &&
+				workspace.sessions.some((session) => session.id === routeParams.sessionId),
+			)
+		);
+		const { error } = await clientForHost(hostId).DELETE("/api/v1/projects/{id}", {
+			params: { path: { id: projectId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error));
+		void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(hostId) });
+		if (selectedProject) void navigate({ to: "/" });
+	}, [navigate, queryClient, remoteWorkspaces, routeParams.hostId, routeParams.projectId, routeParams.sessionId]);
 
 	const restartOrchestrator = useCallback(
 		async (projectId: string, mode?: "chat" | "tui", approvalMode?: "bypass-permissions") => {
@@ -1022,6 +1039,14 @@ function ShellLayout() {
 					</div>
 				) : null}
 				<GlobalNewTaskDialog />
+				{remoteAddProjectHostId && <RemoteAddProjectDialog
+					key={remoteAddProjectHostId}
+					hostId={remoteAddProjectHostId}
+					hostLabel={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.label ?? remoteAddProjectHostId}
+					connected={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.status === "connected"}
+					onCreated={() => { void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteAddProjectHostId) }); }}
+					onOpenChange={(open) => { if (!open) setRemoteAddProjectHostId(null); }}
+				/>}
 				<Dialog.Root open={remoteStartHostId !== null} onOpenChange={(open) => { if (!open) setRemoteStartHostId(null); }}>
 					<Dialog.Portal>
 						<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
@@ -1118,11 +1143,14 @@ function ShellLayout() {
 						workspaces={workspaces}
 						remoteHosts={remoteHosts}
 						onStartRemoteHost={setRemoteStartHostId}
+						onAddRemoteProject={setRemoteAddProjectHostId}
+						onRemoveRemoteProject={removeRemoteProject}
 						onRetryRemoteHosts={() => {
 							void refreshRemoteHosts();
 							void queryClient.invalidateQueries({ queryKey: ["remote-workspaces"] });
 						}}
 						remoteWorkspaces={remoteWorkspaces}
+						remoteLoadedProjectHostIds={loadedProjectHostIds}
 						remoteFailedHostIds={remoteFailedHostIds}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>

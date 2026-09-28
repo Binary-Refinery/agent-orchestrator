@@ -134,6 +134,8 @@ function toWorkspaceSession(
 
 export const workspaceQueryKey = ["workspaces"] as const;
 export const remoteWorkspaceQueryKey = (hostId: string) => ["remote-workspaces", hostId] as const;
+const remoteProjectsQueryKey = (hostId: string) => [...remoteWorkspaceQueryKey(hostId), "projects"] as const;
+const remoteSessionsQueryKey = (hostId: string) => [...remoteWorkspaceQueryKey(hostId), "sessions"] as const;
 export function workspaceStatusesChecking(workspaces: WorkspaceSummary[] | undefined): boolean {
 	return workspaces?.some((workspace) => workspace.sessions.some((session) => session.statusReadiness === "checking")) ?? false;
 }
@@ -262,15 +264,24 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return applyOptimisticSessionKills(workspaces) ?? workspaces;
 }
 
-async function fetchRemoteWorkspaces(hostId: string): Promise<WorkspaceSummary[]> {
-	const client = clientForHost(hostId);
-	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] = await Promise.all([
-		client.GET("/api/v1/projects"),
-		client.GET("/api/v1/sessions"),
-	]);
-	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
-	const sessions = sessionsData?.sessions ?? [];
-	const projects: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => ({
+async function fetchRemoteProjects(hostId: string) {
+	const { data, error } = await clientForHost(hostId).GET("/api/v1/projects");
+	if (error) throw error;
+	return data?.projects ?? [];
+}
+
+async function fetchRemoteSessions(hostId: string) {
+	const { data, error } = await clientForHost(hostId).GET("/api/v1/sessions");
+	if (error) throw error;
+	return data?.sessions ?? [];
+}
+
+function toRemoteWorkspaces(
+	hostId: string,
+	remoteProjects: Awaited<ReturnType<typeof fetchRemoteProjects>>,
+	sessions: Awaited<ReturnType<typeof fetchRemoteSessions>>,
+): WorkspaceSummary[] {
+	const projects: WorkspaceSummary[] = remoteProjects.map((project) => ({
 		hostId,
 		id: project.id,
 		name: project.name,
@@ -296,6 +307,11 @@ async function fetchRemoteWorkspaces(hostId: string): Promise<WorkspaceSummary[]
 		sessions: standalone,
 	});
 	return projects;
+}
+
+async function fetchRemoteWorkspaces(hostId: string): Promise<WorkspaceSummary[]> {
+	const [projects, sessions] = await Promise.all([fetchRemoteProjects(hostId), fetchRemoteSessions(hostId)]);
+	return toRemoteWorkspaces(hostId, projects, sessions);
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
@@ -424,18 +440,30 @@ export function useCloudSessionsQuery(options: WorkspaceSubscriptionOptions = {}
 
 export function useRemoteWorkspaces(options: WorkspaceSubscriptionOptions = {}) {
 	const connected = useSyncExternalStore(subscribeConnectedHosts, connectedHosts, connectedHosts);
-	const remote = useQueries({
+	const projects = useQueries({
 		queries: connected.map((hostId) => ({
-			queryKey: remoteWorkspaceQueryKey(hostId),
-			queryFn: () => fetchRemoteWorkspaces(hostId),
+			queryKey: remoteProjectsQueryKey(hostId),
+			queryFn: () => fetchRemoteProjects(hostId),
+			retry: 1,
+			refetchInterval: 15_000,
+			subscribed: options.subscribed,
+		})),
+	});
+	const sessions = useQueries({
+		queries: connected.map((hostId) => ({
+			queryKey: remoteSessionsQueryKey(hostId),
+			queryFn: () => fetchRemoteSessions(hostId),
 			retry: 1,
 			refetchInterval: 15_000,
 			subscribed: options.subscribed,
 		})),
 	});
 	return {
-		data: remote.flatMap((query) => query.isError ? [] : query.data ?? []),
-		failedHostIds: connected.filter((_, index) => remote[index]?.isError),
+		data: connected.flatMap((hostId, index) => projects[index]?.data
+			? toRemoteWorkspaces(hostId, projects[index].data, sessions[index]?.data ?? [])
+			: []),
+		loadedProjectHostIds: connected.filter((_, index) => projects[index]?.data !== undefined),
+		failedHostIds: connected.filter((_, index) => projects[index]?.isError || sessions[index]?.isError),
 	};
 }
 

@@ -299,6 +299,8 @@ function renderSidebar({
 	remoteHosts = [],
 	remoteWorkspaces = [],
 	onStartRemoteHost = vi.fn(),
+	onAddRemoteProject = vi.fn(),
+	onRemoveRemoteProject = vi.fn().mockResolvedValue(undefined),
 	initialOpen = true,
 	topbarOffset = "toolbar",
 	expandedProjectIds,
@@ -313,6 +315,8 @@ function renderSidebar({
 	remoteHosts?: RemoteHost[];
 	remoteWorkspaces?: WorkspaceSummary[];
 	onStartRemoteHost?: (hostId: string) => void;
+	onAddRemoteProject?: (hostId: string) => void;
+	onRemoveRemoteProject?: (hostId: string, projectId: string) => Promise<void>;
 	initialOpen?: boolean;
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
@@ -347,6 +351,8 @@ function renderSidebar({
 						remoteHosts={remoteHosts}
 						remoteWorkspaces={remoteWorkspaces}
 						onStartRemoteHost={onStartRemoteHost}
+						onAddRemoteProject={onAddRemoteProject}
+						onRemoveRemoteProject={onRemoveRemoteProject}
 					/>
 				</SidebarProvider>
 			</TooltipProvider>
@@ -496,7 +502,7 @@ afterEach(() => {
 
 describe("Sidebar", () => {
 	it("shows the Projects plus button with host choices when there are no local projects", async () => {
-		const onStartRemoteHost = vi.fn();
+		const onAddRemoteProject = vi.fn();
 		const user = userEvent.setup();
 		renderSidebar({
 			workspaces: [],
@@ -504,14 +510,14 @@ describe("Sidebar", () => {
 				{ hostId: "box-a", label: "Host A", url: "http://box-a:3011", status: "connected" },
 				{ hostId: "box-b", label: "Host B", url: "http://box-b:3011", status: "connected" },
 			],
-			onStartRemoteHost,
+			onAddRemoteProject,
 		});
 
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		const chooser = await screen.findByRole("dialog");
-		expect(within(chooser).getByRole("button", { name: "Start on Host A" })).toBeInTheDocument();
-		await user.click(within(chooser).getByRole("button", { name: "Start on Host B" }));
-		expect(onStartRemoteHost).toHaveBeenCalledWith("box-b");
+		expect(within(chooser).getByRole("button", { name: "Add project on Host A" })).toBeInTheDocument();
+		await user.click(within(chooser).getByRole("button", { name: "Add project on Host B" }));
+		expect(onAddRemoteProject).toHaveBeenCalledWith("box-b");
 	});
 
 	it("lists remote projects beside local and Cloud projects with host-qualified sessions", () => {

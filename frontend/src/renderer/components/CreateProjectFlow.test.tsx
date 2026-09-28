@@ -354,10 +354,10 @@ beforeEach(() => {
 
 describe("CreateProjectFlow droppedPath", () => {
 	it("offers each configured host in the project chooser", async () => {
-		const onStartRemoteHost = vi.fn();
+		const onAddRemoteProject = vi.fn();
 		const user = userEvent.setup();
 		renderChooseFlow({
-			onStartRemoteHost,
+			onAddRemoteProject,
 			remoteHosts: [
 				{ hostId: "box-a", label: "Host A", url: "http://box-a:3011", status: "connected" },
 				{ hostId: "box-b", label: "Host B", url: "http://box-b:3011", status: "offline" },
@@ -365,11 +365,12 @@ describe("CreateProjectFlow droppedPath", () => {
 		});
 
 		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Start on Host B" }));
+		expect(await screen.findByRole("button", { name: "Add project on Host B" })).toBeDisabled();
+		await user.click(screen.getByRole("button", { name: "Add project on Host A" }));
 
-		expect(onStartRemoteHost).toHaveBeenCalledOnce();
-		expect(onStartRemoteHost).toHaveBeenCalledWith("box-b");
-		await waitFor(() => expect(screen.queryByRole("button", { name: "Start on Host B" })).not.toBeInTheDocument());
+		expect(onAddRemoteProject).toHaveBeenCalledOnce();
+		expect(onAddRemoteProject).toHaveBeenCalledWith("box-a");
+		await waitFor(() => expect(screen.queryByRole("button", { name: "Add project on Host A" })).not.toBeInTheDocument());
 	});
 
 	it("shows the standalone agent action when the host provides one", async () => {

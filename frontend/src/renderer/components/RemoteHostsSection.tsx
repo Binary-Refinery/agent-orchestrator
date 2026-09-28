@@ -1,48 +1,95 @@
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Folder, FolderOpen, Plus } from "lucide-react";
+import { AlertTriangle, Folder, FolderOpen, FolderPlus, MoreVertical, Plus, Trash2 } from "lucide-react";
 import type { RemoteHost } from "../hooks/useRemoteHosts";
 import { getSessionStatusDotView } from "../lib/session-presentation";
 import { cn } from "../lib/utils";
-import { sortedWorkerSessions, type WorkspaceSummary } from "../types/workspace";
+import { STANDALONE_WORKSPACE_ID, sortedWorkerSessions, type WorkspaceSummary } from "../types/workspace";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Badge } from "./ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { SidebarMenuButton, SidebarMenuItem, SidebarMenuSub, SidebarMenuSubItem } from "./ui/sidebar";
 
 type Props = {
 	hosts: RemoteHost[];
 	workspaces: WorkspaceSummary[];
 	failedHostIds?: string[];
+	loadedProjectHostIds?: string[];
 	activeHostId?: string;
 	activeProjectId?: string;
 	activeSessionId?: string;
 	onOpenSession: (hostId: string, projectId: string, sessionId: string) => void;
 	onStart: (hostId: string) => void;
+	onAddProject: (hostId: string) => void;
+	onRemoveProject: (hostId: string, projectId: string) => Promise<void>;
 	onRetry: () => void;
 };
 
-function RemoteProjectRow({ host, workspace, activeProjectId, activeSessionId, onOpenSession }: {
+function RemoteProjectRow({ host, workspace, activeProjectId, activeSessionId, onOpenSession, onRemoveProject }: {
 	host: RemoteHost;
 	workspace: WorkspaceSummary;
 	activeProjectId?: string;
 	activeSessionId?: string;
 	onOpenSession: Props["onOpenSession"];
+	onRemoveProject: Props["onRemoveProject"];
 }) {
 	const { t } = useTranslation();
 	const active = activeProjectId === workspace.id;
 	const [expanded, setExpanded] = useState(true);
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [isRemoving, setIsRemoving] = useState(false);
+	const [removeError, setRemoveError] = useState<string | null>(null);
 	const sessions = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	const confirmRemove = async () => {
+		setConfirmOpen(false);
+		setIsRemoving(true);
+		setRemoveError(null);
+		try {
+			await onRemoveProject(host.hostId, workspace.id);
+		} catch (error) {
+			setRemoveError(error instanceof Error ? error.message : t("shell.couldNotRemoveProject"));
+		} finally {
+			setIsRemoving(false);
+		}
+	};
 	return <SidebarMenuItem data-remote-project-row="" data-host-id={host.hostId} data-project-id={workspace.id}>
-		<SidebarMenuButton
-			aria-expanded={expanded}
-			aria-label={t("shell.toggleProject", { name: `${workspace.name} · ${host.label}` })}
-			className="h-9 gap-2 rounded-lg px-2.5 text-sm font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0! [&_svg]:size-icon-md"
-			onClick={() => setExpanded((open) => !open)}
-			tooltip={`${workspace.name} · ${host.label}`}
-		>
-			{expanded ? <FolderOpen aria-hidden="true" strokeWidth={1.75} /> : <Folder aria-hidden="true" strokeWidth={1.75} />}
-			<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-			<Badge variant="outline" className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-2xs group-data-[collapsible=icon]:hidden">{host.label}</Badge>
-		</SidebarMenuButton>
+		<div className="flex items-center">
+			<SidebarMenuButton
+				aria-expanded={expanded}
+				aria-label={t("shell.toggleProject", { name: `${workspace.name} · ${host.label}` })}
+				className="h-9 min-w-0 flex-1 gap-2 rounded-lg px-2.5 text-sm font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0! [&_svg]:size-icon-md"
+				onClick={() => setExpanded((open) => !open)}
+				tooltip={`${workspace.name} · ${host.label}`}
+			>
+				{expanded ? <FolderOpen aria-hidden="true" strokeWidth={1.75} /> : <Folder aria-hidden="true" strokeWidth={1.75} />}
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
+				<Badge variant="outline" className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-2xs group-data-[collapsible=icon]:hidden">{host.label}</Badge>
+			</SidebarMenuButton>
+			{workspace.id !== STANDALONE_WORKSPACE_ID && <DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<button
+						aria-label={t("remote.projectActions", { name: workspace.name, label: host.label, defaultValue: "Project actions for {{name}} on {{label}}" })}
+						className="sidebar-expanded-chrome size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:hidden"
+						disabled={isRemoving}
+						type="button"
+					>
+						<MoreVertical aria-hidden="true" className="mx-auto size-4" />
+					</button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent side="right" align="start" className="min-w-44">
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+						disabled={isRemoving}
+						onSelect={() => { setRemoveError(null); setConfirmOpen(true); }}
+					>
+						<Trash2 aria-hidden="true" />
+						{t("shell.removeProjectTitle")}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>}
+		</div>
+		{isRemoving ? <div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">{t("shell.removingNamed", { name: workspace.name })}</div> : null}
+		{removeError ? <div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">{removeError}</div> : null}
 		{expanded && sessions.length > 0 && <SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1 group-data-[collapsible=icon]:hidden">
 			{sessions.map((session) => {
 				const activeSession = active && activeSessionId === session.id;
@@ -62,10 +109,22 @@ function RemoteProjectRow({ host, workspace, activeProjectId, activeSessionId, o
 				</SidebarMenuSubItem>;
 			})}
 		</SidebarMenuSub>}
+		<ConfirmDialog
+			open={confirmOpen}
+			onOpenChange={setConfirmOpen}
+			title={t("shell.removeProjectTitle")}
+			description={<>
+				<p className="text-sm font-medium text-foreground">{t("remote.removeProjectLead", { name: workspace.name, label: host.label, defaultValue: "Remove {{name}} from {{label}}?" })}</p>
+				<p className="mt-1 text-xs text-muted-foreground text-pretty">{t("shell.removeProjectBody")}</p>
+			</>}
+			confirmLabel={t("shell.remove")}
+			destructive
+			onConfirm={() => { void confirmRemove(); }}
+		/>
 	</SidebarMenuItem>;
 }
 
-export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], activeHostId, activeProjectId, activeSessionId, onOpenSession, onStart, onRetry }: Props) {
+export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], loadedProjectHostIds = [], activeHostId, activeProjectId, activeSessionId, onOpenSession, onStart, onAddProject, onRemoveProject, onRetry }: Props) {
 	const { t } = useTranslation();
 	if (hosts.length === 0) return null;
 	return <>
@@ -84,6 +143,7 @@ export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], acti
 				</SidebarMenuButton>
 			</SidebarMenuItem>;
 			const projects = workspaces.filter((workspace) => workspace.hostId === host.hostId);
+			const projectCount = projects.filter((workspace) => workspace.id !== STANDALONE_WORKSPACE_ID).length;
 			return <Fragment key={host.url}>
 				{projects.map((workspace) => <RemoteProjectRow
 					key={`${host.hostId}:${workspace.id}`}
@@ -92,11 +152,23 @@ export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], acti
 					activeProjectId={activeHostId === host.hostId ? activeProjectId : undefined}
 					activeSessionId={activeHostId === host.hostId ? activeSessionId : undefined}
 					onOpenSession={onOpenSession}
+					onRemoveProject={onRemoveProject}
 				/>)}
 				<SidebarMenuItem>
 					<SidebarMenuButton aria-label={t("remote.startOn", { label: host.label })} className="h-8 gap-2 rounded-lg px-2.5 text-sm text-muted-foreground hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md" onClick={() => onStart(host.hostId)}>
 						<Plus aria-hidden="true" />
 						<span className="truncate">{t("remote.startOn", { label: host.label })}</span>
+					</SidebarMenuButton>
+				</SidebarMenuItem>
+				<SidebarMenuItem>
+					<SidebarMenuButton
+						aria-label={t("remote.addProjectOnHost", { label: host.label, defaultValue: "Add project on {{label}}" })}
+						className="h-8 gap-2 rounded-lg px-2.5 text-sm text-muted-foreground hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md"
+						onClick={() => onAddProject(host.hostId)}
+					>
+						<FolderPlus aria-hidden="true" />
+						<span className="truncate">{t("remote.addProjectOnHost", { label: host.label, defaultValue: "Add project on {{label}}" })}</span>
+						{loadedProjectHostIds.includes(host.hostId) && <span className="ml-auto text-xs tabular-nums" title={t("remote.projectCount", { count: projectCount, defaultValue: projectCount === 1 ? "{{count}} project" : "{{count}} projects" })}>{projectCount}</span>}
 					</SidebarMenuButton>
 				</SidebarMenuItem>
 				{failedHostIds.includes(host.hostId) && <SidebarMenuItem>

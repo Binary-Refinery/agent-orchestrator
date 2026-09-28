@@ -159,7 +159,7 @@ export function CreateProjectFlow({
 	onInitializeProject,
 	onCreateStandaloneAgent,
 	remoteHosts = [],
-	onStartRemoteHost,
+	onAddRemoteProject,
 	onOpenExistingProject,
 	openSignal,
 	sourceSignal,
@@ -181,7 +181,7 @@ export function CreateProjectFlow({
 	onInitializeProject: (path: string) => Promise<void>;
 	onCreateStandaloneAgent?: () => void;
 	remoteHosts?: readonly RemoteHost[];
-	onStartRemoteHost?: (hostId: string) => void;
+	onAddRemoteProject?: (hostId: string) => void;
 	onOpenExistingProject?: (path: string) => void | Promise<void>;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
@@ -237,9 +237,9 @@ export function CreateProjectFlow({
 	const setCloneDialogOpen = (open: boolean) => dispatchView(open ? { type: "open", view: "clone" } : { type: "close", view: "clone" });
 	const setFolderPickerOpen = (open: boolean) => dispatchView(open ? { type: "open", view: "folder" } : { type: "close", view: "folder" });
 	const setProjectImportStep = (step: ProjectImportStep | null) => dispatchView(step ? { type: "open", view: step } : { type: "closeProjectImport" });
-	const startRemoteHost = (hostId: string) => {
+	const addRemoteProject = (hostId: string) => {
 		setModePickerOpen(false);
-		onStartRemoteHost?.(hostId);
+		onAddRemoteProject?.(hostId);
 	};
 
 	useEffect(() => {
@@ -765,7 +765,7 @@ export function CreateProjectFlow({
 							<CloudSignInPanel disabled={isBusy} onBack={() => setOffering("local")} onSignIn={cloudSignIn} />
 						)
 					) : (
-						<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={isBusy} onCloudSelect={() => setOffering("cloud")} onSelect={selectSource} onCreateStandaloneAgent={onCreateStandaloneAgent} remoteHosts={remoteHosts} onStartRemoteHost={startRemoteHost} />
+						<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={isBusy} onCloudSelect={() => setOffering("cloud")} onSelect={selectSource} onCreateStandaloneAgent={onCreateStandaloneAgent} remoteHosts={remoteHosts} onAddRemoteProject={addRemoteProject} />
 					)}
 					{error && !folderPickerOpen && selectedPath === null && (
 						<p className="text-caption leading-body text-error" role="status">
@@ -788,7 +788,7 @@ export function CreateProjectFlow({
 						onSignIn={cloudSignIn}
 						onCreateStandaloneAgent={onCreateStandaloneAgent}
 						remoteHosts={remoteHosts}
-						onStartRemoteHost={startRemoteHost}
+						onAddRemoteProject={addRemoteProject}
 						open={modePickerOpen}
 						onOpenChange={(open) => {
 							if (isBusy) return;
@@ -1149,7 +1149,7 @@ function CreateProjectSourceDialog({
 	onOpenChange,
 	onCreateStandaloneAgent,
 	remoteHosts,
-	onStartRemoteHost,
+	onAddRemoteProject,
 	onSelect,
 	open,
 }: {
@@ -1165,7 +1165,7 @@ function CreateProjectSourceDialog({
 	onOpenChange: (open: boolean) => void;
 	onCreateStandaloneAgent?: () => void;
 	remoteHosts: readonly RemoteHost[];
-	onStartRemoteHost: (hostId: string) => void;
+	onAddRemoteProject: (hostId: string) => void;
 	onSelect: (source: ProjectSource) => void;
 	open: boolean;
 }) {
@@ -1192,7 +1192,7 @@ function CreateProjectSourceDialog({
 								<CloudSignInPanel dialog disabled={disabled} onBack={onCloudBack} onSignIn={onSignIn} />
 							)
 						) : (
-							<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={disabled} onCloudSelect={onCloudSelect} onClose={() => onOpenChange(false)} onSelect={onSelect} onCreateStandaloneAgent={onCreateStandaloneAgent} remoteHosts={remoteHosts} onStartRemoteHost={onStartRemoteHost} dialog />
+							<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={disabled} onCloudSelect={onCloudSelect} onClose={() => onOpenChange(false)} onSelect={onSelect} onCreateStandaloneAgent={onCreateStandaloneAgent} remoteHosts={remoteHosts} onAddRemoteProject={onAddRemoteProject} dialog />
 						)}
 					</div>
 				</Dialog.Content>
@@ -2163,7 +2163,7 @@ function ImportSourcePicker({
 	onClose,
 	onCreateStandaloneAgent,
 	remoteHosts = [],
-	onStartRemoteHost,
+	onAddRemoteProject,
 	onSelect,
 }: {
 	cloudEnabled?: boolean;
@@ -2173,7 +2173,7 @@ function ImportSourcePicker({
 	onClose?: () => void;
 	onCreateStandaloneAgent?: () => void;
 	remoteHosts?: readonly RemoteHost[];
-	onStartRemoteHost?: (hostId: string) => void;
+	onAddRemoteProject?: (hostId: string) => void;
 	onSelect: (source: ProjectSource) => void;
 }) {
 	const { t } = useTranslation();
@@ -2216,23 +2216,23 @@ function ImportSourcePicker({
 				<p className={onboardingPanelDescriptionClass}>{t("createProject.addCodeDescription")}</p>
 			)}
 			<div className={cn("mx-4 mb-4 flex flex-col gap-3", remoteHosts.length > 0 && "min-h-0 overflow-y-auto")}>
-				{remoteHosts.length > 0 && onStartRemoteHost ? (
+				{remoteHosts.length > 0 && onAddRemoteProject ? (
 					<div className="overflow-hidden rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)]">
 						{remoteHosts.map((host) => (
 							<button
 								key={host.hostId}
 								type="button"
-								aria-label={t("remote.startOn", { label: host.label })}
+								aria-label={t("remote.addProjectOn", { label: host.label, defaultValue: "Add project on {{label}}" })}
 								className="group flex min-h-[76px] w-full items-center gap-3 border-b border-[var(--color-border-import-modal)] px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50 last:border-b-0"
-								disabled={disabled}
-								onClick={() => onStartRemoteHost(host.hostId)}
+								disabled={disabled || host.status !== "connected"}
+								onClick={() => onAddRemoteProject(host.hostId)}
 							>
 								<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
 									<Server className="size-5" aria-hidden="true" strokeWidth={1.8} />
 								</span>
 								<span className="min-w-0">
-									<span className="block truncate text-[14px] font-medium text-foreground">{t("remote.startOn", { label: host.label })}</span>
-									<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{t("remote.startDescription")}</span>
+									<span className="block truncate text-[14px] font-medium text-foreground">{t("remote.addProjectOn", { label: host.label, defaultValue: "Add project on {{label}}" })}</span>
+									<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{t("remote.projectPathHint", { label: host.label, defaultValue: "Use a repository folder on {{label}}, or clone one there from Git." })}</span>
 								</span>
 							</button>
 						))}

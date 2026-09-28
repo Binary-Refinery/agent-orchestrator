@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -12,7 +12,7 @@ vi.mock("./useCloudCp", () => ({ useCloudCp: () => ({ ready: false, baseUrl: "",
 vi.mock("./useCloudOrg", () => ({ useCloudOrg: () => ({ org: undefined, ready: false }) }));
 
 import { connectHost, disconnectHost } from "../lib/host-clients";
-import { useRemoteWorkspaces, useWorkspaceQuery, useWorkspaceSession } from "./useWorkspaceQuery";
+import { remoteWorkspaceQueryKey, useRemoteWorkspaces, useWorkspaceQuery, useWorkspaceSession } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>;
@@ -62,4 +62,41 @@ it("reports a failed remote query instead of treating the host as empty and heal
 	const { result } = renderHook(() => useRemoteWorkspaces(), { wrapper });
 	await waitFor(() => expect(result.current.failedHostIds).toEqual(["box-a"]), { timeout: 3000 });
 	expect(result.current.data).toEqual([]);
+	expect(result.current.loadedProjectHostIds).toEqual([]);
+});
+
+it("keeps a host's registered projects visible when its sessions request fails", async () => {
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	let sessionsFail = true;
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const url = input instanceof Request ? input.url : String(input);
+		const isProjects = url.endsWith("/projects");
+		return new Response(JSON.stringify(isProjects
+			? { projects: [{ id: "project-1", name: "Remote", path: "/remote" }] }
+			: sessionsFail ? { error: "unavailable" } : { sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", prs: [] }] }), {
+			status: !isProjects && sessionsFail ? 500 : 200,
+			headers: { "content-type": "application/json" },
+		});
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const { result } = renderHook(() => useRemoteWorkspaces(), {
+		wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+	});
+
+	await waitFor(() => expect(result.current.failedHostIds).toEqual(["box-a"]), { timeout: 3000 });
+	expect(result.current.loadedProjectHostIds).toEqual(["box-a"]);
+	expect(result.current.data).toEqual([expect.objectContaining({
+		hostId: "box-a", id: "project-1", name: "Remote", sessions: [],
+	})]);
+
+	sessionsFail = false;
+	await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey("box-a") }); });
+	await waitFor(() => expect(result.current.failedHostIds).toEqual([]));
+	expect(result.current.data[0]?.sessions).toEqual([expect.objectContaining({ id: "session-1", hostId: "box-a" })]);
+
+	sessionsFail = true;
+	await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey("box-a") }); });
+	await waitFor(() => expect(result.current.failedHostIds).toEqual(["box-a"]), { timeout: 3000 });
+	expect(result.current.data[0]).toEqual(expect.objectContaining({ hostId: "box-a", id: "project-1" }));
 });
