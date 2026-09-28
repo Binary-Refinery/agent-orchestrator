@@ -32,12 +32,14 @@ import {
 	memo,
 	useContext,
 	useState,
+	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { isLoopbackHostname } from "../../lib/loopback";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { fenceOf } from "../../lib/markdown-fence";
 import {
@@ -84,24 +86,40 @@ const PLUGINS = [remarkGfm];
  */
 const StreamingProse = createContext(false);
 const InsideMarkdownLink = createContext(false);
+const REMOTE_PREVIEW_UNAVAILABLE = "This link points to the remote host. Preview is unavailable on this device.";
 const OpenChatLink = createContext<{
 	open?: (url: string) => void;
 	openFile?: (path: string) => void;
+	remoteHost?: boolean;
 	workspacePaths: string[];
 }>({ workspacePaths: [] });
 
 export function ChatLinkProvider({
 	onLinkOpen,
 	onFileOpen,
+	remoteHost,
 	workspacePaths = [],
 	children,
 }: {
 	onLinkOpen?: (url: string) => void;
 	onFileOpen?: (path: string) => void;
+	remoteHost?: boolean;
 	workspacePaths?: string[];
 	children: ReactNode;
 }) {
-	return <OpenChatLink.Provider value={{ open: onLinkOpen, openFile: onFileOpen, workspacePaths }}>{children}</OpenChatLink.Provider>;
+	return <OpenChatLink.Provider value={{ open: onLinkOpen, openFile: onFileOpen, remoteHost, workspacePaths }}>{children}</OpenChatLink.Provider>;
+}
+
+function isHostLocalWebLink(href: string): boolean {
+	try {
+		// react-markdown percent-encodes IPv6 brackets in href/src attributes.
+		const url = new URL(href.replace(/%5B|%5D/gi, (bracket) => decodeURIComponent(bracket)));
+		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+		const host = url.hostname.replace(/\.$/, "");
+		return isLoopbackHostname(host) || /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host) || host === "0.0.0.0" || host === "[::]";
+	} catch {
+		return false;
+	}
 }
 
 function chatUrlTransform(url: string, key: string): string | undefined {
@@ -235,7 +253,12 @@ function compactEmoji(children: ReactNode): ReactNode {
 }
 
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
-	const { open: onLinkOpen, openFile: onFileOpen, workspacePaths } = useContext(OpenChatLink);
+	const { open: onLinkOpen, openFile: onFileOpen, remoteHost, workspacePaths } = useContext(OpenChatLink);
+	if (remoteHost && href && (isHostLocalWebLink(href) || isPotentialWorkspaceFileLink(href))) {
+		return <span className="text-muted-foreground" title={REMOTE_PREVIEW_UNAVAILABLE}>
+			{children}<span className="sr-only"> (remote preview unavailable)</span>
+		</span>;
+	}
 	const filePath = href && onFileOpen
 		? workspaceFilePath(href, workspacePaths) ?? findWorkspaceFilePath(href, workspacePaths) ?? explicitWorkspaceFilePath(href)
 		: undefined;
@@ -270,6 +293,14 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
 	);
 }
 
+function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
+	const { remoteHost } = useContext(OpenChatLink);
+	if (remoteHost && typeof src === "string" && isHostLocalWebLink(src)) {
+		return <span className="text-muted-foreground" title={REMOTE_PREVIEW_UNAVAILABLE}>{alt || src}</span>;
+	}
+	return <ChatImage src={src} alt={alt} />;
+}
+
 /**
  * A mermaid fence with the streaming state it was rendered under.
  *
@@ -279,8 +310,17 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
  */
 function MermaidFence({ code }: { code: string }) {
 	const streaming = useContext(StreamingProse);
-	const { open: onLinkOpen } = useContext(OpenChatLink);
-	return <MermaidBlock code={code} streaming={streaming} onLinkOpen={onLinkOpen} />;
+	const { open: onLinkOpen, remoteHost } = useContext(OpenChatLink);
+	const blockHostLocalLink = (event: ReactMouseEvent<HTMLDivElement>) => {
+		const href = (event.target as Element).closest?.("a[href]")?.getAttribute("href");
+		if (!href || !isHostLocalWebLink(href)) return;
+		event.preventDefault();
+		event.stopPropagation();
+	};
+	const diagram = <MermaidBlock code={code} streaming={streaming} onLinkOpen={onLinkOpen} />;
+	return remoteHost
+		? <div onClickCapture={blockHostLocalLink} onAuxClickCapture={blockHostLocalLink} onContextMenuCapture={blockHostLocalLink}>{diagram}</div>
+		: diagram;
 }
 
 function InlineCode({ children }: { children?: ReactNode }) {
@@ -407,5 +447,5 @@ const COMPONENTS: Components = {
 	// and right-click offers the system browser and copying the address.
 	a: MarkdownLink,
 
-	img: ChatImage,
+	img: MarkdownImage,
 };

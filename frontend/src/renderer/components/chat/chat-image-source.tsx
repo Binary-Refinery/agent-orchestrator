@@ -14,11 +14,12 @@ type ChatImageSource = { sessionId: string; version: number; baseUrl: string };
 
 const ChatImageSourceContext = createContext<ChatImageSource | undefined>(undefined);
 
-export function ChatImageSourceProvider({ sessionId, children }: { sessionId: string; children: ReactNode }) {
+export function ChatImageSourceProvider({ sessionId, assetBaseUrl, children }: { sessionId: string; assetBaseUrl?: string; children: ReactNode }) {
 	// The blob route is no-store, so a mount-specific version makes rewritten
 	// workspace images reload when the chat is reopened.
 	const [version] = useState(() => Date.now());
-	const baseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
+	const localBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
+	const baseUrl = assetBaseUrl ?? localBaseUrl;
 	const value = useMemo(() => ({ sessionId, version, baseUrl }), [sessionId, version, baseUrl]);
 	return <ChatImageSourceContext.Provider value={value}>{children}</ChatImageSourceContext.Provider>;
 }
@@ -27,5 +28,5 @@ export function ChatImageSourceProvider({ sessionId, children }: { sessionId: st
 export function useChatImageSrc(src: string | undefined): string | undefined {
 	const source = useContext(ChatImageSourceContext);
 	if (!source) return src;
-	return resolveMarkdownImageSrc(source.sessionId, "", src, source.version);
+	return resolveMarkdownImageSrc(source.sessionId, "", src, source.version, source.baseUrl);
 }

@@ -27,6 +27,10 @@ export function baseUrlForHost(hostId: HostId): string | undefined {
 	return hosts.get(hostId)?.base;
 }
 
+export function labelForHost(hostId: HostId): string | undefined {
+	return hosts.get(hostId)?.label;
+}
+
 export function clientForHost(hostId: HostId) {
 	if (hostId === LOCAL_HOST) throw new Error("local is not a remote host");
 	const host = hosts.get(hostId);
@@ -52,7 +56,7 @@ export async function connectHost(url: string): Promise<ConnectedHost> {
 	const previous = hosts.get(host.hostId);
 	if (previous?.base !== host.base) clients.delete(host.hostId);
 	hosts.set(host.hostId, host);
-	if (replaced || !previous || previous.base !== host.base) publish();
+	if (replaced || !previous || previous.base !== host.base || previous.label !== host.label) publish();
 	return host;
 }
 

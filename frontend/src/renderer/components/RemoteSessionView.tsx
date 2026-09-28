@@ -1,38 +1,100 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { type InfiniteData, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { toSnapshot } from "../hooks/useConversation";
-import { baseUrlForHost, clientForHost, subscribeConnectedHosts } from "../lib/host-clients";
+import { mergeConversationPages, toSnapshot } from "../hooks/useConversation";
+import { baseUrlForHost, clientForHost, labelForHost, subscribeConnectedHosts } from "../lib/host-clients";
 import { apiErrorCode } from "../lib/api-client";
+import { refKey } from "../lib/hosts";
+import { aoBridge } from "../lib/bridge";
+import { chatDraftDialogCopy, confirmDiscardChatDrafts, getChatDraftBoundaries, subscribeChatDraftBoundaries } from "../lib/chat-draft-boundary";
 import { useWorkspaceSession, remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import type { ConversationActivity } from "../types/conversation";
-import { ApprovalCard } from "./chat/ChatTimelineItems";
+import { ChatWorkspace } from "./chat/ChatWorkspace";
+import { SessionPaneTab } from "./CenterPane";
+import { SessionTopbarHost } from "./SessionTopbarPortal";
+import { TopbarButton } from "./TopbarButton";
 import { RemoteTerminalView } from "./RemoteTerminalView";
+import type { ConversationSnapshot } from "../types/conversation";
 
-/** A safe remote surface until native desktop actions have host-aware implementations. */
+const CONVERSATION_PAGE_SIZE = 200;
+
+export function RemoteSessionRoute({ hostId, sessionId }: { hostId: string; sessionId: string }) {
+	const uiSessionId = `remote:${refKey({ host: hostId, id: sessionId })}`;
+	const draftBoundaries = useSyncExternalStore(subscribeChatDraftBoundaries, () => getChatDraftBoundaries(uiSessionId));
+	useBlocker({
+		disabled: draftBoundaries.length === 0,
+		enableBeforeUnload: draftBoundaries.length > 0,
+		shouldBlockFn: () => !confirmDiscardChatDrafts(getChatDraftBoundaries(uiSessionId), (message) => window.confirm(message)),
+	});
+	useEffect(() => {
+		aoBridge.app.setChatDraftRisk?.(draftBoundaries, chatDraftDialogCopy(draftBoundaries));
+		return () => aoBridge.app.setChatDraftRisk?.([]);
+	}, [draftBoundaries]);
+	return <RemoteSessionView hostId={hostId} sessionId={sessionId} />;
+}
+
+/** Host-routed data and actions around the same Chat and terminal surfaces as local sessions. */
 export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessionId: string }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const session = useWorkspaceSession(sessionId, hostId);
-	const [message, setMessage] = useState("");
-	const deliveryId = useRef<string | null>(null);
+	const proxyBase = useSyncExternalStore(subscribeConnectedHosts, () => baseUrlForHost(hostId));
+	const hostLabel = useSyncExternalStore(subscribeConnectedHosts, () => labelForHost(hostId)) ?? hostId;
+	const sessionRefKey = refKey({ host: hostId, id: sessionId });
+	const [refreshErrorKey, setRefreshErrorKey] = useState<string | null>(null);
 	const conversationKey = ["remote-conversation", hostId, sessionId] as const;
-	const conversation = useQuery({
+	const fetchConversationPage = useCallback(async (beforeSequence?: number) => {
+		const { data, error } = await clientForHost(hostId).GET("/api/v1/sessions/{sessionId}/conversation", {
+			params: { path: { sessionId }, query: { beforeSequence, limit: CONVERSATION_PAGE_SIZE } },
+		});
+		if (error) throw error;
+		return toSnapshot(data);
+	}, [hostId, sessionId]);
+	const conversation = useInfiniteQuery({
 		queryKey: conversationKey,
-		enabled: session.data?.mode === "chat",
-		refetchInterval: 2_000,
-		queryFn: async () => {
-			const { data, error } = await clientForHost(hostId).GET("/api/v1/sessions/{sessionId}/conversation", {
-				params: { path: { sessionId } },
-			});
-			if (error) throw error;
-			return data;
-		},
+		enabled: session.data?.mode === "chat" && !!proxyBase,
+		staleTime: Infinity, // The timer below refreshes only the live page, not all loaded history.
+		initialPageParam: undefined as number | undefined,
+		queryFn: ({ pageParam }) => fetchConversationPage(pageParam),
+		getNextPageParam: (page) => page.hasMoreBefore ? page.oldestSequence : undefined,
+		select: (data) => mergeConversationPages(data.pages),
 	});
-	const approvals = useMemo(() => conversation.data
-		? toSnapshot(conversation.data).items.filter((item): item is ConversationActivity =>
-			item.kind === "activity" && item.activityKind === "approval" && item.status === "pending" && !!item.requestId)
-		: [], [conversation.data]);
+	const snapshot = conversation.data;
+	const refreshConversation = useCallback(async () => {
+		if (!proxyBase || session.data?.mode !== "chat") return;
+		try {
+			const latest = await fetchConversationPage();
+			queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(conversationKey, (previous) => {
+				if (previous?.pages.length && previous.pages[0].conversationId === latest.conversationId && previous.pages[0].activeBranchId === latest.activeBranchId && latest.latestSequence < previous.pages[0].latestSequence) {
+					return previous;
+				}
+				if (!previous?.pages.length || !latest.hasMoreBefore || previous.pages[0].conversationId !== latest.conversationId || previous.pages[0].activeBranchId !== latest.activeBranchId) {
+					return { pages: [latest], pageParams: [undefined] };
+				}
+				const priorLive = previous.pages[0];
+				// Keep only rows that fell out of the bounded live window. A missing row
+				// still inside that window was removed/updated, not older history.
+				const slidOut = latest.hasMoreBefore && latest.oldestSequence > priorLive.oldestSequence
+					? priorLive.items.filter((item) => item.sequence < latest.oldestSequence)
+					: [];
+				const slidTurnIds = new Set(slidOut.map((item) => item.turnId));
+				const live = slidOut.length
+					? mergeConversationPages([latest, { ...priorLive, items: slidOut, turns: priorLive.turns.filter((turn) => slidTurnIds.has(turn.id)) }]) ?? latest
+					: latest;
+				return { ...previous, pages: [live, ...previous.pages.slice(1)] };
+			});
+			setRefreshErrorKey((current) => current === sessionRefKey ? null : current);
+		} catch {
+			// A failed follow-up read must not turn an accepted send into a failed send.
+			setRefreshErrorKey(sessionRefKey);
+		}
+	}, [fetchConversationPage, hostId, proxyBase, queryClient, session.data?.mode, sessionId, sessionRefKey]);
+	useEffect(() => {
+		if (!proxyBase || session.data?.mode !== "chat") return;
+		// A full infinite-query refetch would re-download every older page every two seconds.
+		const timer = window.setInterval(() => { void refreshConversation(); }, 2_000);
+		return () => window.clearInterval(timer);
+	}, [proxyBase, refreshConversation, session.data?.mode]);
 	const resolve = useMutation({
 		mutationFn: async ({ requestId, decisionId }: { requestId: string; decisionId: string }) => {
 			const { error } = await clientForHost(hostId).POST("/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", {
@@ -42,21 +104,36 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 			// Another client may have answered while this card was on screen.
 			if (error && apiErrorCode(error) !== "CHAT_REQUEST_NOT_PENDING") throw error;
 		},
-		onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey }),
+		onSettled: refreshConversation,
+	});
+	const resolveInput = useMutation({
+		mutationFn: async ({ requestId, action, content }: { requestId: string; action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }) => {
+			const { error } = await clientForHost(hostId).POST("/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve", {
+				params: { path: { sessionId, requestId } },
+				body: { action, content },
+			});
+			if (error && apiErrorCode(error) !== "CHAT_REQUEST_NOT_PENDING") throw error;
+		},
+		onSettled: refreshConversation,
 	});
 	const send = useMutation({
-		mutationFn: async ({ text, id }: { text: string; id: string }) => {
+		mutationFn: async ({ text, attachments, clientMessageId }: { text: string; attachments?: { mimeType: string; data: string }[]; clientMessageId: string }) => {
 			const { error } = await clientForHost(hostId).POST("/api/v1/sessions/{sessionId}/conversation/messages", {
 				params: { path: { sessionId } },
-				body: { text, clientMessageId: id },
+				body: { text, clientMessageId, ...(attachments?.length ? { attachments } : {}) },
 			});
 			if (error) throw error;
 		},
-		onSuccess: async () => {
-			setMessage("");
-			deliveryId.current = null;
-			await queryClient.invalidateQueries({ queryKey: conversationKey });
+		onSuccess: refreshConversation,
+	});
+	const interrupt = useMutation({
+		mutationFn: async () => {
+			const { error } = await clientForHost(hostId).POST("/api/v1/sessions/{sessionId}/conversation/interrupt", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw error;
 		},
+		onSettled: refreshConversation,
 	});
 	const stop = useMutation({
 		mutationFn: async () => {
@@ -67,48 +144,48 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 		},
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(hostId) }),
 	});
-	const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (message.trim() && !send.isPending) {
-			deliveryId.current ??= crypto.randomUUID();
-			send.mutate({ text: message.trim(), id: deliveryId.current });
-		}
-	};
 	const title = session.data?.title ?? sessionId;
-	const proxyBase = useSyncExternalStore(subscribeConnectedHosts, () => baseUrlForHost(hostId));
-	return <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-6" data-testid="remote-session-view" data-host-id={hostId}>
-		<header className="flex items-start justify-between gap-4">
-			<div>
-				<p className="text-xs text-muted-foreground">{t("remote.hostLabel", { hostId })}</p>
-				<h1 className="text-xl font-semibold">{title}</h1>
-				<p className="text-sm text-muted-foreground">{session.data?.status ?? t("remote.loadingSession")}</p>
-			</div>
-			<button type="button" className="rounded-md border px-3 py-1.5 text-sm" disabled={!session.data || session.data.isTerminated || stop.isPending} onClick={() => {
+	const hostActions = <div className="flex items-center gap-3">
+		<span className="max-w-40 truncate text-xs text-muted-foreground" title={hostId}>{hostLabel}</span>
+		<TopbarButton variant="kill" disabled={!session.data || session.data.isTerminated || stop.isPending || !proxyBase} onClick={() => {
 			if (window.confirm(t("remote.confirmStop", { title, hostId }))) stop.mutate();
-			}}>{t("remote.stopSession")}</button>
-		</header>
-		{session.isError && <p role="alert">{t("remote.loadSessionFailed")}</p>}
-		{stop.isError && <p role="alert">{t("remote.stopSessionFailed")}</p>}
-		{session.data?.mode === "chat" ? <>
-			<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto" aria-label={t("remote.conversation")}>
-				{conversation.data?.messages.map((item) => <div key={item.id} className="rounded-lg border p-3">
-					<p className="text-xs text-muted-foreground">{item.role}</p>
-					<p className="whitespace-pre-wrap">{item.text}</p>
-				</div>)}
-				{conversation.isError && <p role="alert">{t("remote.loadConversationFailed")}</p>}
-			</div>
-			{approvals.map((approval) => <div key={approval.id}>
-				<ApprovalCard activity={approval} onDecide={(requestId, decisionId) => resolve.mutate({ requestId, decisionId })} busy={resolve.isPending} />
-				{resolve.isError && resolve.variables?.requestId === approval.requestId && <p role="alert">{t("inspector.resolveReviewFailed")}</p>}
-			</div>)}
-			{approvals.length === 0 && <form className="flex gap-2" onSubmit={onSubmit}>
-				<input className="min-w-0 flex-1 rounded-md border bg-background p-2" aria-label={t("remote.message")} value={message} onChange={(event) => { deliveryId.current = null; setMessage(event.target.value); }} />
-				<button type="submit" className="rounded-md border px-4" disabled={!message.trim() || send.isPending || session.data.isTerminated}>{t("browser.annotationSend")}</button>
-			</form>}
-			{send.isError && <p role="alert">{t("remote.sendFailed")}</p>}
-		</> : session.data && proxyBase ? (
-			<RemoteTerminalView hostId={hostId} proxyBase={proxyBase} terminalHandleId={session.data.terminalHandleId ?? sessionId} />
-		) : null}
-		<p className="text-xs text-muted-foreground">{t("remote.limitations")}</p>
+		}}>{t("remote.stopSession")}</TopbarButton>
+	</div>;
+
+	return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="remote-session-view" data-host-id={hostId}>
+		{session.data?.mode === "chat" && <SessionTopbarHost className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden" data-testid="session-topbar-host" />}
+		{session.isError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.loadSessionFailed")}</p>}
+		{stop.isError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.stopSessionFailed")}</p>}
+		{!proxyBase && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.loadSessionFailed")}</p>}
+		{(conversation.isError || refreshErrorKey === sessionRefKey) && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.loadConversationFailed")}</p>}
+		<div className="min-h-0 flex-1">
+			{proxyBase && session.data?.mode === "chat" && snapshot ? <ChatWorkspace
+				assetBaseUrl={proxyBase}
+				busy={resolve.isPending || resolveInput.isPending || send.isPending}
+				commandError={send.isError ? t("remote.sendFailed") : interrupt.isError ? t("remote.stopSessionFailed") : resolve.isError || resolveInput.isError ? t("inspector.resolveReviewFailed") : undefined}
+				headerActions={hostActions}
+				hasOlder={conversation.hasNextPage}
+				loadingOlder={conversation.isFetchingNextPage}
+				newWorkDisabled={session.data.isTerminated}
+				onDecide={(requestId, decisionId) => resolve.mutate({ requestId, decisionId })}
+				onInterrupt={() => interrupt.mutate()}
+				onLoadOlder={() => { void conversation.fetchNextPage(); }}
+				onResolveInput={(requestId, action, content) => resolveInput.mutateAsync({ requestId, action, content })}
+				onSend={(text, attachments, clientMessageId) => send.mutateAsync({ text, attachments, clientMessageId: clientMessageId ?? crypto.randomUUID() })}
+				sendPending={send.isPending}
+				session={session.data}
+				sessionTitle={title}
+				snapshot={snapshot}
+				uiSessionId={`remote:${sessionRefKey}`}
+			/> : proxyBase && session.data?.mode === "tui" ? <div className="flex h-full min-h-0 flex-col">
+				<header className="flex h-inspector-tabs shrink-0 items-stretch justify-between bg-sidebar">
+					<div role="tablist"><SessionPaneTab isActive label={title} session={session.data} /></div>
+					{hostActions}
+				</header>
+				<div className="min-h-0 flex-1"><RemoteTerminalView hostId={hostId} proxyBase={proxyBase} terminalHandleId={session.data.terminalHandleId ?? sessionId} terminalGeneration={session.data.terminalGeneration} /></div>
+			</div> : proxyBase && (session.isLoading || conversation.isLoading) ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{t("remote.loadingSession")}</div>
+				: proxyBase && !session.data && !session.isError ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{t("session.notFound")}</div>
+				: null}
+		</div>
 	</div>;
 }

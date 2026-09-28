@@ -86,3 +86,19 @@ it("switching hosts closes the old mux even when the terminal handle is identica
 	expect(FakeWebSocket.instances[1].url).toBe("ws://127.0.0.1:4501/token-b/mux");
 	view.unmount();
 });
+
+it("restarts the terminal when a new worker generation reuses the same handle", async () => {
+	vi.stubGlobal("WebSocket", FakeWebSocket);
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const view = render(<QueryClientProvider client={queryClient}>
+		<RemoteTerminalView hostId="box-a" proxyBase="http://127.0.0.1:4500/token-a" terminalHandleId="same-handle" terminalGeneration="1" />
+	</QueryClientProvider>);
+	await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+	view.rerender(<QueryClientProvider client={queryClient}>
+		<RemoteTerminalView hostId="box-a" proxyBase="http://127.0.0.1:4500/token-a" terminalHandleId="same-handle" terminalGeneration="2" />
+	</QueryClientProvider>);
+	await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+	expect(FakeWebSocket.instances[0].closed).toBe(true);
+	expect(FakeWebSocket.instances[1].url).toBe("ws://127.0.0.1:4500/token-a/mux");
+	view.unmount();
+});

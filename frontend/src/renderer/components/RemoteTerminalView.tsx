@@ -10,11 +10,12 @@ type Props = {
 	hostId: string;
 	proxyBase: string;
 	terminalHandleId?: string;
+	terminalGeneration?: string;
 };
 
 /** Mount identity includes the host, so an equal handle on another box never inherits its socket or screen. */
-export function RemoteTerminalView({ hostId, proxyBase, terminalHandleId }: Props) {
-	return <RemoteTerminalAttachment key={`${hostId}:${proxyBase}:${terminalHandleId ?? ""}`} proxyBase={proxyBase} terminalHandleId={terminalHandleId} />;
+export function RemoteTerminalView({ hostId, proxyBase, terminalHandleId, terminalGeneration }: Props) {
+	return <RemoteTerminalAttachment key={`${hostId}:${proxyBase}:${terminalHandleId ?? ""}:${terminalGeneration ?? ""}`} proxyBase={proxyBase} terminalHandleId={terminalHandleId} />;
 }
 
 function RemoteTerminalAttachment({ proxyBase, terminalHandleId }: Omit<Props, "hostId">) {
