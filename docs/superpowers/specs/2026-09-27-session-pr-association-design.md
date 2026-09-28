@@ -46,7 +46,7 @@ Both modes expose **Unlink from session** in an overflow menu. The primary surfa
 
 Every association carries one durable source:
 
-- `worker_report`: created by `ao report --pr-created`;
+- `worker_report`: created by the existing, repeatable `ao report --pr-created <github-pr-url>` flag;
 - `user_link`: entered explicitly in the UI/CLI;
 - `terminal_output`: detected passively and then verified by the tracking boundary;
 - `scm_discovery`: attributed by the existing observer;
@@ -77,7 +77,7 @@ The existing `pr` tables remain the source of truth for checks, reviews, comment
 
 ### Worker reports
 
-`ao report --pr-created` accepts a complete GitHub PR or GitLab MR URL. During report persistence, each `pr_created` output is normalized and upserted with source `worker_report` in the same SQLite transaction as the report and its outputs.
+Today, the existing repeatable `ao report --pr-created` flag accepts complete HTTP(S) GitHub pull-request URLs and persists `pr_created` report outputs. This design keeps that interface and extends its validator to supported GitLab merge-request URLs. During report persistence, each `pr_created` output is normalized and upserted with source `worker_report` in the same SQLite transaction as the report and its outputs.
 
 This projection does not change report delivery or worker lifecycle state. Invalid URLs continue to reject the report. Generic `--artifact` URLs are not interpreted as PR associations; callers must use the structured flag.
 
