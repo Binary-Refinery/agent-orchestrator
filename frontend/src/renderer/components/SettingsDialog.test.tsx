@@ -124,8 +124,13 @@ describe("SettingsDialog", () => {
 		const overlay = screen.getByTestId("settings-dialog-overlay");
 		const dialog = await screen.findByRole("dialog");
 		expect(overlay).toHaveClass("dialog-overlay");
-		expect(dialog).toHaveClass("z-[calc(var(--z-overlay)+1)]");
-		expect(dialog).not.toHaveClass("z-overlay");
+		// Same layer as the scrim, not above it: the content portals after its
+		// overlay, so DOM order wins the tie. Going one higher (the #5873/#5944
+		// z-[calc(var(--z-overlay)+1)]) buried every ConfirmDialog opened from
+		// inside Settings — including the confirm-gated Cloud toggle. The e2e
+		// spec settings-cloud-confirm-stacking.spec.ts pins the full invariant.
+		expect(dialog).toHaveClass("z-overlay");
+		expect(dialog).not.toHaveClass("z-[calc(var(--z-overlay)+1)]");
 	});
 
 	it("does not apply a backdrop filter behind settings content", async () => {
