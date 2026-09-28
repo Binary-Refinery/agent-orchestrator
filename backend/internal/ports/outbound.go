@@ -312,6 +312,12 @@ type WorkspaceReclaimer interface {
 	DestroyReclaim(ctx context.Context, info WorkspaceInfo) (WorkspaceReclaim, error)
 }
 
+// WorkspaceDiskSizer reports the approximate logical size of a managed
+// workspace directory for user-visible cleanup previews.
+type WorkspaceDiskSizer interface {
+	DiskUsage(ctx context.Context, info WorkspaceInfo) (int64, error)
+}
+
 // WorkspacePreparationBranchCleaner removes a discarded speculative branch
 // only when it has no commits beyond its recorded base. Ordinary session
 // teardown must keep its branch for later restoration.

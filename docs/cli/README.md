@@ -80,6 +80,12 @@ files, are deleted and cannot be restored. Sessions whose work cannot be
 captured or whose worktree cannot be removed remain on disk and are reported as
 skipped.
 
+The desktop app checks legacy terminated worktrees once and offers cleanup when
+their estimated logical size is at least 1 GiB. The prompt shows how many session
+worktrees are in its preview and requires confirmation before cleanup. To keep a
+legacy worktree instead, choose **Keep worktrees**; to review candidates in a
+terminal, use `ao session cleanup --dry-run`.
+
 `ao agent ls` asks the daemon to ensure display readiness, then prints the
 existing table or legacy JSON projection. The daemon alone decides whether a
 native check is needed. `--refresh` is a deprecated compatibility flag that

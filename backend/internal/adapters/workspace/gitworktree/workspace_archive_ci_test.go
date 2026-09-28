@@ -121,6 +121,38 @@ func TestArchiveDropsIgnoredCheckout(t *testing.T) {
 	}
 }
 
+func TestDiskUsageMeasuresManagedWorktreeWithoutFollowingOutsidePaths(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj", SessionID: "sess-size-preview", Branch: "feature/size-preview",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const payload = 1 << 20
+	if err := writePayload(filepath.Join(info.Path, "payload.bin"), payload); err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := ws.DiskUsage(context.Background(), info)
+	if err != nil {
+		t.Fatalf("DiskUsage: %v", err)
+	}
+	if bytes < payload {
+		t.Fatalf("DiskUsage = %d bytes, want at least %d", bytes, payload)
+	}
+
+	info.Path = filepath.Join(tmp, "outside-managed-root")
+	if _, err := ws.DiskUsage(context.Background(), info); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("DiskUsage outside managed root error = %v, want ErrUnsafePath", err)
+	}
+}
+
 func TestStashUncommittedDoesNotReplaceAnExistingSnapshot(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()

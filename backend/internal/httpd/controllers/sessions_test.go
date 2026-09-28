@@ -30,6 +30,7 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
@@ -45,6 +46,9 @@ type fakeSessionService struct {
 	cleanupProjects            []domain.ProjectID
 	cleanupResult              []domain.SessionID
 	cleanupSkipped             []sessionsvc.CleanupSkipped
+	cleanupPreviewProjects     []domain.ProjectID
+	cleanupPreview             sessionsvc.CleanupPreviewOutcome
+	cleanupSelectedIDs         []domain.SessionID
 	workspaceFiles             sessionsvc.WorkspaceFiles
 	workspaceFile              sessionsvc.WorkspaceFileDetail
 	workspaceFileSection       sessionsvc.WorkspaceFileSection
@@ -473,6 +477,17 @@ func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID
 		cleaned = []domain.SessionID{"ao-1"}
 	}
 	return sessionsvc.CleanupOutcome{Cleaned: cleaned, Skipped: f.cleanupSkipped}, nil
+}
+
+func (f *fakeSessionService) CleanupSelected(_ context.Context, project domain.ProjectID, ids []domain.SessionID) (sessionsvc.CleanupOutcome, error) {
+	f.cleanupProjects = append(f.cleanupProjects, project)
+	f.cleanupSelectedIDs = append([]domain.SessionID(nil), ids...)
+	return sessionsvc.CleanupOutcome{Cleaned: f.cleanupResult, Skipped: f.cleanupSkipped}, nil
+}
+
+func (f *fakeSessionService) PreviewCleanup(_ context.Context, project domain.ProjectID) (sessionsvc.CleanupPreviewOutcome, error) {
+	f.cleanupPreviewProjects = append(f.cleanupPreviewProjects, project)
+	return f.cleanupPreview, nil
 }
 
 func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, displayName string) error {
@@ -3436,6 +3451,54 @@ func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
 	}
 	if len(svc.cleanupProjects) != 1 || svc.cleanupProjects[0] != "" {
 		t.Fatalf("cleanupProjects = %#v, want empty project filter", svc.cleanupProjects)
+	}
+}
+
+func TestSessionsAPI_CleanupPreviewReturnsWorkspaceSizes(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.cleanupPreview = sessionsvc.CleanupPreviewOutcome{
+		Sessions: []sessionmanager.CleanupPreviewSession{{
+			SessionID: "ao-1", ProjectID: "ao", DisplayName: "Old worker", WorktreeBytes: 3 << 30,
+		}},
+		TotalBytes: 3 << 30,
+		Incomplete: true,
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/cleanup/preview?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("cleanup preview = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		Sessions []struct {
+			SessionID     string `json:"sessionId"`
+			ProjectID     string `json:"projectId"`
+			DisplayName   string `json:"displayName"`
+			WorktreeBytes int64  `json:"worktreeBytes"`
+		} `json:"sessions"`
+		TotalBytes int64 `json:"totalBytes"`
+		Incomplete bool  `json:"incomplete"`
+	}
+	mustJSON(t, body, &got)
+	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "ao-1" || got.Sessions[0].WorktreeBytes != 3<<30 || got.TotalBytes != 3<<30 || !got.Incomplete {
+		t.Fatalf("cleanup preview = %#v", got)
+	}
+	if len(svc.cleanupPreviewProjects) != 1 || svc.cleanupPreviewProjects[0] != "ao" {
+		t.Fatalf("cleanup preview projects = %#v, want [ao]", svc.cleanupPreviewProjects)
+	}
+}
+
+func TestSessionsAPI_CleanupCanBeLimitedToPreviewedSessions(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.cleanupResult = []domain.SessionID{"old-1"}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/cleanup", `{"sessionIds":["old-1"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("selected cleanup = %d, want 200; body=%s", status, body)
+	}
+	if len(svc.cleanupSelectedIDs) != 1 || svc.cleanupSelectedIDs[0] != "old-1" {
+		t.Fatalf("selected cleanup ids = %v, want [old-1]", svc.cleanupSelectedIDs)
 	}
 }
 

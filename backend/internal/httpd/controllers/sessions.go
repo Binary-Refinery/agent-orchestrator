@@ -178,6 +178,7 @@ type SessionsController struct {
 func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
+	r.Get("/sessions/cleanup/preview", c.cleanupPreview)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
@@ -1586,7 +1587,33 @@ func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/cleanup")
 		return
 	}
-	out, err := c.Svc.Cleanup(r.Context(), domain.ProjectID(r.URL.Query().Get("project")))
+	var in CleanupSessionsRequest
+	if r.Body != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+			return
+		}
+		if len(bytes.TrimSpace(body)) > 0 {
+			if err := json.Unmarshal(body, &in); err != nil {
+				envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+				return
+			}
+		}
+	}
+	project := domain.ProjectID(r.URL.Query().Get("project"))
+	var out sessionsvc.CleanupOutcome
+	var err error
+	if len(in.SessionIDs) == 0 {
+		out, err = c.Svc.Cleanup(r.Context(), project)
+	} else if selector, ok := c.Svc.(interface {
+		CleanupSelected(context.Context, domain.ProjectID, []domain.SessionID) (sessionsvc.CleanupOutcome, error)
+	}); ok {
+		out, err = selector.CleanupSelected(r.Context(), project, in.SessionIDs)
+	} else {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/cleanup")
+		return
+	}
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1597,6 +1624,31 @@ func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {
 	}
 	envelope.WriteJSON(w, http.StatusOK, CleanupSessionsResponse{
 		OK: true, Cleaned: out.Cleaned, AlreadyGone: out.AlreadyGone, Skipped: skipped,
+	})
+}
+
+func (c *SessionsController) cleanupPreview(w http.ResponseWriter, r *http.Request) {
+	previewer, ok := c.Svc.(interface {
+		PreviewCleanup(context.Context, domain.ProjectID) (sessionsvc.CleanupPreviewOutcome, error)
+	})
+	if !ok {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/cleanup/preview")
+		return
+	}
+	out, err := previewer.PreviewCleanup(r.Context(), domain.ProjectID(r.URL.Query().Get("project")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	sessions := make([]CleanupPreviewSession, 0, len(out.Sessions))
+	for _, session := range out.Sessions {
+		sessions = append(sessions, CleanupPreviewSession{
+			SessionID: session.SessionID, ProjectID: session.ProjectID,
+			DisplayName: session.DisplayName, WorktreeBytes: session.WorktreeBytes,
+		})
+	}
+	envelope.WriteJSON(w, http.StatusOK, CleanupPreviewResponse{
+		Sessions: sessions, TotalBytes: out.TotalBytes, Incomplete: out.Incomplete,
 	})
 }
 

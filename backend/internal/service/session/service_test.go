@@ -2526,6 +2526,8 @@ type fakeCommander struct {
 	sent             []domain.SessionID
 	sentMessages     []string
 	cleanupProjects  []domain.ProjectID
+	cleanupSelected  []domain.SessionID
+	cleanupPreview   sessionmanager.CleanupPreview
 	killErr          error
 	retireErr        error
 	sendErr          error
@@ -2676,6 +2678,16 @@ func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (se
 		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
 	}, nil
 }
+
+func (f *fakeCommander) CleanupSelected(_ context.Context, project domain.ProjectID, ids []domain.SessionID) (sessionmanager.CleanupResult, error) {
+	f.cleanupProjects = append(f.cleanupProjects, project)
+	f.cleanupSelected = append([]domain.SessionID(nil), ids...)
+	return sessionmanager.CleanupResult{Cleaned: append([]domain.SessionID(nil), ids...), AlreadyGone: []domain.SessionID{}, Skipped: []sessionmanager.CleanupSkip{}}, nil
+}
+
+func (f *fakeCommander) PreviewCleanup(_ context.Context, _ domain.ProjectID) (sessionmanager.CleanupPreview, error) {
+	return f.cleanupPreview, nil
+}
 func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
 	return false, false, nil
 }
@@ -2701,6 +2713,37 @@ func TestCleanupMapsManagerResult(t *testing.T) {
 	}
 	if len(out.Skipped) != 1 || out.Skipped[0].SessionID != "mer-2" || out.Skipped[0].Reason != "workspace has uncommitted changes" {
 		t.Fatalf("skipped = %#v", out.Skipped)
+	}
+}
+
+func TestCleanupSelectedForwardsPreviewedSessionIDs(t *testing.T) {
+	manager := &fakeCommander{}
+	svc := &Service{manager: manager}
+	out, err := svc.CleanupSelected(context.Background(), "mer", []domain.SessionID{"mer-1", "mer-3"})
+	if err != nil {
+		t.Fatalf("CleanupSelected: %v", err)
+	}
+	if len(manager.cleanupSelected) != 2 || manager.cleanupSelected[0] != "mer-1" || manager.cleanupSelected[1] != "mer-3" {
+		t.Fatalf("selected ids = %v", manager.cleanupSelected)
+	}
+	if len(out.Cleaned) != 2 || out.Cleaned[0] != "mer-1" || out.Cleaned[1] != "mer-3" {
+		t.Fatalf("cleanup result = %+v", out)
+	}
+}
+
+func TestPreviewCleanupMapsManagerEstimate(t *testing.T) {
+	manager := &fakeCommander{cleanupPreview: sessionmanager.CleanupPreview{
+		Sessions:   []sessionmanager.CleanupPreviewSession{{SessionID: "mer-old", WorktreeBytes: 2 << 30}},
+		TotalBytes: 2 << 30,
+		Incomplete: true,
+	}}
+	svc := &Service{manager: manager}
+	out, err := svc.PreviewCleanup(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("PreviewCleanup: %v", err)
+	}
+	if out.TotalBytes != 2<<30 || len(out.Sessions) != 1 || out.Sessions[0].SessionID != "mer-old" || !out.Incomplete {
+		t.Fatalf("preview = %+v", out)
 	}
 }
 

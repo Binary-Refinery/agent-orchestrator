@@ -2612,6 +2612,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/cleanup/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview terminated workspace disk usage before cleanup */
+        get: operations["previewSessionCleanup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -3114,6 +3131,22 @@ export interface components {
             prs: components["schemas"]["SessionPRFacts"][];
             sessionId: string;
             takenOverFrom: string[];
+        };
+        CleanupPreviewResponse: {
+            incomplete: boolean;
+            sessions: components["schemas"]["CleanupPreviewSession"][];
+            /** Format: int64 */
+            totalBytes: number;
+        };
+        CleanupPreviewSession: {
+            displayName?: string;
+            projectId?: string;
+            sessionId: string;
+            /** Format: int64 */
+            worktreeBytes: number;
+        };
+        CleanupSessionsRequest: {
+            sessionIds?: string[];
         };
         CleanupSessionsResponse: {
             alreadyGone: string[];
@@ -14904,7 +14937,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CleanupSessionsRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -14913,6 +14950,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupSessionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    previewSessionCleanup: {
+        parameters: {
+            query?: {
+                /** @description Project id filter. When omitted, preview terminated sessions across all projects. */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupPreviewResponse"];
                 };
             };
             /** @description Internal Server Error */

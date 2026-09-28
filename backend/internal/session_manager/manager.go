@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -4786,10 +4787,128 @@ type CleanupResult struct {
 	Skipped     []CleanupSkip
 }
 
+// CleanupPreviewSession describes one terminated workspace that Cleanup can
+// currently consider reclaiming. WorktreeBytes is a logical-size estimate.
+type CleanupPreviewSession struct {
+	SessionID     domain.SessionID
+	ProjectID     domain.ProjectID
+	DisplayName   string
+	WorktreeBytes int64
+}
+
+// CleanupPreview reports terminated worktrees and their approximate on-disk
+// size without changing sessions or worktrees.
+type CleanupPreview struct {
+	Sessions   []CleanupPreviewSession
+	TotalBytes int64
+	Incomplete bool
+}
+
+// PreviewCleanup performs a read-only scan of terminated, reclaimable session
+// worktrees. Cleanup still performs its own ownership and teardown checks.
+func (m *Manager) PreviewCleanup(ctx context.Context, project domain.ProjectID) (CleanupPreview, error) {
+	recs, err := m.cleanupRecords(ctx, project)
+	if err != nil {
+		return CleanupPreview{}, fmt.Errorf("preview cleanup %s: %w", project, err)
+	}
+	preview := CleanupPreview{Sessions: []CleanupPreviewSession{}}
+	sizer, ok := m.workspace.(ports.WorkspaceDiskSizer)
+	if !ok {
+		preview.Incomplete = true
+		return preview, nil
+	}
+	countedPaths := make(map[string]struct{})
+	for _, rec := range recs {
+		if err := ctx.Err(); err != nil {
+			return CleanupPreview{}, err
+		}
+		if !rec.IsTerminated {
+			continue
+		}
+		ws := workspaceInfo(rec)
+		if ws.Path == "" {
+			continue
+		}
+		release := m.acquireWorkspaceGate(rec.ProjectID)
+		inUse, err := m.isWorkspaceInUse(ctx, rec.ProjectID, ws.Path)
+		if err != nil {
+			release()
+			return CleanupPreview{}, fmt.Errorf("preview cleanup %s: check workspace ownership: %w", rec.ID, err)
+		}
+		if inUse {
+			release()
+			continue
+		}
+
+		infos := []ports.WorkspaceInfo{ws}
+		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+			preview.Incomplete = true
+			release()
+			continue
+		} else if ok {
+			infos = infos[:0]
+			for _, row := range rows {
+				if row.Path != "" {
+					infos = append(infos, workspaceInfoFromRepoInfo(row))
+				}
+			}
+		}
+		var sessionBytes int64
+		for _, info := range infos {
+			pathKey := normalizeWorkspacePath(info.Path)
+			if _, counted := countedPaths[pathKey]; counted {
+				continue
+			}
+			countedPaths[pathKey] = struct{}{}
+			bytes, sizeErr := sizer.DiskUsage(ctx, info)
+			if sizeErr != nil {
+				preview.Incomplete = true
+				continue
+			}
+			sessionBytes += bytes
+		}
+		release()
+		preview.Sessions = append(preview.Sessions, CleanupPreviewSession{
+			SessionID: rec.ID, ProjectID: rec.ProjectID, DisplayName: rec.DisplayName,
+			WorktreeBytes: sessionBytes,
+		})
+		preview.TotalBytes += sessionBytes
+	}
+	sort.Slice(preview.Sessions, func(i, j int) bool {
+		if preview.Sessions[i].ProjectID != preview.Sessions[j].ProjectID {
+			return preview.Sessions[i].ProjectID < preview.Sessions[j].ProjectID
+		}
+		return preview.Sessions[i].SessionID < preview.Sessions[j].SessionID
+	})
+	return preview, nil
+}
+
 // Cleanup reclaims the workspaces of terminal sessions in a project. Dirty
 // worktrees are snapshotted and removed only after the snapshot is recorded; a
 // failed capture or removal is reported in Skipped and leaves the worktree.
 func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupResult, error) {
+	return m.cleanup(ctx, project, nil)
+}
+
+// CleanupSelected reclaims only the terminated sessions named by the caller.
+// An empty ID list retains the ordinary project-wide Cleanup behavior.
+func (m *Manager) CleanupSelected(ctx context.Context, project domain.ProjectID, ids []domain.SessionID) (CleanupResult, error) {
+	if len(ids) == 0 {
+		return m.Cleanup(ctx, project)
+	}
+	selected := make(map[domain.SessionID]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			selected[id] = struct{}{}
+		}
+	}
+	if len(selected) == 0 {
+		return CleanupResult{Cleaned: []domain.SessionID{}, AlreadyGone: []domain.SessionID{}, Skipped: []CleanupSkip{}}, nil
+	}
+	return m.cleanup(ctx, project, selected)
+}
+
+func (m *Manager) cleanup(ctx context.Context, project domain.ProjectID, selected map[domain.SessionID]struct{}) (CleanupResult, error) {
 	recs, err := m.cleanupRecords(ctx, project)
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
@@ -4802,6 +4921,11 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
+		}
+		if selected != nil {
+			if _, ok := selected[rec.ID]; !ok {
+				continue
+			}
 		}
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {

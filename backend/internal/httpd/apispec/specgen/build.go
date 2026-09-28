@@ -243,6 +243,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersListDirsResponse":                         "ListDirsResponse",
 	"ControllersFSEntry":                                  "FSEntry",
 	"ControllersCleanupSessionsQuery":                     "CleanupSessionsQuery",
+	"ControllersCleanupSessionsRequest":                   "CleanupSessionsRequest",
+	"ControllersCleanupPreviewQuery":                      "CleanupPreviewQuery",
 	"ControllersListSessionsResponse":                     "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":                      "SpawnSessionRequest",
 	"ControllersSpawnSessionResponse":                     "SpawnSessionResponse",
@@ -279,6 +281,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersCancelSessionInterfaceTransitionResponse": "CancelSessionInterfaceTransitionResponse",
 	"ControllersInterfaceTransitionNoticeAckResponse":     "AcknowledgeSessionInterfaceTransitionNoticeResponse",
 	"ControllersCleanupSessionsResponse":                  "CleanupSessionsResponse",
+	"ControllersCleanupPreviewSession":                    "CleanupPreviewSession",
+	"ControllersCleanupPreviewResponse":                   "CleanupPreviewResponse",
 	"ControllersCleanupSkippedSession":                    "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":                       "WorkspaceFileQuery",
 	"ControllersPRFileQuery":                              "PRFileQuery",
@@ -2449,9 +2453,20 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/sessions/cleanup/preview", id: "previewSessionCleanup", tag: "sessions",
+			summary:    "Preview terminated workspace disk usage before cleanup",
+			pathParams: []any{controllers.CleanupPreviewQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.CleanupPreviewResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/cleanup", id: "cleanupSessions", tag: "sessions",
 			summary:    "Clean up terminated session workspaces",
 			pathParams: []any{controllers.CleanupSessionsQuery{}},
+			reqBody:    controllers.CleanupSessionsRequest{}, optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusOK, controllers.CleanupSessionsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

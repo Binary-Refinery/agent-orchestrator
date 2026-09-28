@@ -103,6 +103,10 @@ type exitAgentCommander interface {
 	ExitAgent(context.Context, domain.SessionID) (domain.SessionRecord, error)
 }
 
+type cleanupPreviewCommander interface {
+	PreviewCleanup(context.Context, domain.ProjectID) (sessionmanager.CleanupPreview, error)
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -116,6 +120,14 @@ type CleanupOutcome struct {
 	Cleaned     []domain.SessionID `json:"cleaned"`
 	AlreadyGone []domain.SessionID `json:"alreadyGone"`
 	Skipped     []CleanupSkipped   `json:"skipped"`
+}
+
+// CleanupPreviewOutcome is a read-only estimate for terminated workspaces
+// that Cleanup could reclaim.
+type CleanupPreviewOutcome struct {
+	Sessions   []sessionmanager.CleanupPreviewSession `json:"sessions"`
+	TotalBytes int64                                  `json:"totalBytes"`
+	Incomplete bool                                   `json:"incomplete"`
 }
 
 // CleanupSkipped is one terminal session whose workspace was preserved by
@@ -992,6 +1004,25 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupOutcome{}, err
 	}
+	return cleanupOutcome(res), nil
+}
+
+// CleanupSelected reclaims only the terminated sessions named by the caller.
+func (s *Service) CleanupSelected(ctx context.Context, project domain.ProjectID, ids []domain.SessionID) (CleanupOutcome, error) {
+	manager, ok := s.manager.(interface {
+		CleanupSelected(context.Context, domain.ProjectID, []domain.SessionID) (sessionmanager.CleanupResult, error)
+	})
+	if !ok {
+		return CleanupOutcome{}, apierr.NotImplemented("CLEANUP_SELECTION_UNAVAILABLE", "Selected session cleanup is not available")
+	}
+	res, err := manager.CleanupSelected(ctx, project, ids)
+	if err != nil {
+		return CleanupOutcome{}, err
+	}
+	return cleanupOutcome(res), nil
+}
+
+func cleanupOutcome(res sessionmanager.CleanupResult) CleanupOutcome {
 	out := CleanupOutcome{
 		Cleaned:     res.Cleaned,
 		AlreadyGone: res.AlreadyGone,
@@ -1006,7 +1037,24 @@ func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	for _, skip := range res.Skipped {
 		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason})
 	}
-	return out, nil
+	return out
+}
+
+// PreviewCleanup reports terminated worktrees and approximate bytes without
+// changing sessions or worktrees.
+func (s *Service) PreviewCleanup(ctx context.Context, project domain.ProjectID) (CleanupPreviewOutcome, error) {
+	previewer, ok := s.manager.(cleanupPreviewCommander)
+	if !ok {
+		return CleanupPreviewOutcome{}, apierr.NotImplemented("CLEANUP_PREVIEW_UNAVAILABLE", "Cleanup preview is not available")
+	}
+	res, err := previewer.PreviewCleanup(ctx, project)
+	if err != nil {
+		return CleanupPreviewOutcome{}, err
+	}
+	if res.Sessions == nil {
+		res.Sessions = []sessionmanager.CleanupPreviewSession{}
+	}
+	return CleanupPreviewOutcome{Sessions: res.Sessions, TotalBytes: res.TotalBytes, Incomplete: res.Incomplete}, nil
 }
 
 // TeardownProject stops every live session in a project concurrently, then asks

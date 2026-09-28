@@ -1046,7 +1046,9 @@ type fakeWorkspace struct {
 	projectCreateInfo ports.WorkspaceProjectInfo
 	// path, when set, is returned as the workspace path so provisioning tests
 	// can point at a real temp directory.
-	path string
+	path            string
+	diskUsageByPath map[string]int64
+	diskUsageErr    error
 	// stashRef is returned by StashUncommitted (empty means clean worktree).
 	stashRef        string
 	stashErr        error
@@ -1199,6 +1201,12 @@ func (w *fakeWorkspace) DestroyReclaim(ctx context.Context, info ports.Workspace
 		return ports.WorkspaceReclaimRemoved, err
 	}
 	return reclaim, err
+}
+func (w *fakeWorkspace) DiskUsage(_ context.Context, info ports.WorkspaceInfo) (int64, error) {
+	if w.diskUsageErr != nil {
+		return 0, w.diskUsageErr
+	}
+	return w.diskUsageByPath[info.Path], nil
 }
 func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.WorkspaceProjectInfo) error {
 	w.projectDestroyed++
@@ -4909,6 +4917,55 @@ func TestCleanupLeavesDirtyWorkspaceWhenSnapshotFails(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(ws.calls, ","), "ForceDestroy:") {
 		t.Fatalf("workspace calls = %v, must not force-remove after snapshot failure", ws.calls)
+	}
+}
+
+func TestPreviewCleanupCountsTerminatedWorktreesAndSkipsLiveOwnership(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-old", domain.SessionMetadata{WorkspacePath: "/ws/old"})
+	seedTerminal(st, "mer-shared-old", domain.SessionMetadata{WorkspacePath: "/ws/shared"})
+	seedTerminal(st, "mer-small", domain.SessionMetadata{WorkspacePath: "/ws/small"})
+	live := mkLive("mer-live")
+	live.Metadata.WorkspacePath = "/ws/shared"
+	st.sessions["mer-live"] = live
+	ws.diskUsageByPath = map[string]int64{
+		"/ws/old":    3 << 30,
+		"/ws/shared": 5 << 30,
+		"/ws/small":  0,
+	}
+
+	preview, err := m.PreviewCleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Incomplete {
+		t.Fatal("preview marked complete measurements as incomplete")
+	}
+	if len(preview.Sessions) != 2 || preview.Sessions[0].SessionID != "mer-old" || preview.Sessions[1].SessionID != "mer-small" {
+		t.Fatalf("preview sessions = %+v, want terminated worktrees except live-owned mer-shared", preview.Sessions)
+	}
+	if preview.TotalBytes != 3<<30 || preview.Sessions[0].WorktreeBytes != 3<<30 {
+		t.Fatalf("preview bytes total=%d session=%d, want 3 GiB", preview.TotalBytes, preview.Sessions[0].WorktreeBytes)
+	}
+	if preview.Sessions[1].WorktreeBytes != 0 {
+		t.Fatalf("small worktree size = %d, want 0", preview.Sessions[1].WorktreeBytes)
+	}
+}
+
+func TestCleanupSelectedDoesNotTouchUnpreviewedSessions(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", WorkspaceRepoPath: "/repo/mer"})
+	seedTerminal(st, "mer-2", domain.SessionMetadata{WorkspacePath: "/ws/mer-2", WorkspaceRepoPath: "/repo/mer"})
+
+	result, err := m.CleanupSelected(ctx, "mer", []domain.SessionID{"mer-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Cleaned) != 1 || result.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %v, want only mer-1", result.Cleaned)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroys = %d, want exactly one previewed session", ws.destroyed)
 	}
 }
 

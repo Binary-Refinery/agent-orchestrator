@@ -128,6 +128,7 @@ var _ ports.Workspace = (*Workspace)(nil)
 var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
 var _ ports.WorkspaceObserver = (*Workspace)(nil)
+var _ ports.WorkspaceDiskSizer = (*Workspace)(nil)
 var _ ports.WorkspaceReclaimer = (*Workspace)(nil)
 var _ ports.WorkspacePreparationBranchCleaner = (*Workspace)(nil)
 
@@ -830,6 +831,65 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 // workspaces need that told apart from a real removal.
 func (w *Workspace) DestroyReclaim(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceReclaim, error) {
 	return w.destroy(ctx, info)
+}
+
+// DiskUsage returns the approximate logical size of a managed worktree without
+// following symlinks. It is used only for cleanup previews, never as proof that
+// a workspace is reclaimable.
+func (w *Workspace) DiskUsage(ctx context.Context, info ports.WorkspaceInfo) (int64, error) {
+	if info.Path == "" {
+		return 0, fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return 0, err
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("gitworktree: stat workspace for disk preview %q: %w", path, err)
+	}
+	if !stat.IsDir() {
+		return 0, fmt.Errorf("gitworktree: workspace for disk preview %q is not a directory", path)
+	}
+
+	var total int64
+	var walk func(string) error
+	walk = func(dir string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			entryPath := filepath.Join(dir, entry.Name())
+			if entry.IsDir() {
+				if err := walk(entryPath); err != nil {
+					return err
+				}
+				continue
+			}
+			fileInfo, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if fileInfo.Mode().IsRegular() {
+				total += fileInfo.Size()
+			}
+		}
+		return nil
+	}
+	if err := walk(path); err != nil {
+		return 0, fmt.Errorf("gitworktree: walk workspace for disk preview %q: %w", path, err)
+	}
+	return total, nil
 }
 
 // DeletePreparedBranch is called only after a speculative worktree is gone.
