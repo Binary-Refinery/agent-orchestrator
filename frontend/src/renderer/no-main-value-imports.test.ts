@@ -2,15 +2,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// The renderer runs in Chromium. Modules under src/main are free to import
-// node:fs, node:path and friends at the top level, so a renderer file may borrow
-// their TYPES (erased at compile time) but never their VALUES: a value import
-// pulls the whole module, and its Node built-ins, into the browser bundle, and
-// the renderer fails to boot with every locator resolving to nothing.
-//
-// tsc does not catch this and neither does any unit test, because both run under
-// Node. It only shows up in the packaged smoke run, which is a slow and confusing
-// place to learn it. Shared values belong in src/shared.
+// A renderer file may borrow a main-process TYPE (erased) but never a VALUE: that
+// pulls the module's Node built-ins into the browser bundle and the renderer
+// fails to boot. tsc and unit tests both run under Node and miss it; only the
+// packaged smoke run catches it. Shared values belong in src/shared.
 const RENDERER_DIR = path.join(__dirname);
 
 function sourceFiles(dir: string): string[] {

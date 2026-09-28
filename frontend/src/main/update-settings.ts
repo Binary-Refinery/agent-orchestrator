@@ -26,8 +26,7 @@ export interface UpdateSettings {
 	macDifferentialUpdates?: boolean;
 }
 
-// The state vocabulary lives in shared/ so the renderer can import these VALUES
-// without pulling this module's node:fs dependency into the browser bundle.
+// In shared/ so the renderer can import these values without this module's node:fs.
 export {
 	UPDATE_STATE_KIND,
 	UPDATE_STATE_RECONCILES,

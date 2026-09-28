@@ -235,17 +235,12 @@ function requiredFreeBytesToStage(archiveBytes: number | undefined): number {
   return Math.min(STAGE_FREE_BYTES_CAP, Math.max(STAGE_FREE_BYTES_FLOOR, derived));
 }
 /**
- * Why a staged build could not be installed.
+ * Why a staged build could not be installed. Decides the wording and whether AO
+ * retries at all: a full disk is the user's to fix, a bad copy is AO's to refetch.
  *
- * The raw ditto/pkzip/codesign detail is logged, never shown. What the user sees
- * is derived from the kind, and so is whether AO retries at all: a full disk is
- * the user's to fix, while a bad copy is AO's to fetch again.
- *
- * Carried on the Error itself wherever AO raises the failure, because the text
- * used to be rewritten to a friendly line BEFORE anything classified it, which
- * left the downstream handler unable to tell a signature rejection from a stall
- * and reporting the wrong one. Text matching remains only for errors that arrive
- * raw from Squirrel, which is the one case with no Error of ours to tag.
+ * Carried on the Error, because the text used to be rewritten to a friendly line
+ * BEFORE anything classified it, so the handler could not tell a signature
+ * rejection from a stall. Text matching is the fallback for raw Squirrel errors.
  */
 export type StageFailureKind = "disk-full" | "verification" | "stall" | "unknown";
 
@@ -271,24 +266,11 @@ function isRetriableStageFailure(kind: StageFailureKind): boolean {
 }
 
 const STAGE_DISK_MESSAGE = "Your Mac is out of disk space, so AO can't install the update. Free up some space, then try again.";
-// Squirrel exposes no way to cancel an in-flight staging request, so once one
-// stalls AO must not start another in this process: recovery is a clean restart.
-// That constraint is why the wording promises the next launch rather than the
-// next 15-minute check, which is the one place the retry ladder cannot reach.
-const STAGE_STALL_MESSAGE = "AO couldn't finish preparing the update, so nothing on your Mac changed. It will download it again and retry the next time AO starts. You can also install the latest build manually from GitHub Releases.";
+const STAGE_STALL_MESSAGE = "AO couldn't finish preparing the update, so nothing on your Mac changed. It will try again automatically.";
 
 /**
- * The calm line shown while AO will try the install again.
- *
- * Both retriable kinds share this shape deliberately. The distinction between
- * "the copy failed its signature check" and "extraction stopped making progress"
- * is a diagnostic one: in both cases the remedy is the same, AO fetches the build
- * again, and neither is something the user can act on. So the user is told what
- * AO is doing, not which internal stage produced it.
- *
- * Never an error state and never red, at any attempt count. The first attempts
- * say AO is retrying now; after that it settles into the steady line, which
- * still promises the same 15 minute cadence because that is what actually runs.
+ * Both retriable kinds share one line: the remedy is the same and the difference
+ * is diagnostic, so the user is told what AO is doing, not which stage failed.
  */
 function stageRetryMessage(attempt: number): string {
   return attempt < MAX_FAST_INSTALL_ATTEMPTS
@@ -351,42 +333,29 @@ function insufficientDiskForStaging(requiredBytes: number): boolean {
 }
 
 /**
- * Shorten a staging failure for display, preserving what kind it was.
- *
- * Signature rejections are deliberately NOT collapsed into the stall line. They
- * have their own retry ladder and their own wording, and the handler that owns
- * them identifies them by message, so rewriting the text here used to erase the
- * evidence and make every verification failure surface as a stall.
+ * Shorten a staging failure for display, preserving what kind it was. Signature
+ * rejections are NOT collapsed into the stall line: the handler that owns them
+ * identifies them by message, so rewriting here erased the evidence.
  */
 function shortStagingError(err: unknown): Error {
   const kind = stageFailureKind(err);
   const raw = err instanceof Error ? err.message : String(err);
   if (kind === "disk-full") return stageError(kind, STAGE_DISK_MESSAGE);
   if (kind === "stall") return stageError(kind, STAGE_STALL_MESSAGE);
-  // "verification" keeps its raw Squirrel text so the install-rejection handler
-  // still matches it; that handler replaces it with the calm line before it can
-  // reach the user.
+  // Raw Squirrel text kept so the install-rejection handler still matches it.
   return Object.assign(new Error(raw), { [STAGE_FAILURE_KIND]: kind });
 }
 
 /**
  * Kill the extraction that has stopped making progress.
  *
- * Squirrel unzips IN THIS PROCESS: SQRLUpdater spawns /usr/bin/ditto as an
- * NSTask child of the app, and SQRLZipArchiver never calls terminate on it.
- * Disposing the signal does not help either, because it is replayed and the task
- * was launched eagerly. So a wedged ditto holds SQRLUpdater's RACCommand in
- * `executing` forever, and every later staging request is refused with
- * RACCommandErrorNotEnabled. Killing the child is the only way to end it.
+ * Squirrel unzips in THIS process (ditto, an NSTask child) and exposes no way to
+ * cancel it, so a wedged ditto holds SQRLUpdater's command in `executing` and
+ * every later stage is refused. Killing the child is the only way out.
  *
- * Safe at this point in the sequence. SQRLInstaller does not touch the installed
- * app until its rename/acquire phases, which run from ShipIt after the app quits.
- * Extraction and signature checking are read-only with respect to /Applications,
- * so an interrupted stage leaves only a scratch directory, which Squirrel's own
- * error path removes. This is NOT true of interrupting the later swap.
- *
- * Matched by parent pid rather than by path: only this process's own children can
- * be ours, so another app's update can never be hit.
+ * Safe here, and only here: SQRLInstaller does not touch the installed app until
+ * phases that run from ShipIt after quit, so an interrupted extraction leaves
+ * just a scratch dir. Interrupting the later swap would not be safe.
  */
 function killStalledStagingTask(): number {
   if (process.platform !== "darwin") return 0;
@@ -400,48 +369,32 @@ function killStalledStagingTask(): number {
       .map((line) => Number(line.trim()))
       .filter((pid) => Number.isInteger(pid) && pid > 0);
   } catch {
-    // pgrep exits non-zero when nothing matches, which is a normal outcome.
-    return 0;
+    return 0; // pgrep exits non-zero when nothing matches
   }
   let killed = 0;
   for (const pid of pids) {
     try {
       process.kill(pid, "SIGKILL");
       killed += 1;
-    } catch {
-      // Already gone between the scan and the signal.
-    }
+    } catch { /* already gone */ }
   }
   return killed;
 }
 
-/**
- * The one recovery ladder for a staged build that could not be installed.
- *
- * Shared by the Squirrel error event and the stall watchdog so both get the same
- * counting, the same cache purge and the same wording. They used to diverge, and
- * the stall half ended up with no recovery at all.
- */
+/** Shared by the Squirrel error event and the stall watchdog, which had drifted apart. */
 function recordRetriableStageFailure(kind: StageFailureKind, err: unknown): void {
   const failures = recordInstallRejection(stagedVersion);
   handledInstallRejection = { version: stagedVersion };
   discardStagedBuild();
-  // Purged on EVERY failure, including the first. electron-updater re-serves a
-  // cached file on existence alone, so without this the next attempt hands
-  // Squirrel byte-identical input and fails identically: a "retry" that cannot
-  // possibly succeed.
-  //
-  // Queued on the operation chain rather than fired and forgotten:
-  // discardStagedBuild() re-enables auto-download, so the next check can start a
-  // download into the very directory this is emptying.
+  // electron-updater re-serves a cached file on existence alone, so a retry that
+  // skipped this would hand Squirrel byte-identical input. Queued, because
+  // discardStagedBuild() re-arms a download into the directory being emptied.
   void runSerializedUpdaterOperation("cache-clear", clearPendingUpdateCache).catch(() => undefined);
   console.error(
     `staged update ${kind === "stall" ? "stalled while preparing" : "rejected at install time"} (attempt ${failures}, discarding cached download so the next attempt re-downloads):`,
     err,
   );
-  // Never red, at any attempt count. AO is still recovering on its own, and a red
-  // failure for a condition the user cannot act on and the app is already
-  // handling is exactly the alarm this path exists to remove.
+  // Never red: the user cannot act on this and AO is already handling it.
   broadcast(withActiveRequest({ state: "retry-scheduled", message: stageRetryMessage(failures) }));
 }
 
@@ -456,9 +409,7 @@ function blockNativePreparation(error: Error): void {
 // deterministically. A fresh module import restores the defaults.
 let readStagingBytes: (dir: string | undefined) => number | undefined = shipItStagingBytes;
 let stagingDiskIsFull: (requiredBytes: number) => boolean = insufficientDiskForStaging;
-// Overridable because the real one signals a process: a test can observe that
-// the stall actually tries to stop the stage, which is the whole difference
-// between a bounded retry and the latch this replaced.
+// Overridable: the real one signals a process, so tests assert the stage is stopped.
 let killStagingTask: () => number = killStalledStagingTask;
 export function __setStagingProbesForTesting(probes: {
   readStagingBytes?: (dir: string | undefined) => number | undefined;
@@ -517,19 +468,14 @@ function beginNativePreparation(version: string, archiveBytes?: number): void {
   let lastProgressAt = startedAt;
   const trip = (): void => {
     const stalledFor = Math.round((Date.now() - startedAt) / 1000);
-    // Stop the stage before anything else. Until the wedged ditto is dead,
-    // SQRLUpdater's command stays `executing` and refuses every later staging
-    // request, so a retry would be rejected before it began. This is what makes
-    // the attempt bounded instead of terminal: the app used to latch here and
-    // wait for a relaunch, which left the one failure class with no recovery.
+    // Stop it first: until the wedged ditto dies every later stage is refused,
+    // so a retry would be rejected before it began.
     const killed = killStagingTask();
     console.error(
       `native update preparation stalled after ${stalledFor}s with no staging progress; killed ${killed} extraction task(s)`,
     );
     const stall = stageError("stall", STAGE_STALL_MESSAGE);
     preparation.finish(stall);
-    // Same ladder as a verification rejection: count it, drop the archive so the
-    // next attempt re-downloads, and report it calmly.
     recordRetriableStageFailure("stall", stall);
   };
   const watchdog = setInterval(() => {
@@ -1758,33 +1704,15 @@ let installRejections:
 let handledInstallRejection: { version: string | undefined } | undefined;
 
 /**
- * How many automatic attempts a build gets before AO stops calling them retries
- * and settles into the steady "download failed, will try again" state.
- *
- * Every attempt re-downloads. The cached archive is purged on each failure,
- * including the first, so a retry can never hand Squirrel the bytes that just
- * failed. Re-preparing the cached copy once was cheaper, and is often enough
- * when the extraction rather than the archive was at fault, but "retrying" has
- * to mean a fresh download or the word is a lie to the user.
- *
- * Nothing stops after three. The count only decides what the user is told: the
- * first three read as an active retry, and after that AO keeps trying quietly on
- * the ordinary 15 minute cadence for as long as it is running.
+ * Attempts shown as an active retry. Nothing stops after three: the count only
+ * decides the wording, and AO keeps retrying on the ordinary 15 minute cadence.
  */
 const MAX_FAST_INSTALL_ATTEMPTS = 3;
 
 /**
- * Automatic recovery is never paused.
- *
- * Kept as a named predicate rather than deleted at the call site because the
- * question "may an automatic check arm a download for a build that keeps
- * failing?" is a real one, and the answer being an unconditional yes is a
- * deliberate decision worth reading at the call site.
- *
- * The cost is real and accepted: a build that can never install is re-fetched on
- * every 15 minute check for as long as the app stays open. A backoff would cut
- * that, but it also delays recovery from the far more common transient cause,
- * and the contract for this state is a plain 15 minute retry.
+ * Never paused, deliberately. A build that can never install is re-fetched every
+ * 15 minutes while the app runs; that cost is accepted so the common transient
+ * cause recovers promptly.
  */
 function automaticRecoveryPaused(): boolean {
   return false;

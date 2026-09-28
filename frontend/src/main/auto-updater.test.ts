@@ -3921,10 +3921,8 @@ describe("staged install rejection", () => {
   );
 
   it("purges the cached archive on the very first failure", async () => {
-    // Every retry must be a real download. electron-updater re-serves a cached
-    // file on existence alone, so keeping the archive made the next attempt hand
-    // Squirrel byte-identical input and fail identically. Re-preparing the cached
-    // copy was cheaper, but it made the retry the user is promised impossible.
+    // electron-updater re-serves a cached file on existence alone, so keeping
+    // the archive made the next attempt fail identically.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -4258,9 +4256,8 @@ describe("staged install rejection", () => {
   });
 
   it("releases the Check button when a second delivery lands on the manual path", async () => {
-    // Keeping the calm message is only half the job. The renderer clears its
-    // pending manual check on a status carrying THAT request's id, so simply
-    // dropping the duplicate left the button spinning until the watchdog.
+    // The renderer clears its pending check on a status carrying that request's
+    // id, so dropping the duplicate left the button spinning until the watchdog.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -4288,12 +4285,9 @@ describe("staged install rejection", () => {
   });
 
   it("keeps the calm line when the same rejection also rejects the download promise", async () => {
-    // MacUpdater registers `nativeUpdater.once("error", reject)` on the download
-    // promise AND re-emits the error, so one Squirrel failure arrives twice by
-    // two different routes. The second route lands in the generic download catch,
-    // which used to be guarded by `lastStatus.state !== "error"` — a test for one
-    // literal state name, which `retry-scheduled` is not. That let the raw
-    // signature dump overwrite the calm line the first route had just set.
+    // One Squirrel failure arrives twice: re-emitted, and as the download
+    // promise rejection. The second route's guard tested one literal state name,
+    // which `retry-scheduled` is not, so the raw dump overwrote the calm line.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -4323,12 +4317,9 @@ describe("staged install rejection", () => {
   });
 
   it("reports a signature rejection as a verification retry, not as a stall", async () => {
-    // The staging-message shortener used to rewrite anything matching /signature/
-    // to the stall line BEFORE anything classified it, so a verification failure
-    // surfaced to the user as "couldn't finish preparing the update", describing a
-    // stall that never happened. Driven through the NATIVE Squirrel error while a
-    // manual check is still in flight, which is the arrangement that puts the
-    // shortened message in front of the user.
+    // The shortener rewrote anything matching /signature/ to the stall line
+    // before anything classified it, so verification failures read as a stall
+    // that never happened. Driven through the native error mid-check.
     const restore = stubProcess("darwin", process.execPath);
     const consoleErrorSpy = vi
       .spyOn(console, "error")
@@ -4362,10 +4353,8 @@ describe("staged install rejection", () => {
   });
 
   it("retries on the real 15 minute periodic check after the attempts are used up", async () => {
-    // Driven through the scheduler's own callback rather than by calling
-    // startAutoUpdates again with the clock moved: the contract is that the
-    // ORDINARY polling cadence keeps running, and only firing the real timer
-    // proves the periodic path still arms a download.
+    // Through the scheduler's own callback, not startAutoUpdates with the clock
+    // moved: only the real timer proves the periodic path still arms a download.
     vi.useFakeTimers();
     const consoleErrorSpy = vi
       .spyOn(console, "error")
@@ -4660,11 +4649,8 @@ it("purges the archive when preparation stalls, so the next launch re-downloads"
 });
 
 it("lets a manual check run normally after a stall, instead of wedging the app", async () => {
-  // The stall used to latch nativePreparationBlocked for the rest of the
-  // process, so every later operation threw before doing anything and the one
-  // guard meant to dedupe a repeat delivery swallowed the user's click, leaving
-  // the Check button spinning. Killing the stalled extraction removes the latch,
-  // so a manual check is just a check again.
+  // The latch made every later operation throw, and the dedupe guard then
+  // swallowed the user's click. Killing the extraction removes the latch.
   vi.useFakeTimers();
   const restore = stubProcess("darwin", process.execPath);
   const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -4696,10 +4682,8 @@ it("lets a manual check run normally after a stall, instead of wedging the app",
 });
 
 it("carries the retry budget across a restart instead of granting three more", async () => {
-  // The bound is "three automatic attempts for THIS build", not "three per
-  // process". Held only in memory, quitting and reopening AO handed a build that
-  // can never install a fresh three, so repeated restarts re-downloaded the same
-  // bad archive without limit.
+  // Three attempts for THIS build, not three per process: held only in memory,
+  // a restart handed a permanently bad build a fresh three, without limit.
   const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const squirrelRejection = new Error(
     "Code signature at URL file:///Users/x/Library/Caches/dev.agent-orchestrator.desktop.ShipIt/" +
@@ -4740,10 +4724,8 @@ it("carries the retry budget across a restart instead of granting three more", a
 });
 
 it("kills a stalled stage and retries it, three times, then keeps the 15 minute cadence", async () => {
-  // The required state transition: detect the stall, STOP it, retry. It used to
-  // latch instead, so this failure class had no recovery inside the process at
-  // all. Stopping it is what makes a retry possible: while the wedged extraction
-  // lives, Squirrel's command stays executing and refuses every later stage.
+  // Detect, STOP, retry. It used to latch, so this class had no in-process
+  // recovery: while the wedged extraction lives every later stage is refused.
   vi.useFakeTimers();
   const restore = stubProcess("darwin", process.execPath);
   const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
