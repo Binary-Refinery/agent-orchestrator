@@ -653,7 +653,8 @@ describe("TopbarArchiveButton", () => {
 		expect(postMock).not.toHaveBeenCalled();
 		const confirmation = screen.getByRole("dialog", { name: "Are you sure you want to archive do the thing?" });
 		expect(confirmation).toHaveClass("left-[50%]", "top-[50%]", "bg-popover", "p-0");
-		expect(confirmation).toHaveTextContent("You can always restore do the thing from the Archive section later.");
+		expect(confirmation).toHaveTextContent("Archiving do the thing saves tracked and non-ignored edits for later reapply.");
+		expect(confirmation).toHaveTextContent("Ignored files aren't saved");
 		expect(within(confirmation).getByRole("button", { name: "No" })).toBeInTheDocument();
 		expect(within(confirmation).getByRole("button", { name: "Confirm, archive session" })).toHaveTextContent("Confirm");
 

@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,12 +19,7 @@ vi.mock("../stores/ui-store", () => ({ useUiStore: (selector: (state: unknown) =
 import { LegacyWorkspaceCleanupDialog } from "./LegacyWorkspaceCleanupDialog";
 
 function renderDialog() {
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(
-		<QueryClientProvider client={queryClient}>
-			<LegacyWorkspaceCleanupDialog />
-		</QueryClientProvider>,
-	);
+	return render(<LegacyWorkspaceCleanupDialog />);
 }
 
 describe("LegacyWorkspaceCleanupDialog", () => {
