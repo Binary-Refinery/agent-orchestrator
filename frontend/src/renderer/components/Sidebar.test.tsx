@@ -32,6 +32,7 @@ import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { sessionInterfaceTransitionStatus } from "../test/interface-transition-fixtures";
 import { useUiStore } from "../stores/ui-store";
 import { sessionInterfaceTransitionQueryKey } from "../hooks/useSessionInterfaceTransition";
+import type { RemoteHost } from "../hooks/useRemoteHosts";
 
 type DragOverTestEvent = {
 	active: {
@@ -76,7 +77,7 @@ const {
 		getMock: vi.fn(),
 		postMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+		mockParams: { hostId: undefined as string | undefined, projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		resumeOrchestratorMock: vi.fn(),
@@ -295,6 +296,9 @@ function renderSidebar({
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	seedAgents = true,
 	workspaces = [workspace],
+	remoteHosts = [],
+	remoteWorkspaces = [],
+	onStartRemoteHost = vi.fn(),
 	initialOpen = true,
 	topbarOffset = "toolbar",
 	expandedProjectIds,
@@ -306,6 +310,9 @@ function renderSidebar({
 	onRemoveProject?: RemoveProjectHandler;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
+	remoteHosts?: RemoteHost[];
+	remoteWorkspaces?: WorkspaceSummary[];
+	onStartRemoteHost?: (hostId: string) => void;
 	initialOpen?: boolean;
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
@@ -337,6 +344,9 @@ function renderSidebar({
 						onInitializeProject={onInitializeProject}
 						onRemoveProject={onRemoveProject}
 						workspaces={workspaces}
+						remoteHosts={remoteHosts}
+						remoteWorkspaces={remoteWorkspaces}
+						onStartRemoteHost={onStartRemoteHost}
 					/>
 				</SidebarProvider>
 			</TooltipProvider>
@@ -477,6 +487,7 @@ beforeEach(() => {
 	checkUpdateMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
+	mockParams.hostId = undefined;
 });
 
 afterEach(() => {
@@ -484,6 +495,40 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("lists remote projects beside local and Cloud projects with host-qualified sessions", () => {
+		mockParams.hostId = "box-b";
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-1";
+		const remoteSession = (hostId: string, title: string): WorkspaceSession => ({
+			...session, hostId, title,
+		});
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }],
+			remoteHosts: [
+				{ hostId: "box-a", label: "Host A", url: "http://box-a:3001", status: "connected" },
+				{ hostId: "box-b", label: "Host B", url: "http://box-b:3001", status: "connected" },
+			],
+			remoteWorkspaces: [
+				{ ...workspace, hostId: "box-a", sessions: [remoteSession("box-a", "Task on A")] },
+				{ ...workspace, hostId: "box-b", sessions: [remoteSession("box-b", "Task on B")] },
+			],
+		});
+
+		const projects = screen.getByTestId("sidebar-projects-scroller");
+		expect(within(projects).getByText("Host A")).toBeInTheDocument();
+		expect(within(projects).getByText("Host B")).toBeInTheDocument();
+		expect(screen.queryByText("Remote hosts")).not.toBeInTheDocument();
+		const remoteSessions = within(projects).getAllByTestId("remote-session-row");
+		expect(remoteSessions).toHaveLength(2);
+		expect(remoteSessions[0]).not.toHaveAttribute("aria-current");
+		expect(remoteSessions[1]).toHaveAttribute("aria-current", "page");
+		fireEvent.click(remoteSessions[0]);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/host/$hostId/project/$projectId/session/$sessionId",
+			params: { hostId: "box-a", projectId: "proj-1", sessionId: "proj-1-1" },
+		});
+	});
+
 	it("shows the cloud sign-in entry point while signed out", () => {
 		cloudSessionState.configured = true;
 		renderSidebar();

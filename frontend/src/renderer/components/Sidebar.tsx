@@ -486,6 +486,9 @@ function useSelection() {
 	return useMemo(() => ({
 		isHome: pathname === "/",
 		isAutomations: pathname === "/automations",
+		activeRemoteHostId: params.hostId,
+		activeRemoteProjectId: params.hostId ? params.projectId : undefined,
+		activeRemoteSessionId: params.hostId ? params.sessionId : undefined,
 		activeProjectId: params.hostId ? undefined : params.projectId,
 		activeSessionId: params.hostId ? undefined : params.sessionId,
 		goHome,
@@ -711,7 +714,7 @@ export function Sidebar({
 		[isCollapsed, projectWorkspaces, showAllProjects],
 	);
 	const hiddenProjectCount = Math.max(0, projectWorkspaces.length - SIDEBAR_INITIAL_SECTION_LIMIT);
-	const projectContentOpen = workspaces.length > 0 && !workspaceError && (projectsOpen || isCollapsed);
+	const projectContentOpen = (projectWorkspaces.length > 0 || remoteHosts.length > 0) && (projectsOpen || isCollapsed);
 	const projectIds = useMemo(
 		() => projectWorkspaces.map((workspace) => workspace.id),
 		[projectWorkspaces],
@@ -992,83 +995,88 @@ export function Sidebar({
 								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
-						) : (
-							<>
-								{workspaces.length > 0 ? (
-									<AnimatedSectionBody open={projectContentOpen} className="flex-none">
-										<SidebarSectionScroller
-											className={SECTION_SCROLLER_CLASS}
-											testId="sidebar-projects-scroller"
-											style={projectsScrollerStyle(isCollapsed, !isCollapsed && hiddenProjectCount > 0)}
-										>
-											<SidebarMenu className="relative gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
-												<AnimatePresence initial={false}>
-													{visibleWorkspaces.map((workspace) => (
-														<ProjectItem
-															key={workspace.id}
-															workspace={workspace}
-															expanded={expandedIds.has(workspace.id) || (initialActiveSessionProjectId === workspace.id && !dismissedInitialActiveProjectIds.has(workspace.id))}
-															suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
-															selection={selection}
-															isDragged={draggingProjectId === workspace.id}
-															projectDragInProgress={draggingProjectId !== null}
-															layoutSettled={layoutSettled}
-															consumeDragClick={projectDragClickGuard.consumeClick}
-															onToggle={toggleProjectDisclosure}
-															onRemoveProject={onRemoveProject}
-															onProjectDragStart={handleProjectDragStart}
-															onProjectDragEnd={handleProjectDragEnd}
-															onProjectDragOver={handleProjectDragOver}
-															onProjectDrop={handleProjectDrop}
-														/>
-													))}
-												</AnimatePresence>
-												{isCollapsed && <CreateProjectListItem />}
-												<div
-													aria-hidden="true"
-													data-project-drop-line=""
-													className="pointer-events-none absolute inset-x-0 z-[70] h-px rounded-full bg-foreground transition-opacity duration-100"
-													style={{ top: dropLine.top, opacity: dropLine.visible ? 1 : 0 }}
+						) : null}
+						{projectWorkspaces.length > 0 || remoteHosts.length > 0 ? (
+							<AnimatedSectionBody open={projectContentOpen} className="flex-none">
+								<SidebarSectionScroller
+									className={SECTION_SCROLLER_CLASS}
+									testId="sidebar-projects-scroller"
+									style={projectsScrollerStyle(isCollapsed, !isCollapsed && hiddenProjectCount > 0)}
+								>
+									<SidebarMenu className="relative gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
+										<AnimatePresence initial={false}>
+											{!workspaceError && visibleWorkspaces.map((workspace) => (
+												<ProjectItem
+													key={workspace.id}
+													workspace={workspace}
+													expanded={expandedIds.has(workspace.id) || (initialActiveSessionProjectId === workspace.id && !dismissedInitialActiveProjectIds.has(workspace.id))}
+													suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
+													selection={selection}
+													isDragged={draggingProjectId === workspace.id}
+													projectDragInProgress={draggingProjectId !== null}
+													layoutSettled={layoutSettled}
+													consumeDragClick={projectDragClickGuard.consumeClick}
+													onToggle={toggleProjectDisclosure}
+													onRemoveProject={onRemoveProject}
+													onProjectDragStart={handleProjectDragStart}
+													onProjectDragEnd={handleProjectDragEnd}
+													onProjectDragOver={handleProjectDragOver}
+													onProjectDrop={handleProjectDrop}
 												/>
-											</SidebarMenu>
-										</SidebarSectionScroller>
-										{!isCollapsed && hiddenProjectCount > 0 ? (
-											<ShowMoreRow
-												expanded={showAllProjects}
-												label={
-													showAllProjects
-														? t("shell.showLessProjects")
-														: t("shell.showMoreProjects", { count: hiddenProjectCount })
-												}
-												onClick={() => {
-													const next = !showAllProjects;
-													setShowAllProjects(next);
-													setShowAllProjectsDismissed(!next);
-												}}
-											/>
-										) : null}
-									</AnimatedSectionBody>
-								) : null}
-								{standaloneWorkspace ? (
-									<ScratchpadSection
-										workspace={standaloneWorkspace}
-										selection={selection}
-										sidebarSectionsRef={sidebarSectionsRef}
-										isCollapsed={isCollapsed}
-										layoutSettled={layoutSettled}
-										open={scratchpadOpen}
-										onToggle={() => setScratchpadOpen((open) => !open)}
+											))}
+										</AnimatePresence>
+										<RemoteHostsSection
+											hosts={remoteHosts}
+											workspaces={remoteWorkspaces}
+											failedHostIds={remoteFailedHostIds}
+											activeHostId={selection.activeRemoteHostId}
+											activeProjectId={selection.activeRemoteProjectId}
+											activeSessionId={selection.activeRemoteSessionId}
+											onStart={onStartRemoteHost}
+											onRetry={onRetryRemoteHosts}
+											onOpenSession={(hostId, projectId, sessionId) => {
+												void remoteNavigate(sessionNavigateTarget(projectId, sessionId, hostId));
+											}}
+										/>
+										{isCollapsed && <CreateProjectListItem />}
+										<div
+											aria-hidden="true"
+											data-project-drop-line=""
+											className="pointer-events-none absolute inset-x-0 z-[70] h-px rounded-full bg-foreground transition-opacity duration-100"
+											style={{ top: dropLine.top, opacity: dropLine.visible ? 1 : 0 }}
+										/>
+									</SidebarMenu>
+								</SidebarSectionScroller>
+								{!isCollapsed && hiddenProjectCount > 0 ? (
+									<ShowMoreRow
+										expanded={showAllProjects}
+										label={
+											showAllProjects
+												? t("shell.showLessProjects")
+												: t("shell.showMoreProjects", { count: hiddenProjectCount })
+										}
+										onClick={() => {
+											const next = !showAllProjects;
+											setShowAllProjects(next);
+											setShowAllProjectsDismissed(!next);
+										}}
 									/>
 								) : null}
-							</>
-						)}
+							</AnimatedSectionBody>
+						) : null}
+						{!workspaceError && standaloneWorkspace ? (
+							<ScratchpadSection
+								workspace={standaloneWorkspace}
+								selection={selection}
+								sidebarSectionsRef={sidebarSectionsRef}
+								isCollapsed={isCollapsed}
+								layoutSettled={layoutSettled}
+								open={scratchpadOpen}
+								onToggle={() => setScratchpadOpen((open) => !open)}
+							/>
+						) : null}
 					</SidebarGroupContent>
 				</SidebarGroup>
-				<div className="group-data-[collapsible=icon]:hidden">
-						<RemoteHostsSection hosts={remoteHosts} workspaces={remoteWorkspaces} failedHostIds={remoteFailedHostIds} onStart={onStartRemoteHost} onRetry={onRetryRemoteHosts} onOpenSession={(hostId, projectId, sessionId) => {
-						void remoteNavigate(sessionNavigateTarget(projectId, sessionId, hostId));
-					}} />
-				</div>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.

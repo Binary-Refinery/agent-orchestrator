@@ -1,12 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { RemoteHostsSection } from "./RemoteHostsSection";
+import { SidebarMenu, SidebarProvider } from "./ui/sidebar";
+import { TooltipProvider } from "./ui/tooltip";
 
 it("keeps offline hosts visible and opens a same-ID session on the selected host", () => {
 	const open = vi.fn();
 	const retry = vi.fn();
 	const start = vi.fn();
-	render(<RemoteHostsSection
+	render(<TooltipProvider><SidebarProvider><SidebarMenu><RemoteHostsSection
 		hosts={[
 			{ hostId: "box-a", label: "Box A", url: "http://box-a:3001", status: "offline" },
 			{ hostId: "box-b", label: "Box B", url: "http://box-b:3001", status: "connected" },
@@ -25,27 +27,27 @@ it("keeps offline hosts visible and opens a same-ID session on the selected host
 		onOpenSession={open}
 		onStart={start}
 		onRetry={retry}
-	/>);
+	/></SidebarMenu></SidebarProvider></TooltipProvider>);
 	expect(screen.getByText("Box A")).toBeVisible();
 	expect(screen.queryByText("Stale session")).not.toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Retry Box A" }));
 	expect(retry).toHaveBeenCalledOnce();
 	fireEvent.click(screen.getByRole("button", { name: "Start on Box B" }));
 	expect(start).toHaveBeenCalledWith("box-b");
-	fireEvent.click(screen.getByRole("button", { name: "Fix login" }));
+	fireEvent.click(screen.getByRole("button", { name: "Open Fix login" }));
 	expect(open).toHaveBeenCalledWith("box-b", "project-1", "session-1");
 });
 
 it("shows a retry action when a connected host cannot load its sessions", () => {
 	const retry = vi.fn();
-	render(<RemoteHostsSection
+	render(<TooltipProvider><SidebarProvider><SidebarMenu><RemoteHostsSection
 		hosts={[{ hostId: "box-a", label: "Box A", url: "http://box-a:3001", status: "connected" }]}
 		workspaces={[]}
 		failedHostIds={["box-a"]}
 		onOpenSession={vi.fn()}
 		onStart={vi.fn()}
 		onRetry={retry}
-	/>);
+	/></SidebarMenu></SidebarProvider></TooltipProvider>);
 	fireEvent.click(screen.getByRole("button", { name: "Could not load sessions. Retry" }));
 	expect(retry).toHaveBeenCalledOnce();
 });
