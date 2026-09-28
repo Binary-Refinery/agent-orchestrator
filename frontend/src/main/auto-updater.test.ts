@@ -2977,6 +2977,38 @@ describe("startAutoUpdates", () => {
     }
   });
 
+  it("keeps staged notes when a later check offers a newer build", async () => {
+    const { module, updaterEvents, statusMessages } = await importAutoUpdater();
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({
+      version: "2.0.0",
+      releaseNotes: "Staged release notes",
+    });
+
+    updaterEvents.get("update-available")?.({
+      version: "2.1.0",
+      releaseNotes: "Newer offered release notes",
+    });
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "available",
+      version: "2.1.0",
+      releaseNotes: "Staged release notes",
+      staged: { version: "2.0.0" },
+    });
+
+    updaterEvents.get("checking-for-update")?.();
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "checking",
+      releaseNotes: "Staged release notes",
+      staged: { version: "2.0.0" },
+    });
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "checking",
+      releaseNotes: "Staged release notes",
+      staged: { version: "2.0.0" },
+    });
+  });
+
   it("keeps staged records without release notes backward compatible", async () => {
     writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({
       version: "2.1.0",
