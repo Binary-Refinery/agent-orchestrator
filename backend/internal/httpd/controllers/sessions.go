@@ -164,6 +164,7 @@ type SessionsController struct {
 
 // Register mounts the session routes on the supplied router.
 func (c *SessionsController) Register(r chi.Router) {
+	r.Get("/governance/capabilities", c.governanceCapabilities)
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
@@ -1252,7 +1253,12 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/restore")
 		return
 	}
-	out, err := c.Svc.Restore(r.Context(), sessionID(r))
+	ctx, err := nativeHistoryRequestContext(w, r)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid native-history request", nil)
+		return
+	}
+	out, err := c.Svc.Restore(ctx, sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1291,7 +1297,12 @@ func (c *SessionsController) resumeAgent(w http.ResponseWriter, r *http.Request)
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/resume-agent")
 		return
 	}
-	out, err := c.Svc.ResumeAgent(r.Context(), sessionID(r))
+	ctx, err := nativeHistoryRequestContext(w, r)
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid native-history request", nil)
+		return
+	}
+	out, err := c.Svc.ResumeAgent(ctx, sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -2197,4 +2208,35 @@ func nonNilSessionIDs(ids []domain.SessionID) []domain.SessionID {
 		return []domain.SessionID{}
 	}
 	return ids
+}
+
+func nativeHistoryRequestContext(w http.ResponseWriter, r *http.Request) (context.Context, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var in NativeHistoryRequest
+	if err := decoder.Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		return r.Context(), err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return r.Context(), fmt.Errorf("extra request content")
+	}
+	if in.RequireNativeHistory {
+		return domain.WithNativeHistoryRequired(r.Context()), nil
+	}
+	return r.Context(), nil
+}
+
+func (c *SessionsController) governanceCapabilities(w http.ResponseWriter, r *http.Request) {
+	envelope.WriteJSON(w, http.StatusOK, GovernanceCapabilitiesResponse{
+		Schema:                   "artifaktory.ao.compatibility.v1",
+		UpstreamCommit:           "15e9ea971f1711ec8b50e157d6eb300db6cbe0d6",
+		PatchID:                  "af-ao-governance-v1",
+		ManagedProjectMode:       true,
+		NativeInjectionsDisabled: true,
+		SafeSpawnDefaults:        true,
+		ProtectedManagedSettings: true,
+		RequireNativeHistory:     true,
+	})
 }

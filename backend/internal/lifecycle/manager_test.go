@@ -39,7 +39,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		sessions:   map[domain.SessionID]domain.SessionRecord{},
-		projects:   map[string]domain.ProjectRecord{},
+		projects:   map[string]domain.ProjectRecord{"mer": {ID: "mer"}},
 		prs:        map[domain.SessionID][]domain.PullRequest{},
 		reviews:    map[string][]domain.PullRequestReview{},
 		comments:   map[string][]domain.PullRequestComment{},
@@ -3197,7 +3197,7 @@ func TestApplyTrackerFacts_TerminalStateIsSuppressedDuringSessionMutation(t *tes
 func TestLifecycleNudgeUsesLateBoundSessionInputLease(t *testing.T) {
 	m, st, msg := newManager()
 	m.SetSessionInputLease(fixedLifecycleInputLease(false))
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle}}
 
 	outcome, err := m.sendOnce(ctx, "mer-1", "", "tracker-comment:1", "1", "review this", 0, false)
 	if err != nil {
@@ -3229,7 +3229,7 @@ func TestLifecycleNudgeStartupGateUsesAdapterCapability(t *testing.T) {
 				return harness == tt.harness && tt.gate
 			}))
 			st.sessions["mer-1"] = domain.SessionRecord{
-				ID: "mer-1", Harness: tt.harness, Mode: domain.SessionModeTUI,
+				ID: "mer-1", ProjectID: "mer", Harness: tt.harness, Mode: domain.SessionModeTUI,
 				Activity: domain.Activity{State: domain.ActivityIdle},
 			}
 

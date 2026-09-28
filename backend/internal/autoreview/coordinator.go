@@ -101,6 +101,9 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 		}
 		return Result{}, err
 	}
+	if project.Config.GovernanceManaged {
+		return Result{Reason: "external_governance"}, nil
+	}
 	harness := effectiveReviewerHarness(session, project.Config)
 	if harness == "" {
 		return Result{Reason: "missing_reviewer_harness"}, nil

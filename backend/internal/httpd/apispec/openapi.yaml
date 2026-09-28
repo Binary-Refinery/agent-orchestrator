@@ -1216,6 +1216,19 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/governance/capabilities:
+    get:
+      operationId: governanceCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GovernanceCapabilitiesResponse'
+          description: OK
+      summary: Inspect pinned external-governance compatibility
+      tags:
+      - sessions
   /api/v1/identity:
     get:
       operationId: getIdentity
@@ -5253,6 +5266,12 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NativeHistoryRequest'
+        required: true
       responses:
         "200":
           content:
@@ -5292,6 +5311,12 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NativeHistoryRequest'
+        required: true
       responses:
         "200":
           content:
@@ -9555,6 +9580,34 @@ components:
       - repoPath
       - approvedActions
       type: object
+    GovernanceCapabilitiesResponse:
+      properties:
+        managedProjectMode:
+          type: boolean
+        nativeInjectionsDisabled:
+          type: boolean
+        patchId:
+          type: string
+        protectedManagedSettings:
+          type: boolean
+        requireNativeHistory:
+          type: boolean
+        safeSpawnDefaults:
+          type: boolean
+        schema:
+          type: string
+        upstreamCommit:
+          type: string
+      required:
+      - schema
+      - upstreamCommit
+      - patchId
+      - managedProjectMode
+      - nativeInjectionsDisabled
+      - safeSpawnDefaults
+      - protectedManagedSettings
+      - requireNativeHistory
+      type: object
     IdentityResponse:
       properties:
         apiVersion:
@@ -10165,6 +10218,11 @@ components:
       required:
       - muted
       type: object
+    NativeHistoryRequest:
+      properties:
+        requireNativeHistory:
+          type: boolean
+      type: object
     NotificationEnvelope:
       properties:
         notification:
@@ -10422,6 +10480,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        governanceManaged:
+          type: boolean
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:

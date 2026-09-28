@@ -218,6 +218,8 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersListSessionsQuery":                        "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":                     "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":                     "ListSessionsResponse",
+	"ControllersNativeHistoryRequest":                     "NativeHistoryRequest",
+	"ControllersGovernanceCapabilitiesResponse":           "GovernanceCapabilitiesResponse",
 	"ControllersSpawnSessionRequest":                      "SpawnSessionRequest",
 	"ControllersSpawnSessionResponse":                     "SpawnSessionResponse",
 	"ControllersSessionResponse":                          "SessionResponse",
@@ -2218,6 +2220,11 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/governance/capabilities", id: "governanceCapabilities", tag: "sessions",
+			summary: "Inspect pinned external-governance compatibility",
+			resps:   []respUnit{{http.StatusOK, controllers.GovernanceCapabilitiesResponse{}}},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/cleanup", id: "cleanupSessions", tag: "sessions",
 			summary:    "Clean up terminated session workspaces",
 			pathParams: []any{controllers.CleanupSessionsQuery{}},
@@ -2230,6 +2237,7 @@ func sessionOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/restore", id: "restoreSession", tag: "sessions",
 			summary:    "Restore a terminated session",
+			reqBody:    controllers.NativeHistoryRequest{},
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RestoreSessionResponse{}},
@@ -2253,6 +2261,7 @@ func sessionOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/resume-agent", id: "resumeAgent", tag: "sessions",
 			summary:    "Resume an exited agent in its existing session",
+			reqBody:    controllers.NativeHistoryRequest{},
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResumeAgentResponse{}},

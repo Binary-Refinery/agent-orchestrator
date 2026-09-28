@@ -130,7 +130,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 	enabledProjects := make([]domain.ProjectRecord, 0, len(projects))
 	for _, project := range projects {
-		if project.Config.TrackerIntake.Enabled {
+		if project.Config.TrackerIntake.Enabled && !project.Config.GovernanceManaged {
 			enabledProjects = append(enabledProjects, project)
 		}
 	}
@@ -163,7 +163,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 // backoff window rather than logged on every poll.
 func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
-	if !cfg.Enabled {
+	if !cfg.Enabled || project.Config.GovernanceManaged {
 		return false
 	}
 	if err := cfg.Validate(); err != nil {

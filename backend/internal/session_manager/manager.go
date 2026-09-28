@@ -2020,7 +2020,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	if rec.Kind == domain.KindWorker {
+	if rec.Kind == domain.KindWorker && !project.Config.GovernanceManaged {
 		if err := m.restoreReviewer(ctx, rec.ID); err != nil {
 			m.logger.Warn("restore: reviewer terminal restore failed; worker remains restored", "sessionID", rec.ID, "error", err)
 		}
@@ -2218,6 +2218,13 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 }
 
 func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, reservedGeneration string) (RestoreResult, error) {
+	requireNativeHistory = requireNativeHistory || domain.NativeHistoryRequired(ctx) || project.Config.GovernanceManaged
+	if requireNativeHistory {
+		if forceFresh {
+			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrNotResumable)
+		}
+		ctx = domain.WithNativeHistoryRequired(ctx)
+	}
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
@@ -3809,9 +3816,9 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
 		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
-		AutoReviewEnabled: projectConfig.AutoReview,
-		AutoInjectReview:  true,
-		AutoInjectCI:      true,
+		AutoReviewEnabled: projectConfig.AutoReview && !projectConfig.GovernanceManaged,
+		AutoInjectReview:  !projectConfig.GovernanceManaged,
+		AutoInjectCI:      !projectConfig.GovernanceManaged,
 	}
 }
 
@@ -4722,6 +4729,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	// branch and commits it produced. Relaunch into that workspace even without
 	// a saved prompt, rather than stranding the work behind ErrNotResumable. A
 	// worker that never got that far (no id, no prompt) still stays unresumable.
+	if domain.NativeHistoryRequired(ctx) {
+		return nil, "", "", ErrNotResumable
+	}
 	return freshLaunchArgv(ctx, agent, id, workspacePath, meta, systemPrompt,
 		systemPromptFile, agentConfig, kind, dataDir, conversationLost)
 }

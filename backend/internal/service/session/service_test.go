@@ -643,6 +643,7 @@ func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
 
 func TestSessionSetAutoReviewPersistsToggle(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	svc := &Service{store: st}
 
