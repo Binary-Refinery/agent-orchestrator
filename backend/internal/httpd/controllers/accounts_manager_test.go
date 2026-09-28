@@ -23,6 +23,12 @@ type fakeAccountsManagerStatus struct {
 
 type fakeAccountsManagerCatalog struct{}
 
+type emptyAccountsManagerCatalog struct{ fakeAccountsManagerCatalog }
+
+func (emptyAccountsManagerCatalog) ListCredentials(context.Context) ([]accountsmanager.CredentialSummary, error) {
+	return nil, nil
+}
+
 type fakeAccountsManagerRoutingStore struct {
 	mu       sync.Mutex
 	policies map[domain.AccountsManagerProvider]domain.AccountsManagerRoutingPolicy
@@ -155,5 +161,33 @@ func TestAccountsManagerRoutingUpdatePreservesOrderedSafeIDs(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "raw-auth-index") {
 		t.Fatalf("routing response exposed private ref: %s", response.Body.String())
+	}
+}
+
+func TestAccountsManagerFirstLaunchReturnsEmptyArrays(t *testing.T) {
+	t.Parallel()
+	store := &fakeAccountsManagerRoutingStore{}
+	router := chi.NewRouter()
+	controller := AccountsManagerController{Service: accountsvc.New(emptyAccountsManagerCatalog{}, store)}
+	controller.Register(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/accounts-manager/accounts", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var body AccountsManagerAccountsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Accounts == nil || len(body.Accounts) != 0 || body.OAuthSessions == nil || len(body.OAuthSessions) != 0 {
+		t.Fatalf("first-launch collections must be empty arrays: %s", response.Body.String())
+	}
+	if len(body.Routing) != 2 {
+		t.Fatalf("routing policies = %d, want 2", len(body.Routing))
+	}
+	for _, policy := range body.Routing {
+		if policy.Enabled || policy.AccountIDs == nil || len(policy.AccountIDs) != 0 {
+			t.Errorf("unset policy must be disabled with an empty account array: %#v", policy)
+		}
 	}
 }

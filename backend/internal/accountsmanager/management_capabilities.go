@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
+// CredentialModel is a model advertised for one runner credential.
 type CredentialModel struct {
 	ID          string
 	DisplayName string
@@ -15,12 +17,14 @@ type CredentialModel struct {
 	Owner       string
 }
 
+// QuotaSubscription carries provider-reported plan information, not local billing state.
 type QuotaSubscription struct {
 	Plan     string `json:"plan"`
 	TierName string `json:"tierName"`
 	TierID   string `json:"tierId"`
 }
 
+// QuotaMetric retains the provider's units and format for a usage measurement.
 type QuotaMetric struct {
 	Key      string  `json:"key"`
 	Label    string  `json:"label"`
@@ -30,6 +34,7 @@ type QuotaMetric struct {
 	Currency string  `json:"currency"`
 }
 
+// QuotaBucket describes one provider-reported quota window.
 type QuotaBucket struct {
 	Window            string  `json:"window"`
 	RemainingFraction float64 `json:"remainingFraction"`
@@ -37,28 +42,40 @@ type QuotaBucket struct {
 	Description       string  `json:"description"`
 }
 
+// QuotaGroup groups quota windows with a shared provider label.
 type QuotaGroup struct {
 	DisplayName string        `json:"displayName"`
 	Buckets     []QuotaBucket `json:"buckets"`
 }
 
+// CredentialQuota contains validated quota observations without credential material.
 type CredentialQuota struct {
+	ObservedAt         time.Time          `json:"observedAt"`
 	Subscription       *QuotaSubscription `json:"subscription"`
 	Summary            []QuotaMetric      `json:"summary"`
 	ServerTimeOffsetMS int64              `json:"serverTimeOffsetMs"`
 	Groups             []QuotaGroup       `json:"groups"`
 }
 
+// QuotaError keeps provider bodies and transport details out of public errors.
+type QuotaError struct{ StatusCode int }
+
+func (*QuotaError) Error() string { return "account usage lookup failed" }
+
+func (e *QuotaError) Unwrap() error {
+	if e.StatusCode == http.StatusBadGateway {
+		return ErrInvalidResponse
+	}
+	return nil
+}
+
+// ListCredentialModels requires an unambiguous credential with a backing auth record.
 func (c *ManagementClient) ListCredentialModels(ctx context.Context, ref string) ([]CredentialModel, error) {
 	record, err := c.resolveCredential(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(record.Name)
-	if name == "" {
-		return nil, ErrOperationUnsupported
-	}
-	query := url.Values{"name": []string{name}}
+	query := url.Values{"ref": []string{record.AuthIndex}}
 	var response struct {
 		Models []struct {
 			ID          string `json:"id"`
@@ -67,7 +84,7 @@ func (c *ManagementClient) ListCredentialModels(ctx context.Context, ref string)
 			Owner       string `json:"owned_by"`
 		} `json:"models"`
 	}
-	if err = c.doJSON(ctx, "list credential models", http.MethodGet, "/v0/management/auth-files/models?"+query.Encode(), nil, &response); err != nil {
+	if err = c.doJSON(ctx, "list credential models", http.MethodGet, credentialManagementPath+"/models?"+query.Encode(), nil, &response); err != nil {
 		return nil, mapCredentialOperationError(err)
 	}
 	if len(response.Models) > 4096 {
@@ -94,6 +111,7 @@ func (c *ManagementClient) ListCredentialModels(ctx context.Context, ref string)
 	return models, nil
 }
 
+// FetchCredentialQuota rejects credentials whose provider does not support quota checks.
 func (c *ManagementClient) FetchCredentialQuota(ctx context.Context, ref string) (CredentialQuota, error) {
 	record, err := c.resolveCredential(ctx, ref)
 	if err != nil {
@@ -103,20 +121,32 @@ func (c *ManagementClient) FetchCredentialQuota(ctx context.Context, ref string)
 		return CredentialQuota{}, ErrOperationUnsupported
 	}
 	var quota CredentialQuota
-	err = c.doJSON(ctx, "fetch credential quota", http.MethodPost, "/v0/management/quota/fetch", map[string]string{"auth_index": record.AuthIndex}, &quota)
+	err = c.doJSON(ctx, "fetch credential quota", http.MethodGet, credentialManagementPath+"/quota?"+url.Values{"ref": {record.AuthIndex}}.Encode(), nil, &quota)
 	if err != nil {
 		var statusErr *ManagementStatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotImplemented {
 			return CredentialQuota{}, ErrOperationUnsupported
 		}
-		return CredentialQuota{}, err
+		status := http.StatusServiceUnavailable
+		if errors.As(err, &statusErr) {
+			switch statusErr.StatusCode {
+			case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, http.StatusBadGateway:
+				status = statusErr.StatusCode
+			case http.StatusConflict, http.StatusNotFound:
+				return CredentialQuota{}, mapCredentialOperationError(err)
+			}
+		} else if errors.Is(err, ErrInvalidResponse) || errors.Is(err, ErrResponseTooLarge) {
+			status = http.StatusBadGateway
+		}
+		return CredentialQuota{}, &QuotaError{StatusCode: status}
 	}
 	if !validCredentialQuota(quota) {
-		return CredentialQuota{}, ErrInvalidResponse
+		return CredentialQuota{}, &QuotaError{StatusCode: http.StatusBadGateway}
 	}
 	return quota, nil
 }
 
+// ResetCredentialQuota requires the provider to explicitly advertise reset support.
 func (c *ManagementClient) ResetCredentialQuota(ctx context.Context, ref string) error {
 	c.mutationMu.Lock()
 	defer c.mutationMu.Unlock()
@@ -138,7 +168,7 @@ func (c *ManagementClient) ResetCredentialQuota(ctx context.Context, ref string)
 			SupportsReset      bool     `json:"supports_reset"`
 		} `json:"providers"`
 	}
-	if err = c.doJSON(ctx, "list quota providers", http.MethodGet, "/v0/management/quota/providers", nil, &providers); err != nil {
+	if err := c.doJSON(ctx, "list quota providers", http.MethodGet, "/v0/management/quota/providers", nil, &providers); err != nil {
 		return err
 	}
 	resetSupported := false
@@ -173,7 +203,7 @@ func (c *ManagementClient) ResetCredentialQuota(ctx context.Context, ref string)
 }
 
 func validCredentialQuota(quota CredentialQuota) bool {
-	if len(quota.Summary) > 256 || len(quota.Groups) > 128 {
+	if quota.ObservedAt.IsZero() || len(quota.Summary) > 256 || len(quota.Groups) == 0 || len(quota.Groups) > 128 {
 		return false
 	}
 	for _, metric := range quota.Summary {
@@ -182,12 +212,17 @@ func validCredentialQuota(quota CredentialQuota) bool {
 		}
 	}
 	for _, group := range quota.Groups {
-		if len(group.Buckets) > 256 {
+		if len(group.DisplayName) > 512 || len(group.Buckets) == 0 || len(group.Buckets) > 256 {
 			return false
 		}
 		for _, bucket := range group.Buckets {
-			if bucket.RemainingFraction < 0 || bucket.RemainingFraction > 1 {
+			if bucket.Window == "" || len(bucket.Window) > 256 || len(bucket.Description) > 512 || bucket.RemainingFraction < 0 || bucket.RemainingFraction > 1 {
 				return false
+			}
+			if bucket.ResetTime != "" {
+				if _, err := time.Parse(time.RFC3339, bucket.ResetTime); err != nil {
+					return false
+				}
 			}
 		}
 	}

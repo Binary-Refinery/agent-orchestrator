@@ -533,6 +533,7 @@ type LaunchConfig struct {
 	Route *AgentProviderRoute
 }
 
+// AgentProviderRoute names a child-only token variable; it never stores the token itself.
 type AgentProviderRoute struct {
 	BaseURL  string
 	TokenEnv string

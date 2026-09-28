@@ -20,24 +20,29 @@ import (
 )
 
 const (
-	serviceName      = "ao-accounts-manager"
-	leaseInterval    = 5 * time.Second
-	healthTimeout    = 10 * time.Second
-	stableRunReset   = 60 * time.Second
-	maxRestartDelay  = 30 * time.Second
-	privateHTTPDelay = 100 * time.Millisecond
+	serviceName               = "ao-accounts-manager"
+	leaseInterval             = 5 * time.Second
+	healthTimeout             = 10 * time.Second
+	stableRunReset            = 60 * time.Second
+	maxRestartDelay           = 30 * time.Second
+	privateHTTPDelay          = 100 * time.Millisecond
+	credentialProtocolVersion = 4
 )
 
+// State describes runner availability without affecting daemon readiness.
 type State string
 
+// StateStarting and the other states describe the supervision lifecycle.
 const (
 	StateStarting State = "starting"
 	StateReady    State = "ready"
 	StateDegraded State = "degraded"
 )
 
+// Reason identifies a safe failure category without private process details.
 type Reason string
 
+// ReasonBinaryMissing and the other reasons are public-safe degradation codes.
 const (
 	ReasonBinaryMissing        Reason = "binary_missing"
 	ReasonConfigurationInvalid Reason = "configuration_invalid"
@@ -61,6 +66,7 @@ type Endpoint struct {
 	ManagementToken string
 }
 
+// Config supplies the private state root, runner executable, and supervision dependencies.
 type Config struct {
 	StateDir     string
 	Binary       string
@@ -70,6 +76,7 @@ type Config struct {
 	processAlive func(int) bool
 }
 
+// Supervisor attaches to or restarts the isolated runner without blocking daemon startup.
 type Supervisor struct {
 	cfg    Config
 	client *http.Client
@@ -84,10 +91,11 @@ type Supervisor struct {
 }
 
 type controlIdentity struct {
-	Service       string `json:"service"`
-	InstanceID    string `json:"instanceId"`
-	RunnerVersion string `json:"runnerVersion"`
-	EngineVersion string `json:"engineVersion"`
+	Service            string `json:"service"`
+	InstanceID         string `json:"instanceId"`
+	RunnerVersion      string `json:"runnerVersion"`
+	EngineVersion      string `json:"engineVersion"`
+	CredentialProtocol int    `json:"credentialProtocol"`
 }
 
 type managedProcess interface {
@@ -96,11 +104,17 @@ type managedProcess interface {
 
 type launchProcess func(binary, stateRoot string) (managedProcess, <-chan error, error)
 
+// New creates a supervisor without starting a runner or writing state.
 func New(cfg Config) *Supervisor {
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Second}
+		client = &http.Client{}
 	}
+	bounded := *client
+	if bounded.Timeout <= 0 || bounded.Timeout > 2*time.Second {
+		bounded.Timeout = 2 * time.Second
+	}
+	bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
@@ -113,19 +127,22 @@ func New(cfg Config) *Supervisor {
 	if alive == nil {
 		alive = processalive.Alive
 	}
-	return &Supervisor{cfg: cfg, client: client, log: log, launch: launch, alive: alive, status: Status{State: StateStarting}}
+	return &Supervisor{cfg: cfg, client: &bounded, log: log, launch: launch, alive: alive, status: Status{State: StateStarting}}
 }
 
+// Start begins supervision once and stops monitoring when ctx is cancelled.
 func (s *Supervisor) Start(ctx context.Context) {
 	s.once.Do(func() { go s.run(ctx) })
 }
 
+// Status returns a redacted, concurrency-safe health snapshot.
 func (s *Supervisor) Status() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
 }
 
+// Endpoint returns private connection material with a readiness flag callers must check.
 func (s *Supervisor) Endpoint() (Endpoint, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -305,7 +322,7 @@ func (s *Supervisor) tryAttach(ctx context.Context, record RuntimeRecord, contro
 	if !s.requestJSON(ctx, http.MethodGet, baseURL+"/ao/internal/identity", controlKey, &identity) {
 		return Endpoint{}, false
 	}
-	if identity.Service != serviceName || identity.InstanceID != record.InstanceID {
+	if identity.Service != serviceName || identity.InstanceID != record.InstanceID || identity.CredentialProtocol != credentialProtocolVersion {
 		return Endpoint{}, false
 	}
 	if !s.requestOK(ctx, http.MethodGet, baseURL+"/healthz", "", http.StatusOK) {
@@ -318,7 +335,7 @@ func (s *Supervisor) tryAttach(ctx context.Context, record RuntimeRecord, contro
 }
 
 func (s *Supervisor) requestJSON(ctx context.Context, method, url, key string, dst any) bool {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, http.NoBody)
 	if err != nil {
 		return false
 	}
@@ -327,7 +344,7 @@ func (s *Supervisor) requestJSON(ctx context.Context, method, url, key string, d
 	if err != nil {
 		return false
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return false
 	}
@@ -335,7 +352,7 @@ func (s *Supervisor) requestJSON(ctx context.Context, method, url, key string, d
 }
 
 func (s *Supervisor) requestOK(ctx context.Context, method, url, key string, want int) bool {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, http.NoBody)
 	if err != nil {
 		return false
 	}
@@ -346,7 +363,7 @@ func (s *Supervisor) requestOK(ctx context.Context, method, url, key string, wan
 	if err != nil {
 		return false
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	return res.StatusCode == want
 }

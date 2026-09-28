@@ -49,10 +49,11 @@ type Service struct {
 	onCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 	// onModelChanged syncs ChatUI's model override (including clearing it) to
 	// session metadata before the next prompt routes or a later TUI rebuild.
-	onModelChanged   func(domain.SessionID, string)
-	stopProviderHost func(context.Context, domain.SessionID) error
-	reports          *reportsvc.Coordinator
-	accountsManager  ports.AccountsManagerLaunchRouter
+	onModelChanged        func(domain.SessionID, string)
+	stopProviderHost      func(context.Context, domain.SessionID) error
+	stopExactProviderHost func(context.Context, domain.SessionID, string) error
+	reports               *reportsvc.Coordinator
+	accountsManager       ports.AccountsManagerLaunchRouter
 
 	mu               sync.RWMutex
 	controllers      map[domain.SessionID]*Controller
@@ -120,7 +121,8 @@ type Options struct {
 	OnModelChanged func(domain.SessionID, string)
 	// StopProviderHost destroys current session ownership on explicit teardown,
 	// even if its daemon attachment already failed. Never used by StopAll.
-	StopProviderHost func(context.Context, domain.SessionID) error
+	StopProviderHost      func(context.Context, domain.SessionID) error
+	StopExactProviderHost func(context.Context, domain.SessionID, string) error
 	// AccountsManager routes Claude ACP provider processes through the embedded
 	// gateway. Codex app-server Chat intentionally remains native.
 	AccountsManager ports.AccountsManagerLaunchRouter
@@ -150,6 +152,7 @@ func New(opts Options) *Service {
 		onCodexCapacityChanged: opts.OnCodexCapacityChanged,
 		onModelChanged:         opts.OnModelChanged,
 		stopProviderHost:       opts.StopProviderHost,
+		stopExactProviderHost:  opts.StopExactProviderHost,
 		accountsManager:        opts.AccountsManager,
 		controllers:            make(map[domain.SessionID]*Controller),
 		ownerControllers:       make(map[domain.ConversationOwner]*Controller),
@@ -285,6 +288,20 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 // the user can act on.
 func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, error) {
 	owner := conversationOwner(cfg)
+	if owner.Kind == domain.ConversationOwnerSession && cfg.Harness == domain.HarnessCodex && s.accountsManager != nil {
+		if recorder, ok := s.accountsManager.(ports.AccountsManagerNativeRecorder); ok {
+			if err := recorder.RecordNativeAgentSessionRoute(ctx, cfg.SessionID, domain.AccountsManagerProviderCodex); err != nil {
+				return nil, err
+			}
+		}
+		pinned, err := s.accountsManager.HasAgentSessionRoute(ctx, cfg.SessionID, domain.AccountsManagerProviderCodex)
+		if err != nil {
+			return nil, fmt.Errorf("read Accounts Manager session binding: %w", err)
+		}
+		if pinned {
+			return nil, fmt.Errorf("%w: this session is pinned to Accounts Manager; managed Chat is not supported", ports.ErrChatUnsupported)
+		}
+	}
 	if owner.Kind == domain.ConversationOwnerReview {
 		cfg.ReadOnly = true
 	}
@@ -608,7 +625,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		}
 		if prepared != nil {
 			launchEnv = applyClaudeAccountsManagerEnv(cfg.Env, prepared)
-			route = &ports.AgentProviderRoute{BaseURL: strings.TrimRight(strings.TrimSpace(prepared.BaseURL), "/"), TokenEnv: "ANTHROPIC_AUTH_TOKEN"}
+			route = &ports.AgentProviderRoute{BaseURL: strings.TrimRight(strings.TrimSpace(prepared.BaseURL), "/"), TokenEnv: "ANTHROPIC_AUTH_TOKEN"} // #nosec G101 -- TokenEnv is a variable name, not a secret value.
 		}
 	}
 
@@ -625,7 +642,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 					return nil, fmt.Errorf("prepare Accounts Manager route: %w", routeErr)
 				}
 				if prepared == nil {
-					return nil, errors.New("Accounts Manager route became unavailable")
+					return nil, errors.New("accounts manager route became unavailable")
 				}
 				env = applyClaudeAccountsManagerEnv(env, prepared)
 			}
@@ -743,6 +760,12 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if generation == "" {
 		generation = s.newID()
 	}
+	if route != nil {
+		if err := s.recordAccountsManagerChatHost(ctx, cfg.SessionID, generation, conv); err != nil {
+			_ = cleanupUnpublishedConversation(conv, false)
+			return nil, err
+		}
+	}
 	if providerBoundaryID == "" {
 		if owner.Kind == domain.ConversationOwnerReview {
 			claimed, claimErr := s.store.ClaimReviewChatController(ctx, owner.ID, conv.ProviderConversationID(), generation, s.now())
@@ -791,6 +814,18 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, owner, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
+	if owner.Kind == domain.ConversationOwnerSession {
+		if pending, ok := s.accountsManager.(ports.AccountsManagerSwitchPendingReader); ok {
+			blocked, pendingErr := pending.AgentAccountSwitchPending(ctx, cfg.SessionID)
+			if pendingErr != nil {
+				_ = cleanupUnpublishedConversation(conv, false)
+				return nil, fmt.Errorf("read account switch fence: %w", pendingErr)
+			}
+			if blocked {
+				controller.handoff = controllerHandoffAccount
+			}
+		}
+	}
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
 		providerTurnID := controller.restoreLiveTurnOwnership(liveRows.Turns)

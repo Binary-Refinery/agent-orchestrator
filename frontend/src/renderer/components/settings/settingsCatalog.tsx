@@ -60,7 +60,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 	{
 		id: "accounts",
 		icon: UsersRound,
-		label: () => "Accounts",
+		label: (t) => t("accountsManager.title"),
 		render: (_t, titleHidden) => <AccountsManagerSection titleHidden={titleHidden} />,
 	},
 	{

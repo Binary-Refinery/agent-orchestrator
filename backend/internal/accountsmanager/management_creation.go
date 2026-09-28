@@ -2,6 +2,7 @@ package accountsmanager
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -16,35 +17,44 @@ const (
 	defaultClaudeBaseURL = "https://api.anthropic.com"
 )
 
+// APIKeyInput is secret-bearing input and must never enter a public response or log.
 type APIKeyInput struct {
-	Provider Provider
-	Key      string
-	BaseURL  string
+	OperationID string
+	Provider    Provider
+	Key         string
+	BaseURL     string
 }
 
+// CredentialImport holds caller-selected credential data before bounded validation.
 type CredentialImport struct {
-	Provider Provider
-	Name     string
-	JSON     json.RawMessage
+	OperationID string
+	Provider    Provider
+	Name        string
+	JSON        json.RawMessage
 }
 
 type rawCredentialRecord struct {
-	AuthIndex     string                         `json:"auth_index"`
-	Name          string                         `json:"name"`
-	Provider      string                         `json:"provider"`
-	Type          string                         `json:"type"`
-	AccountType   string                         `json:"account_type"`
-	Email         string                         `json:"email"`
-	Status        string                         `json:"status"`
-	Disabled      bool                           `json:"disabled"`
-	Unavailable   bool                           `json:"unavailable"`
-	CreatedAt     time.Time                      `json:"created_at"`
-	UpdatedAt     time.Time                      `json:"updated_at"`
-	LastRefresh   time.Time                      `json:"last_refresh"`
-	SupportsQuota bool                           `json:"supports_quota"`
-	Cooldowns     []CredentialCooldown           `json:"cooldowns"`
-	Quota         rawQuotaObservation            `json:"quota"`
-	ModelQuota    map[string]rawQuotaObservation `json:"model_quotas"`
+	Verification       string                         `json:"verification"`
+	VerifiedAt         time.Time                      `json:"verified_at"`
+	Label              string                         `json:"label"`
+	Generation         uint64                         `json:"generation"`
+	ReconnectSupported bool                           `json:"reconnect_supported"`
+	AuthIndex          string                         `json:"auth_index"`
+	Name               string                         `json:"name"`
+	Provider           string                         `json:"provider"`
+	Type               string                         `json:"type"`
+	AccountType        string                         `json:"account_type"`
+	Email              string                         `json:"email"`
+	Status             string                         `json:"status"`
+	Disabled           bool                           `json:"disabled"`
+	Unavailable        bool                           `json:"unavailable"`
+	CreatedAt          time.Time                      `json:"created_at"`
+	UpdatedAt          time.Time                      `json:"updated_at"`
+	LastRefresh        time.Time                      `json:"last_refresh"`
+	SupportsQuota      bool                           `json:"supports_quota"`
+	Cooldowns          []CredentialCooldown           `json:"cooldowns"`
+	Quota              rawQuotaObservation            `json:"quota"`
+	ModelQuota         map[string]rawQuotaObservation `json:"model_quotas"`
 }
 
 type rawQuotaObservation struct {
@@ -52,6 +62,7 @@ type rawQuotaObservation struct {
 	Signals    map[string]string `json:"signals"`
 }
 
+// AddAPIKey commits one encrypted credential through the runner-owned writer.
 func (c *ManagementClient) AddAPIKey(ctx context.Context, input APIKeyInput) (CredentialSummary, error) {
 	if !validProvider(input.Provider) {
 		return CredentialSummary{}, ErrUnsupportedProvider
@@ -67,133 +78,48 @@ func (c *ManagementClient) AddAPIKey(ctx context.Context, input APIKeyInput) (Cr
 	if err != nil {
 		return CredentialSummary{}, err
 	}
-
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
-	endpoint, field := providerKeyEndpoint(input.Provider)
-	items, err := c.readRawKeyList(ctx, endpoint, field)
-	if err != nil {
-		return CredentialSummary{}, err
+	operationID := strings.TrimSpace(input.OperationID)
+	if operationID == "" {
+		operationID = rand.Text()
 	}
-	if existing, found, findErr := findRawAPIKey(items, input.Provider, key, baseURL); found || findErr != nil {
-		return existing, findErr
-	}
-	entry, err := json.Marshal(map[string]string{"api-key": key, "base-url": baseURL})
-	if err != nil {
-		return CredentialSummary{}, ErrInvalidCredential
-	}
-	items = append(items, json.RawMessage(entry))
-	payload, err := json.Marshal(items)
-	if err != nil {
-		return CredentialSummary{}, ErrInvalidCredential
-	}
-	var result map[string]any
-	if err = c.doJSON(ctx, "add API key", http.MethodPut, endpoint, json.RawMessage(payload), &result); err != nil {
-		return CredentialSummary{}, mapCredentialOperationError(err)
-	}
-	items, err = c.readRawKeyList(ctx, endpoint, field)
-	if err != nil {
-		return CredentialSummary{}, err
-	}
-	if created, found, findErr := findRawAPIKey(items, input.Provider, key, baseURL); found || findErr != nil {
-		return created, findErr
-	}
-	return CredentialSummary{}, ErrInvalidResponse
+	return c.createCredential(ctx, "api-key", input.Provider, map[string]any{
+		"operationId": operationID, "provider": input.Provider, "key": key, "baseUrl": baseURL,
+	})
 }
 
+// ImportCredential transmits only the explicitly supplied bounded document.
 func (c *ManagementClient) ImportCredential(ctx context.Context, input CredentialImport) (CredentialSummary, error) {
 	if !validProvider(input.Provider) {
 		return CredentialSummary{}, ErrUnsupportedProvider
 	}
-	if len(input.JSON) == 0 || len(input.JSON) > managementImportLimit {
-		if len(input.JSON) > managementImportLimit {
-			return CredentialSummary{}, ErrRequestTooLarge
-		}
+	if len(input.JSON) == 0 {
 		return CredentialSummary{}, ErrInvalidCredential
 	}
-	name, err := validateCredentialImport(input)
-	if err != nil {
+	if len(input.JSON) > managementImportLimit {
+		return CredentialSummary{}, ErrRequestTooLarge
+	}
+	if _, err := validateCredentialImport(input); err != nil {
 		return CredentialSummary{}, err
 	}
-
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
-	existing, err := c.listRawCredentials(ctx)
-	if err != nil {
-		return CredentialSummary{}, err
+	operationID := strings.TrimSpace(input.OperationID)
+	if operationID == "" {
+		operationID = rand.Text()
 	}
-	for _, record := range existing {
-		if record.Name == name {
-			return CredentialSummary{}, ErrCredentialConflict
-		}
-	}
+	return c.createCredential(ctx, "import", input.Provider, map[string]any{
+		"operationId": operationID, "provider": input.Provider, "credential": input.JSON,
+	})
+}
 
-	query := url.Values{"name": []string{name}}
-	var upload map[string]any
-	if err = c.doJSON(ctx, "import credential", http.MethodPost, "/v0/management/auth-files?"+query.Encode(), input.JSON, &upload); err != nil {
+func (c *ManagementClient) createCredential(ctx context.Context, method string, provider Provider, input any) (CredentialSummary, error) {
+	var record rawCredentialRecord
+	if err := c.doJSON(ctx, "create credential", http.MethodPost, credentialManagementPath+"/"+method, input, &record); err != nil {
 		return CredentialSummary{}, mapCredentialOperationError(err)
 	}
-	records, verifyErr := c.listRawCredentials(ctx)
-	if verifyErr == nil {
-		matches := matchingImportedRecords(records, name, input.Provider)
-		if len(matches) == 1 {
-			return summaryFromRawCredential(matches[0]), nil
-		}
-		if len(matches) > 1 {
-			verifyErr = ErrCredentialConflict
-		} else {
-			verifyErr = ErrInvalidResponse
-		}
+	summary := summaryFromRawCredential(record)
+	if summary.Ref == "" || summary.Provider != provider || summary.Kind == CredentialUnknown {
+		return CredentialSummary{}, ErrInvalidResponse
 	}
-	var ignored map[string]any
-	_ = c.doJSON(context.WithoutCancel(ctx), "remove unverified credential", http.MethodDelete, "/v0/management/auth-files?"+query.Encode(), nil, &ignored)
-	return CredentialSummary{}, verifyErr
-}
-
-func (c *ManagementClient) readRawKeyList(ctx context.Context, endpoint, field string) ([]json.RawMessage, error) {
-	var wrapper map[string]json.RawMessage
-	if err := c.doJSON(ctx, "read API keys", http.MethodGet, endpoint, nil, &wrapper); err != nil {
-		return nil, err
-	}
-	raw, ok := wrapper[field]
-	if !ok {
-		return nil, ErrInvalidResponse
-	}
-	var items []json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, ErrInvalidResponse
-	}
-	return items, nil
-}
-
-func findRawAPIKey(items []json.RawMessage, provider Provider, key, baseURL string) (CredentialSummary, bool, error) {
-	for _, item := range items {
-		var identity struct {
-			Key       string `json:"api-key"`
-			BaseURL   string `json:"base-url"`
-			AuthIndex string `json:"auth-index"`
-		}
-		if json.Unmarshal(item, &identity) != nil || strings.TrimSpace(identity.Key) != key {
-			continue
-		}
-		normalized, err := normalizeProviderBaseURL(provider, identity.BaseURL)
-		if err != nil || normalized != baseURL {
-			continue
-		}
-		ref := strings.TrimSpace(identity.AuthIndex)
-		if ref == "" {
-			return CredentialSummary{}, true, ErrInvalidResponse
-		}
-		return CredentialSummary{Ref: ref, Provider: provider, Kind: CredentialAPIKey, Status: CredentialActive}, true, nil
-	}
-	return CredentialSummary{}, false, nil
-}
-
-func providerKeyEndpoint(provider Provider) (string, string) {
-	if provider == ProviderCodex {
-		return "/v0/management/codex-api-key", "codex-api-key"
-	}
-	return "/v0/management/claude-api-key", "claude-api-key"
+	return summary, nil
 }
 
 func normalizeProviderBaseURL(provider Provider, raw string) (string, error) {
@@ -254,32 +180,30 @@ func (c *ManagementClient) listRawCredentials(ctx context.Context) ([]rawCredent
 	var payload struct {
 		Files []rawCredentialRecord `json:"files"`
 	}
-	if err := c.doJSON(ctx, "list credentials", http.MethodGet, "/v0/management/auth-files", nil, &payload); err != nil {
+	if err := c.doJSON(ctx, "list credentials", http.MethodGet, credentialManagementPath, nil, &payload); err != nil {
 		return nil, err
 	}
 	return payload.Files, nil
 }
 
-func matchingImportedRecords(records []rawCredentialRecord, name string, provider Provider) []rawCredentialRecord {
-	matches := make([]rawCredentialRecord, 0, 1)
-	for _, record := range records {
-		recordProvider := Provider(strings.ToLower(strings.TrimSpace(record.Provider)))
-		if recordProvider == "" {
-			recordProvider = Provider(strings.ToLower(strings.TrimSpace(record.Type)))
-		}
-		if record.Name == name && recordProvider == provider && strings.TrimSpace(record.AuthIndex) != "" {
-			matches = append(matches, record)
-		}
-	}
-	return matches
-}
-
 func summaryFromRawCredential(record rawCredentialRecord) CredentialSummary {
+	if record.Verification != "verified" && record.Verification != "invalid" && record.Verification != "unverified" {
+		record.Verification = "unverified"
+	}
+	if record.Verification == "verified" && record.VerifiedAt.IsZero() {
+		record.Verification = "unverified"
+	}
+	if record.Verification != "verified" {
+		record.Unavailable = true
+		record.VerifiedAt = time.Time{}
+	}
 	provider := Provider(strings.ToLower(strings.TrimSpace(record.Provider)))
 	if provider == "" {
 		provider = Provider(strings.ToLower(strings.TrimSpace(record.Type)))
 	}
 	return CredentialSummary{
+		Verification: record.Verification, VerifiedAt: record.VerifiedAt,
+		Label: record.Label, Generation: record.Generation, ReconnectSupported: record.ReconnectSupported,
 		Ref:             strings.TrimSpace(record.AuthIndex),
 		Provider:        provider,
 		Kind:            normalizeCredentialKind(record.AccountType),

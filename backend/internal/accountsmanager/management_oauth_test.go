@@ -2,6 +2,7 @@ package accountsmanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -23,7 +24,8 @@ func TestManagementClientOAuthLifecycle(t *testing.T) {
 		switch {
 		case req.Method == http.MethodPost && req.URL.Path == "/ao/internal/oauth/start":
 			body, _ := io.ReadAll(req.Body)
-			if string(body) != `{"mode":"device","provider":"codex"}` {
+			var input map[string]string
+			if json.Unmarshal(body, &input) != nil || len(input) != 2 || input["mode"] != "device" || input["provider"] != "codex" {
 				t.Fatalf("start body = %s", body)
 			}
 			return managementJSONResponse(req, http.StatusOK, `{"provider":"codex","mode":"device","state":"opaque-state","authorizationUrl":"https://auth.example.test/start","userCode":"ABCD-EFGH","expiresAt":"`+expiresAt.Format(time.RFC3339)+`"}`), nil

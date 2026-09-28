@@ -1,14 +1,26 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { I18nextProvider } from "react-i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAppI18n, type AppLocale } from "../../i18n";
 import { AccountsManagerSection } from "./AccountsManagerSection";
+import { accountsManagerQueryKey } from "../../hooks/useAccountsManagerQuery";
+import { AccountControlError } from "../../lib/accounts-manager-controls";
 
 const mocks = vi.hoisted(() => ({
+  GET: vi.fn(),
+  POST: vi.fn(),
+  DELETE: vi.fn(),
   openExternal: vi.fn(),
   startOAuth: vi.fn(),
   cancelOAuth: vi.fn(),
   addKey: vi.fn(),
   updateRouting: vi.fn(),
+  rename: vi.fn(),
+  setDisabled: vi.fn(),
+  models: vi.fn(),
+	quota: vi.fn(),
+  queryError: null as Error | null,
   snapshot: {
     revision: 1,
     availability: "ready",
@@ -17,6 +29,11 @@ const mocks = vi.hoisted(() => ({
     oauthSessions: [],
     routing: [],
   } as Record<string, unknown>,
+}));
+
+vi.mock("../../lib/api-client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../lib/api-client")>(),
+  apiClient: { GET: mocks.GET, POST: mocks.POST, DELETE: mocks.DELETE },
 }));
 
 vi.mock("../../lib/bridge", () => ({
@@ -32,26 +49,38 @@ vi.mock("../../hooks/useAccountsManagerQuery", async () => {
     useAccountsManagerQuery: () => ({
       data: mocks.snapshot,
       isLoading: false,
+      isError: Boolean(mocks.queryError),
+      error: mocks.queryError,
     }),
     startAccountsManagerOAuth: mocks.startOAuth,
     cancelAccountsManagerOAuth: mocks.cancelOAuth,
     addAccountsManagerAPIKey: mocks.addKey,
     updateAccountsManagerRouting: mocks.updateRouting,
+    renameAccountsManagerAccount: mocks.rename,
+    setAccountsManagerDisabled: mocks.setDisabled,
+    fetchAccountsManagerModels: mocks.models,
+		fetchAccountsManagerQuota: mocks.quota,
   };
 });
 
-function renderSection() {
+function renderSection(locale: AppLocale = "en", client = new QueryClient()) {
   return render(
-    <QueryClientProvider client={new QueryClient()}>
-      <AccountsManagerSection />
-    </QueryClientProvider>,
+    <I18nextProvider i18n={createAppI18n(locale)}>
+      <QueryClientProvider client={client}>
+        <AccountsManagerSection />
+      </QueryClientProvider>
+    </I18nextProvider>,
   );
 }
 
 describe("AccountsManagerSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    mocks.queryError = null;
     mocks.cancelOAuth.mockResolvedValue(undefined);
+    mocks.models.mockResolvedValue({ models: [] });
+		mocks.quota.mockResolvedValue({ observedAt:"2026-09-28T00:00:00Z",groups:[],summary:[],serverTimeOffsetMs:0 });
     mocks.snapshot = {
       revision: 1,
       availability: "ready",
@@ -61,6 +90,263 @@ describe("AccountsManagerSection", () => {
       routing: [],
     };
   });
+
+  it("shows a stale inventory read error and its request ID without permitting cached mutations", () => {
+    mocks.queryError = new AccountControlError(503, "inventory-79");
+    renderSection();
+    expect(screen.getByRole("alert")).toHaveTextContent("inventory-79");
+    expect(screen.getByRole("button", { name: "Add codex account" })).toBeDisabled();
+  });
+
+	it("shows observed usage and reset time in expanded account details", async () => {
+		mocks.snapshot.accounts = [{id:"saved-a",provider:"codex",kind:"oauth",label:"Work",status:"active",generation:4,verification:"verified",quotaSupported:true,cooldowns:[]}];
+		mocks.quota.mockResolvedValue({observedAt:"2026-09-28T00:00:00Z",summary:[],serverTimeOffsetMs:0,groups:[{displayName:"Account",buckets:[{window:"18000s",remainingFraction:.75,resetTime:"2030-01-01T00:00:00Z",description:""}]}]});
+		renderSection();
+		fireEvent.click(screen.getByRole("button",{name:/Work/}));
+		expect(await screen.findByText(/75% remaining/)).toBeInTheDocument();
+		expect(screen.getByText(/Last checked:/)).toBeInTheDocument();
+		expect(screen.getByText(/Resets:/)).toBeInTheDocument();
+		expect(mocks.quota).toHaveBeenCalledWith("saved-a",expect.any(AbortSignal));
+		expect(screen.queryByRole("button",{name:"Reset quota"})).not.toBeInTheDocument();
+	});
+
+	it("keeps unverified saved credentials out of default selection", () => {
+		mocks.snapshot.accounts = [{id:"saved-a",provider:"codex",kind:"api_key",label:"Work",status:"active",generation:4,verification:"unverified",quotaSupported:false,cooldowns:[]}];
+		renderSection();
+		expect(screen.getByText("Not verified")).toBeInTheDocument();
+		expect(screen.getByRole("button",{name:"Verify credential"})).toBeInTheDocument();
+		expect(screen.getByRole("button",{name:"Use as default"})).toBeDisabled();
+	});
+
+  it("shows a refresh failure request ID without raw diagnostics or changed account state", async () => {
+    mocks.snapshot.accounts = [{ id: "saved-a", provider: "codex", kind: "oauth", label: "Work", status: "active", verification: "verified", generation: 4, cooldowns: [] }];
+    mocks.POST.mockResolvedValue({ error: { requestId: "refresh-row-79", message: "private-token http://127.0.0.1:9999" }, response: new Response(null, { status: 503 }) });
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh account" }));
+    expect(await screen.findByText("Request ID: refresh-row-79")).toBeInTheDocument();
+    expect(screen.queryByText("private-token", { exact: false })).not.toBeInTheDocument();
+    expect(mocks.snapshot.accounts).toHaveLength(1);
+  });
+
+  it("opens a removal impact preview from inventory without deleting the account", async () => {
+    mocks.snapshot.accounts = [{ id: "saved-a", provider: "codex", kind: "api_key", label: "Work", status: "active", verification: "verified", generation: 4, cooldowns: [] }];
+    mocks.GET.mockResolvedValue({ data: { accountId: "saved-a", revision: 0, sessions: [] }, response: new Response(null, { status: 200 }) });
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
+    expect(await screen.findByRole("region", { name: "Removal impact" })).toHaveTextContent("Impact revision: 0");
+    expect(mocks.GET).toHaveBeenCalledWith("/api/v1/accounts-manager/accounts/{accountId}/removal-impact", expect.objectContaining({ params: { path: { accountId: "saved-a" } } }));
+    expect(mocks.DELETE).not.toHaveBeenCalled();
+    expect(mocks.POST).not.toHaveBeenCalled();
+    expect(mocks.snapshot.accounts).toHaveLength(1);
+  });
+
+  it.each(["pending", "pruned"])("separates cancellation acknowledgement from %s sign-in status and keeps saved accounts", async state => {
+    mocks.snapshot.accounts = [{ id: "saved-a", provider: "codex", kind: "api_key", label: "Work", status: "active", verification: "verified", generation: 4, cooldowns: [] }];
+    mocks.snapshot.oauthSessions = state === "pending" ? [{ id: "login-a", provider: "codex", status: "pending" }] : [];
+    mocks.startOAuth.mockResolvedValue({ id: "login-a", authorizationUrl: "https://provider.example/login" });
+    mocks.openExternal.mockResolvedValue(undefined);
+    renderSection();
+    if (state === "pruned") {
+      fireEvent.click(screen.getByRole("button", { name: "Add codex account" }));
+      fireEvent.click(screen.getByRole("button", { name: "Continue with device code" }));
+      await waitFor(() => expect(mocks.openExternal).toHaveBeenCalledOnce());
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Cancellation request acknowledged: login-a")).toBeInTheDocument();
+    expect(screen.getByText(state === "pending" ? "Observed sign-in state: pending" : "Observed sign-in state is unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("Sign-in cancelled")).not.toBeInTheDocument();
+    expect(mocks.snapshot.accounts).toHaveLength(1);
+    expect(mocks.DELETE).not.toHaveBeenCalled();
+  });
+
+  it("renames an account with its displayed generation and filters labels", async () => {
+    mocks.snapshot.accounts = [
+      {
+        id: "saved-a",
+        provider: "codex",
+        kind: "api_key",
+        label: "Work",
+        status: "active", verification: "verified",
+        disabled: false,
+        unavailable: false,
+        generation: 4,
+        reconnectSupported: false,
+        cooldowns: [],
+      },
+    ];
+    mocks.rename.mockResolvedValue({ ...mocks.snapshot, revision: 2 });
+    renderSection();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search saved accounts" }),
+      { target: { value: "absent" } },
+    );
+    expect(screen.getByText("No matching accounts.")).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search saved accounts" }),
+      { target: { value: "work" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Work Verified/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Account label" }), {
+      target: { value: "Production" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save label" }));
+    await waitFor(() =>
+      expect(mocks.rename).toHaveBeenCalledWith("saved-a", "Production", 4),
+    );
+    expect(mocks.updateRouting).not.toHaveBeenCalled();
+    expect(mocks.startOAuth).not.toHaveBeenCalled();
+  });
+
+  it("allows API-key disablement independently of sign-in support", async () => {
+    mocks.snapshot.accounts = [
+      {
+        id: "key",
+        provider: "codex",
+        kind: "api_key",
+        status: "active", verification: "verified",
+        disabled: false,
+        unavailable: false,
+        generation: 1,
+        reconnectSupported: false,
+        cooldowns: [],
+      },
+    ];
+    mocks.setDisabled.mockResolvedValue({ ...mocks.snapshot, revision: 2 });
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    await waitFor(() =>
+      expect(mocks.setDisabled).toHaveBeenCalledWith("key", true),
+    );
+  });
+
+  it("reconnects only the selected saved generation without import controls", async () => {
+    mocks.snapshot.accounts = [
+      {
+        id: "saved-a",
+        provider: "codex",
+        kind: "oauth",
+        label: "Work",
+        email: "a@example.invalid",
+        status: "active", verification: "verified",
+        disabled: false,
+        unavailable: false,
+        generation: 4,
+        reconnectSupported: true,
+        cooldowns: [],
+      },
+    ];
+    mocks.startOAuth.mockResolvedValue({
+      id: "reconnect-a",
+      authorizationUrl: "https://provider.example/login",
+    });
+    mocks.openExternal.mockResolvedValue(undefined);
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(screen.getByText(/Sign in again for Work/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "API key" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue with device code" }),
+    );
+    await waitFor(() =>
+      expect(mocks.startOAuth).toHaveBeenCalledWith("codex", "device", {
+        accountId: "saved-a",
+        generation: 4,
+      }),
+    );
+    expect(mocks.updateRouting).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(mocks.cancelOAuth).toHaveBeenCalledWith("reconnect-a"),
+    );
+  });
+
+  it("disables reconnect for imported identity claims", () => {
+    mocks.snapshot.accounts = [
+      {
+        id: "imported",
+        provider: "codex",
+        kind: "oauth",
+        status: "active", verification: "verified",
+        disabled: false,
+        unavailable: false,
+        generation: 1,
+        reconnectSupported: false,
+        cooldowns: [],
+      },
+    ];
+    renderSection();
+    const reconnect = screen.getByRole("button", { name: "Reconnect" });
+    expect(reconnect).toBeDisabled();
+    expect(reconnect).toHaveAttribute(
+      "title",
+      "This credential has no verified provider identity. Add it as a separate account instead.",
+    );
+  });
+
+  it("localizes account controls, empty counts, and sign-in failures", async () => {
+    mocks.startOAuth.mockRejectedValue(new Error("private upstream detail"));
+    renderSection("es");
+    expect(screen.getByText("Cuentas")).toBeInTheDocument();
+    expect(screen.getAllByText("0 cuentas guardadas")).toHaveLength(2);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Añadir cuenta de codex" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Continuar con código de dispositivo",
+      }),
+    );
+    expect(
+      await screen.findByText("No se pudo iniciar sesión. Inténtalo de nuevo."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("private upstream detail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders unset routing policies before any account is saved", () => {
+    mocks.snapshot.routing = [
+      { provider: "codex", enabled: false, accountIds: [] },
+    ];
+    renderSection();
+    expect(screen.getByText("No Codex accounts yet.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", {
+        name: "Route new codex sessions through Accounts Manager",
+      }),
+    ).toBeDisabled();
+  });
+
+  it.each([
+    [1, "1 cuenta guardada"],
+    [2, "2 cuentas guardadas"],
+  ] as const)(
+    "localizes the saved-account count for %i accounts",
+    (count, summary) => {
+      mocks.snapshot.accounts = Array.from({ length: count }, (_, index) => ({
+        id: `account-${index}`,
+        provider: "codex",
+        kind: "oauth",
+        status: "active", verification: "verified",
+        disabled: false,
+        unavailable: false,
+        quotaSupported: false,
+        cooldowns: [],
+      }));
+      renderSection("es");
+      expect(screen.getByText(summary)).toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: "Actualizar cuenta" }),
+      ).toHaveLength(count);
+      expect(
+        screen.getAllByRole("button", { name: "Eliminar cuenta" }),
+      ).toHaveLength(count);
+      expect(screen.getAllByText("Lista")).toHaveLength(count);
+    },
+  );
 
   it("cancels the OAuth operation if the browser cannot be opened", async () => {
     mocks.startOAuth.mockResolvedValue({
@@ -142,7 +428,7 @@ describe("AccountsManagerSection", () => {
     expect(input.value).toBe("");
   });
 
-  it("enables routing with eligible accounts in displayed order", async () => {
+  it("requires an explicit default instead of choosing available accounts", async () => {
     mocks.snapshot = {
       revision: 3,
       availability: "ready",
@@ -153,7 +439,7 @@ describe("AccountsManagerSection", () => {
           provider: "codex",
           kind: "oauth",
           email: "a@example.com",
-          status: "active",
+          status: "active", verification: "verified",
           disabled: false,
           unavailable: false,
           quotaSupported: false,
@@ -164,7 +450,7 @@ describe("AccountsManagerSection", () => {
           provider: "codex",
           kind: "oauth",
           email: "b@example.com",
-          status: "active",
+          status: "active", verification: "verified",
           disabled: false,
           unavailable: false,
           quotaSupported: false,
@@ -186,14 +472,16 @@ describe("AccountsManagerSection", () => {
       ],
     });
     renderSection();
-    fireEvent.click(
+    expect(
       screen.getByRole("switch", {
         name: "Route new codex sessions through Accounts Manager",
       }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Use as default" })[1],
     );
     await waitFor(() =>
-      expect(mocks.updateRouting).toHaveBeenCalledWith("codex", true, [
-        "account-a",
+      expect(mocks.updateRouting).toHaveBeenCalledWith("codex", false, [
         "account-b",
       ]),
     );
@@ -203,11 +491,13 @@ describe("AccountsManagerSection", () => {
       ),
     ).toHaveLength(2);
     expect(
-      screen.getByText("Codex Chat continues to use the native device account."),
+      screen.getByText(
+        "Codex Chat continues to use the native device account.",
+      ),
     ).toBeInTheDocument();
   });
 
-  it("replaces an unusable saved selection when routing is enabled", async () => {
+  it("never replaces an unusable saved selection automatically", () => {
     mocks.snapshot = {
       revision: 5,
       availability: "ready",
@@ -227,7 +517,7 @@ describe("AccountsManagerSection", () => {
           id: "ready-account",
           provider: "claude",
           kind: "oauth",
-          status: "active",
+          status: "active", verification: "verified",
           disabled: false,
           unavailable: false,
           quotaSupported: false,
@@ -246,16 +536,115 @@ describe("AccountsManagerSection", () => {
     mocks.updateRouting.mockResolvedValue({ ...mocks.snapshot, revision: 6 });
 
     renderSection();
-    fireEvent.click(
+    expect(
       screen.getByRole("switch", {
         name: "Route new claude sessions through Accounts Manager",
       }),
-    );
+    ).toBeDisabled();
+    expect(mocks.updateRouting).not.toHaveBeenCalled();
+  });
 
+  it("preserves newer event data when a mutation completes late", async () => {
+    const client = new QueryClient();
+    client.setQueryData(accountsManagerQueryKey, {
+      ...mocks.snapshot,
+      revision: 20,
+    });
+    mocks.addKey.mockResolvedValue({ ...mocks.snapshot, revision: 19 });
+    renderSection("en", client);
+    fireEvent.click(screen.getByRole("button", { name: "Add codex account" }));
+    fireEvent.click(screen.getByRole("button", { name: "API key" }));
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "secret-value" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
     await waitFor(() =>
-      expect(mocks.updateRouting).toHaveBeenCalledWith("claude", true, [
-        "ready-account",
-      ]),
+      expect(screen.queryByLabelText("API key")).not.toBeInTheDocument(),
     );
+    expect(client.getQueryData(accountsManagerQueryKey)).toMatchObject({
+      revision: 20,
+    });
+  });
+
+  it("keeps a failed cancellation visible and allows retry", async () => {
+    mocks.snapshot.oauthSessions = [
+      { id: "pending", provider: "codex", status: "pending" },
+    ];
+    mocks.cancelOAuth.mockRejectedValueOnce(new Error("private error"));
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      await screen.findByText("Could not cancel sign-in. Try again."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(mocks.cancelOAuth).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Waiting for sign-in…"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it.each(["pending", "unknown"])(
+    "does not present %s accounts as ready",
+    (status) => {
+      mocks.snapshot.accounts = [
+        {
+          id: "account",
+          provider: "codex",
+          kind: "oauth",
+          status,
+          cooldowns: [],
+        },
+      ];
+      renderSection();
+      expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+      expect(
+        screen.getByText(status === "pending" ? "Pending" : "Unknown"),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("disables account mutations when the cached inventory is stale", () => {
+    mocks.snapshot.stale = true;
+    renderSection();
+    expect(
+      screen.getByRole("button", { name: "Add codex account" }),
+    ).toBeDisabled();
+  });
+
+  it("distinguishes saved unverified keys without presenting them as ready", () => {
+    mocks.snapshot.accounts = ["00000a", "00000b"].map((id) => ({
+      id,
+      provider: "codex",
+      kind: "api_key",
+      status: "active", verification: "unverified",
+      cooldowns: [],
+    }));
+    renderSection();
+    expect(screen.getAllByText("Codex API key (00000a)")).toHaveLength(2);
+    expect(screen.getAllByText("Codex API key (00000b)")).toHaveLength(2);
+    expect(screen.getAllByText("Not verified")).toHaveLength(2);
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("cancels a login that finishes starting after the form was closed", async () => {
+    let finish!: (value: { id: string; authorizationUrl: string }) => void;
+    mocks.startOAuth.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Add codex account" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue with device code" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    finish({ id: "late-login", authorizationUrl: "https://example.test" });
+    await waitFor(() =>
+      expect(mocks.cancelOAuth).toHaveBeenCalledWith("late-login"),
+    );
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 });

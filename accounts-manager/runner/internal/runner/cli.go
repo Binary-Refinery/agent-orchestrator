@@ -48,7 +48,7 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil || *stateDir == "" || !filepath.IsAbs(*stateDir) || flags.NArg() != 0 {
 			return 2
 		}
-		if err := runCodexDeviceLogin(ctx, *stateDir); err != nil {
+		if err := runCodexDeviceLogin(ctx, *stateDir, stdout); err != nil {
 			_, _ = fmt.Fprintln(stderr, "Codex device sign-in failed")
 			return 1
 		}

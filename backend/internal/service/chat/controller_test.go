@@ -458,13 +458,67 @@ type claudeFakeDriver struct{ fakeDriver }
 
 func (claudeFakeDriver) Harness() domain.AgentHarness { return domain.HarnessClaudeCode }
 
-type fakeChatAccountsManager struct{}
+type fakeChatAccountsManager struct{ codexPinned bool }
 
 func (fakeChatAccountsManager) PrepareAgentLaunchRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider, string) (*ports.AccountsManagerLaunchRoute, error) {
 	return &ports.AccountsManagerLaunchRoute{BaseURL: "http://127.0.0.1:43127", Token: "opaque-route-token"}, nil
 }
 func (fakeChatAccountsManager) AgentRoutingEnabled(context.Context, domain.AccountsManagerProvider) (bool, error) {
 	return true, nil
+}
+func (f fakeChatAccountsManager) HasAgentSessionRoute(_ context.Context, _ domain.SessionID, provider domain.AccountsManagerProvider) (bool, error) {
+	return f.codexPinned || provider != domain.AccountsManagerProviderCodex, nil
+}
+
+func TestManagedChatCannotStartNativeController(t *testing.T) {
+	svc := chatsvc.New(chatsvc.Options{AccountsManager: fakeChatAccountsManager{codexPinned: true}})
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{SessionID: testSession, Harness: domain.HarnessCodex})
+	if !errors.Is(err, ports.ErrChatUnsupported) {
+		t.Fatalf("managed Chat start = %v", err)
+	}
+}
+
+type nativeRecordingAccountsManager struct {
+	fakeChatAccountsManager
+	record func(domain.SessionID, domain.AccountsManagerProvider) error
+}
+
+func (f nativeRecordingAccountsManager) RecordNativeAgentSessionRoute(_ context.Context, id domain.SessionID, provider domain.AccountsManagerProvider) error {
+	return f.record(id, provider)
+}
+
+func TestChatRecordsNativeBindingBeforeStartingController(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		t.Run(fmt.Sprint(refused), func(t *testing.T) {
+			st := openStore(t)
+			recorded := false
+			refusal := errors.New("binding was already managed")
+			svc := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st,
+				Drivers: fakeRegistry{driver: fakeDriver{conv: newFakeConversation()}},
+				AccountsManager: nativeRecordingAccountsManager{record: func(id domain.SessionID, provider domain.AccountsManagerProvider) error {
+					recorded = id == testSession && provider == domain.AccountsManagerProviderCodex
+					if refused {
+						return refusal
+					}
+					return nil
+				}},
+				NewID: func() string { return "native-binding-conversation" },
+			})
+			t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+			controller, err := svc.Start(t.Context(), chatsvc.StartConfig{SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, WorkspacePath: t.TempDir()})
+			if !recorded {
+				t.Fatal("native mode was not persisted")
+			}
+			if refused {
+				if !errors.Is(err, refusal) || controller != nil {
+					t.Fatal("binding refusal started native controller")
+				}
+			} else if err != nil || controller == nil {
+				t.Fatalf("native start: %v", err)
+			}
+		})
+	}
 }
 
 type recordingActivity struct {

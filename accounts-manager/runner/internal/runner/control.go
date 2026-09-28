@@ -11,13 +11,16 @@ import (
 
 const controlAuthorizationPrefix = "Bearer "
 
+const credentialProtocolVersion = 4
+
 // ControlIdentity contains only the non-secret fields needed to authenticate a
 // runner during daemon replacement.
 type ControlIdentity struct {
-	Service       string `json:"service"`
-	InstanceID    string `json:"instanceId"`
-	RunnerVersion string `json:"runnerVersion"`
-	EngineVersion string `json:"engineVersion"`
+	Service            string `json:"service"`
+	InstanceID         string `json:"instanceId"`
+	RunnerVersion      string `json:"runnerVersion"`
+	EngineVersion      string `json:"engineVersion"`
+	CredentialProtocol int    `json:"credentialProtocol"`
 }
 
 // Lease tracks when the runner should exit if its supervising daemon disappears.
@@ -59,6 +62,7 @@ type controlHandler struct {
 
 func NewControlHandler(identity ControlIdentity, controlKey string, lease *Lease) http.Handler {
 	identity.Service = "ao-accounts-manager"
+	identity.CredentialProtocol = credentialProtocolVersion
 	return &controlHandler{identity: identity, controlKey: controlKey, lease: lease}
 }
 

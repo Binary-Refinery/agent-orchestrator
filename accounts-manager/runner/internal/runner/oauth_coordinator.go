@@ -15,6 +15,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
 const (
@@ -45,6 +49,8 @@ var oauthProviders = map[string]oauthProviderConfig{
 }
 
 type oauthRunnerSession struct {
+	targetRef        string
+	targetGeneration uint64
 	provider         string
 	mode             string
 	state            string
@@ -58,6 +64,7 @@ type oauthRunnerSession struct {
 }
 
 type oauthSessionEvent struct {
+	TargetRef        string    `json:"targetRef,omitempty"`
 	Provider         string    `json:"provider"`
 	Mode             string    `json:"mode"`
 	State            string    `json:"state"`
@@ -69,6 +76,11 @@ type oauthSessionEvent struct {
 }
 
 type oauthCoordinator struct {
+	credentials      *credentialRuntime
+	config           *sdkconfig.Config
+	runContext       context.Context
+	authenticator    func(string) sdkauth.Authenticator
+	workers          sync.WaitGroup
 	baseURL          string
 	managementKey    string
 	client           *http.Client
@@ -89,6 +101,8 @@ type codexDeviceLogin struct {
 	AuthorizationURL string
 	UserCode         string
 	Done             <-chan error
+	Result           <-chan *coreauth.Auth
+	close            func()
 }
 
 func newOAuthCoordinator(baseURL, managementKey string, client *http.Client, listen func(string, string) (net.Listener, error)) *oauthCoordinator {
@@ -118,12 +132,24 @@ func (c *oauthCoordinator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/ao/internal/oauth/start":
+		if c.credentials != nil {
+			c.handleManagedStart(w, r)
+			return
+		}
 		c.handleStart(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/ao/internal/oauth/status":
+		if c.credentials != nil {
+			c.managedStatus(w, r)
+			return
+		}
 		c.handleStatus(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/ao/internal/oauth/events":
 		c.handleEvents(w, r)
 	case r.Method == http.MethodDelete && r.URL.Path == "/ao/internal/oauth/session":
+		if c.credentials != nil {
+			c.managedCancel(w, r)
+			return
+		}
 		c.handleCancel(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -485,7 +511,8 @@ func eventFromSession(session *oauthRunnerSession) oauthSessionEvent {
 		return oauthSessionEvent{}
 	}
 	event := oauthSessionEvent{
-		Provider: session.provider, Mode: session.mode, State: session.state, Status: session.status,
+		TargetRef: session.targetRef,
+		Provider:  session.provider, Mode: session.mode, State: session.state, Status: session.status,
 		FailureCode: session.failureCode, ExpiresAt: session.expiresAt,
 	}
 	if session.mode == "device" {
@@ -687,7 +714,6 @@ func (c *oauthCoordinator) closeListenerLocked(session *oauthRunnerSession) {
 
 func (c *oauthCoordinator) Close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.closed = true
 	for _, session := range c.sessions {
 		if session.cancel != nil {
@@ -700,6 +726,8 @@ func (c *oauthCoordinator) Close() {
 		close(subscriber)
 		delete(c.subscribers, subscriber)
 	}
+	c.mu.Unlock()
+	c.workers.Wait()
 }
 
 func decodeBoundedJSON(body io.Reader, dst any) error {
@@ -721,6 +749,7 @@ func validAuthorizationURL(raw string) (string, bool) {
 func writeOAuthSession(w http.ResponseWriter, session *oauthRunnerSession) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
+		"targetRef":        session.targetRef,
 		"provider":         session.provider,
 		"mode":             session.mode,
 		"state":            session.state,

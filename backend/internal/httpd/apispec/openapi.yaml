@@ -79,7 +79,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
-      summary: Enable or disable an account
+      summary: Rename, enable, or disable an account
       tags:
       - system
   /api/v1/accounts-manager/accounts/{accountId}/models:
@@ -129,6 +129,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccountsManagerQuotaResponse'
           description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -141,6 +153,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Too Many Requests
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
       summary: Get account quota
       tags:
       - system
@@ -194,6 +224,158 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
       summary: Refresh an account
+      tags:
+      - system
+  /api/v1/accounts-manager/accounts/{accountId}/removal-impact:
+    get:
+      operationId: getAccountRemovalImpact
+      parameters:
+      - in: path
+        name: accountId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerRemovalImpactResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Preview every binding affected by account removal
+      tags:
+      - system
+  /api/v1/accounts-manager/accounts/{accountId}/removals:
+    post:
+      operationId: startAccountRemoval
+      parameters:
+      - in: path
+        name: accountId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountsManagerRemovalRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerRemovalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Confirm removal against the observed binding revision
       tags:
       - system
   /api/v1/accounts-manager/accounts/api-key:
@@ -333,6 +515,231 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Service Unavailable
       summary: Cancel account sign-in
+      tags:
+      - system
+  /api/v1/accounts-manager/removals/{operationId}:
+    get:
+      operationId: getAccountRemoval
+      parameters:
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerRemovalResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read coordinated account removal
+      tags:
+      - system
+  /api/v1/accounts-manager/removals/{operationId}/cancel:
+    post:
+      operationId: cancelAccountRemoval
+      parameters:
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerRemovalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel account removal before stopping
+      tags:
+      - system
+  /api/v1/accounts-manager/removals/{operationId}/retry:
+    post:
+      operationId: retryAccountRemoval
+      parameters:
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerRemovalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Retry the same coordinated account removal
       tags:
       - system
   /api/v1/accounts-manager/routing/{provider}:
@@ -3822,6 +4229,408 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Rename a session display name
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/account:
+    get:
+      operationId: getSessionAccount
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerSessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read the selected session account and current switch
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/account-switches:
+    post:
+      operationId: startSessionAccountSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountsManagerSwitchRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Request an explicit session account switch
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/account-switches/{operationId}:
+    get:
+      operationId: getSessionAccountSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerSwitchResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a session account switch
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/account-switches/{operationId}/cancel:
+    post:
+      operationId: cancelSessionAccountSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel a session account switch before stopping
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/account-switches/{operationId}/retry:
+    post:
+      operationId: retrySessionAccountSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - in: path
+        name: operationId
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsManagerSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Retry the same session account switch
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/activity:
@@ -8400,6 +9209,8 @@ components:
           type: string
         key:
           type: string
+        operationId:
+          type: string
         provider:
           enum:
           - codex
@@ -8422,6 +9233,9 @@ components:
           type: boolean
         email:
           type: string
+        generation:
+          minimum: 0
+          type: integer
         id:
           type: string
         kind:
@@ -8429,6 +9243,8 @@ components:
           - oauth
           - api_key
           - unknown
+          type: string
+        label:
           type: string
         lastRefreshedAt:
           format: date-time
@@ -8439,6 +9255,8 @@ components:
           - claude
           type: string
         quotaSupported:
+          type: boolean
+        reconnectSupported:
           type: boolean
         status:
           enum:
@@ -8454,7 +9272,18 @@ components:
         updatedAt:
           format: date-time
           type: string
+        verification:
+          enum:
+          - unverified
+          - verified
+          - invalid
+          type: string
+        verifiedAt:
+          format: date-time
+          type: string
       required:
+      - generation
+      - reconnectSupported
       - id
       - provider
       - kind
@@ -8521,6 +9350,8 @@ components:
         credential: {}
         filename:
           type: string
+        operationId:
+          type: string
         provider:
           enum:
           - codex
@@ -8555,6 +9386,8 @@ components:
       type: object
     AccountsManagerOAuthSessionResponse:
       properties:
+        accountId:
+          type: string
         authorizationUrl:
           type: string
         expiresAt:
@@ -8648,6 +9481,9 @@ components:
           items:
             $ref: '#/components/schemas/AccountsManagerQuotaGroup'
           type: array
+        observedAt:
+          format: date-time
+          type: string
         serverTimeOffsetMs:
           format: int64
           type: integer
@@ -8658,6 +9494,7 @@ components:
             $ref: '#/components/schemas/AccountsManagerQuotaMetric'
           type: array
       required:
+      - observedAt
       - summary
       - serverTimeOffsetMs
       - groups
@@ -8674,6 +9511,87 @@ components:
       - plan
       - tierName
       - tierId
+      type: object
+    AccountsManagerRemovalImpactResponse:
+      properties:
+        accountId:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        sessions:
+          items:
+            $ref: '#/components/schemas/AccountsManagerRemovalSessionResponse'
+          type: array
+      required:
+      - accountId
+      - revision
+      - sessions
+      type: object
+    AccountsManagerRemovalRequest:
+      properties:
+        confirmed:
+          type: boolean
+        expectedRevision:
+          format: int64
+          maximum: 9.007199254740991e+15
+          minimum: 0
+          type: integer
+        operationId:
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+      - operationId
+      - expectedRevision
+      - confirmed
+      type: object
+    AccountsManagerRemovalResponse:
+      properties:
+        accountId:
+          type: string
+        canCancel:
+          type: boolean
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        impact:
+          $ref: '#/components/schemas/AccountsManagerRemovalImpactResponse'
+        phase:
+          type: string
+        recoveryRequired:
+          type: boolean
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - accountId
+      - impact
+      - phase
+      - canCancel
+      - recoveryRequired
+      - createdAt
+      - updatedAt
+      type: object
+    AccountsManagerRemovalSessionResponse:
+      properties:
+        bindingRevision:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        sessionId:
+          type: string
+        stopped:
+          type: boolean
+      required:
+      - sessionId
+      - provider
+      - bindingRevision
+      - stopped
       type: object
     AccountsManagerRoutingResponse:
       properties:
@@ -8692,6 +9610,33 @@ components:
       - provider
       - enabled
       - accountIds
+      type: object
+    AccountsManagerSessionResponse:
+      properties:
+        accountId:
+          type: string
+        blocked:
+          type: boolean
+        mode:
+          enum:
+          - native
+          - managed
+          type: string
+        provider:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        sessionId:
+          type: string
+        switch:
+          $ref: '#/components/schemas/AccountsManagerSwitchResponse'
+      required:
+      - sessionId
+      - provider
+      - mode
+      - revision
+      - blocked
       type: object
     AccountsManagerStatusResponse:
       properties:
@@ -8716,6 +9661,89 @@ components:
       required:
       - state
       - reason
+      type: object
+    AccountsManagerSwitchRequest:
+      properties:
+        accountId:
+          maxLength: 128
+          type: string
+        expectedRevision:
+          format: int64
+          maximum: 9.007199254740991e+15
+          minimum: 1
+          type: integer
+        mode:
+          enum:
+          - native
+          - managed
+          type: string
+        newConversation:
+          type: boolean
+        operationId:
+          maxLength: 128
+          minLength: 1
+          type: string
+        policy:
+          enum:
+          - drain
+          - interrupt
+          type: string
+      required:
+      - operationId
+      - expectedRevision
+      - mode
+      - policy
+      type: object
+    AccountsManagerSwitchResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        newConversation:
+          type: boolean
+        phase:
+          type: string
+        policy:
+          type: string
+        provider:
+          type: string
+        recoveryRequired:
+          type: boolean
+        sessionId:
+          type: string
+        sourceAccountId:
+          type: string
+        sourceMode:
+          type: string
+        sourceRevision:
+          format: int64
+          type: integer
+        targetAccountId:
+          type: string
+        targetMode:
+          type: string
+        targetRevision:
+          format: int64
+          type: integer
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sessionId
+      - provider
+      - sourceMode
+      - sourceRevision
+      - targetMode
+      - targetRevision
+      - policy
+      - newConversation
+      - phase
+      - recoveryRequired
+      - createdAt
+      - updatedAt
       type: object
     AcknowledgeSessionInterfaceTransitionNoticeResponse:
       properties:
@@ -13772,6 +14800,11 @@ components:
       type: object
     StartAccountsManagerOAuthRequest:
       properties:
+        accountId:
+          type: string
+        generation:
+          minimum: 0
+          type: integer
         mode:
           enum:
           - callback
@@ -14122,9 +15155,16 @@ components:
     UpdateAccountsManagerAccountRequest:
       properties:
         disabled:
-          type: boolean
-      required:
-      - disabled
+          type:
+          - "null"
+          - boolean
+        generation:
+          minimum: 0
+          type: integer
+        label:
+          type:
+          - "null"
+          - string
       type: object
     UpdateAccountsManagerRoutingRequest:
       properties:

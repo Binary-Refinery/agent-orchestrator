@@ -122,7 +122,7 @@ func loadOrCreateConfig(path, authDir string) (engineConfig, error) {
 			return engineConfig{}, keyErr
 		}
 		cfg := newEngineConfig(authDir, port, clientKey)
-		encoded, marshalErr := yaml.Marshal(cfg)
+		encoded, marshalErr := yaml.Marshal(cfg) // #nosec G117 -- Private runner configuration is written owner-only below.
 		if marshalErr != nil {
 			return engineConfig{}, fmt.Errorf("encode accounts manager configuration: %w", marshalErr)
 		}
@@ -138,7 +138,7 @@ func loadOrCreateConfig(path, authDir string) (engineConfig, error) {
 	if err = yaml.Unmarshal(b, &cfg); err != nil {
 		return engineConfig{}, fmt.Errorf("parse accounts manager configuration: %w", err)
 	}
-	if err = validateEngineConfig(cfg, authDir); err != nil {
+	if err := validateEngineConfig(cfg, authDir); err != nil {
 		return engineConfig{}, err
 	}
 	return cfg, nil
@@ -185,7 +185,7 @@ func updateConfigPort(path string, port int) error {
 		return err
 	}
 	var document map[string]any
-	if err = yaml.Unmarshal(b, &document); err != nil {
+	if err := yaml.Unmarshal(b, &document); err != nil {
 		return err
 	}
 	document["port"] = port
@@ -202,7 +202,7 @@ func readRuntimeRecord(root string) (RuntimeRecord, error) {
 		return RuntimeRecord{}, err
 	}
 	var record RuntimeRecord
-	if err = json.Unmarshal(b, &record); err != nil {
+	if err := json.Unmarshal(b, &record); err != nil {
 		return RuntimeRecord{}, err
 	}
 	if record.Port < 1 || record.Port > 65535 || strings.TrimSpace(record.InstanceID) == "" {
@@ -214,7 +214,7 @@ func readRuntimeRecord(root string) (RuntimeRecord, error) {
 func ensurePrivateDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		if err = os.Mkdir(path, 0o700); err != nil {
+		if err := os.Mkdir(path, 0o700); err != nil {
 			return err
 		}
 		return nil
@@ -279,7 +279,7 @@ func readPrivateFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -341,7 +341,9 @@ func selectAvailablePort(preferred int) (int, error) {
 	if preferred > 0 {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(preferred)))
 		if err == nil {
-			_ = listener.Close()
+			if err := listener.Close(); err != nil {
+				return 0, fmt.Errorf("release preferred port: %w", err)
+			}
 			return preferred, nil
 		}
 	}
@@ -349,6 +351,12 @@ func selectAvailablePort(preferred int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if err := listener.Close(); err != nil {
+		return 0, fmt.Errorf("release available port: %w", err)
+	}
+	if !ok {
+		return 0, fmt.Errorf("available port has an unexpected address type")
+	}
+	return address.Port, nil
 }

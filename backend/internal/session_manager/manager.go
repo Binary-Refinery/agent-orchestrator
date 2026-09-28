@@ -488,6 +488,10 @@ type Manager struct {
 	agentSwitchWorkers       sync.WaitGroup
 	agentSwitchWorkerMu      sync.Mutex
 	agentSwitchWorkersClosed bool
+	accountSwitchMu          sync.Mutex
+	accountSwitches          map[domain.SessionID]*accountsManagerSwitchRun
+	accountRemovalMu         sync.Mutex
+	accountRemovals          map[string]*accountsManagerRemovalRun
 
 	transitionMu sync.Mutex
 	transitions  map[domain.SessionID]*interfaceTransitionRun
@@ -2730,6 +2734,10 @@ func (m *Manager) relaunchSessionWithPolicy(
 }
 
 func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, reservedGeneration string, historyPolicy domain.SessionInterfaceTransitionHistoryPolicy) (RestoreResult, error) {
+	return m.relaunchSessionWithOptions(ctx, operation, rec, project, ws, restartHandle, forceFresh, requireNativeHistory, reservedGeneration, historyPolicy, false)
+}
+
+func (m *Manager) relaunchSessionWithOptions(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, reservedGeneration string, historyPolicy domain.SessionInterfaceTransitionHistoryPolicy, passive bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
@@ -2801,11 +2809,18 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	var argv []string
 	var delivery ports.PromptDeliveryStrategy
 	var mode RestoreMode
+	launchMetadata := rec.Metadata
+	if passive {
+		launchMetadata.Prompt = ""
+		if forceFresh {
+			launchMetadata.AgentSessionID = ""
+		}
+	}
 	if forceFresh {
-		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, launchMetadata,
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, route, true)
 	} else {
-		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, launchMetadata,
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir, env, route)
 	}
 	if err != nil {
@@ -2865,7 +2880,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		WorkspaceRepoPath:         ws.RepoPath,
 		RuntimeHandleID:           handle.ID,
 		RuntimeLaunchID:           launchID,
-		AgentSessionID:            rec.Metadata.AgentSessionID,
+		AgentSessionID:            launchMetadata.AgentSessionID,
 		Prompt:                    rec.Metadata.Prompt,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 	}
@@ -2886,7 +2901,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
-	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
+	if !passive && delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
 		launchCfg := ports.LaunchConfig{
 			DataDir:          m.dataDir,
 			SessionID:        string(rec.ID),
@@ -3303,6 +3318,12 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // ReconcileStartupSafety closes interrupted operations or quarantines ambiguous
 // interface targets and agent switches with a restored input fence before the API accepts input.
 func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
+	if err := m.reconcileAccountsManagerRemovals(ctx); err != nil {
+		return fmt.Errorf("reconcile: managed account removals: %w", err)
+	}
+	if err := m.reconcileAccountsManagerSwitches(ctx); err != nil {
+		return fmt.Errorf("reconcile: managed account switches: %w", err)
+	}
 	// A daemon restart destroys the in-memory input fence. Close any durable
 	// non-terminal switch before adopting runtimes so the API never implies an
 	// unconfirmed continuation was delivered.

@@ -36,6 +36,9 @@ func (a *CodexAuthenticator) RefreshLead() *time.Duration {
 }
 
 func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
+	if opts != nil && opts.CallbackListener != nil {
+		defer opts.CallbackListener.Close()
+	}
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
 	}
@@ -47,6 +50,9 @@ func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts
 	}
 
 	if shouldUseCodexDeviceFlow(opts) {
+		if opts.CallbackListener != nil {
+			return nil, fmt.Errorf("callback listener is unavailable for device sign-in")
+		}
 		return a.loginWithDeviceFlow(ctx, cfg, opts)
 	}
 
@@ -65,21 +71,6 @@ func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts
 		return nil, fmt.Errorf("codex state generation failed: %w", err)
 	}
 
-	oauthServer := codex.NewOAuthServer(callbackPort)
-	if err = oauthServer.Start(); err != nil {
-		if strings.Contains(err.Error(), "already in use") {
-			return nil, codex.NewAuthenticationError(codex.ErrPortInUse, err)
-		}
-		return nil, codex.NewAuthenticationError(codex.ErrServerStartFailed, err)
-	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if stopErr := oauthServer.Stop(stopCtx); stopErr != nil {
-			log.Warnf("codex oauth server stop error: %v", stopErr)
-		}
-	}()
-
 	authSvc := codex.NewCodexAuth(cfg)
 
 	authURL, err := authSvc.GenerateAuthURL(state, pkceCodes)
@@ -87,64 +78,73 @@ func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts
 		return nil, fmt.Errorf("codex authorization url generation failed: %w", err)
 	}
 
-	if !opts.NoBrowser {
-		fmt.Println("Opening browser for Codex authentication")
-		if !browser.IsAvailable() {
-			log.Warn("No browser available; please open the URL manually")
-			util.PrintSSHTunnelInstructions(callbackPort)
-			fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
-		} else if err = browser.OpenURL(authURL); err != nil {
-			log.Warnf("Failed to open browser automatically: %v", err)
-			util.PrintSSHTunnelInstructions(callbackPort)
-			fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
-		}
-	} else {
-		util.PrintSSHTunnelInstructions(callbackPort)
-		fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
-	}
-
-	fmt.Println("Waiting for Codex authentication callback...")
-
-	callbackCh := make(chan *codex.OAuthResult, 1)
-	callbackErrCh := make(chan error, 1)
-	manualDescription := ""
-
-	go func() {
-		result, errWait := oauthServer.WaitForCallback(5 * time.Minute)
-		if errWait != nil {
-			callbackErrCh <- errWait
-			return
-		}
-		callbackCh <- result
-	}()
-
 	var result *codex.OAuthResult
-	var manualPromptTimer *time.Timer
-	var manualPromptC <-chan time.Time
-	if opts.Prompt != nil {
-		manualPromptTimer = time.NewTimer(15 * time.Second)
-		manualPromptC = manualPromptTimer.C
-		defer manualPromptTimer.Stop()
-	}
-
-	var manualInputCh <-chan string
-	var manualInputErrCh <-chan error
-
-waitForCallback:
-	for {
-		select {
-		case result = <-callbackCh:
-			break waitForCallback
-		case err = <-callbackErrCh:
-			if strings.Contains(err.Error(), "timeout") {
-				return nil, codex.NewAuthenticationError(codex.ErrCallbackTimeout, err)
+	manualDescription := ""
+	if opts.CallbackListener != nil {
+		code, callbackErr := waitForListenerCallback(ctx, opts, authURL, state)
+		if callbackErr != nil {
+			return nil, callbackErr
+		}
+		result = &codex.OAuthResult{Code: code, State: state}
+	} else {
+		oauthServer := codex.NewOAuthServer(callbackPort)
+		if err = oauthServer.Start(); err != nil {
+			if strings.Contains(err.Error(), "already in use") {
+				return nil, codex.NewAuthenticationError(codex.ErrPortInUse, err)
 			}
-			return nil, err
-		case <-manualPromptC:
-			manualPromptC = nil
-			if manualPromptTimer != nil {
-				manualPromptTimer.Stop()
+			return nil, codex.NewAuthenticationError(codex.ErrServerStartFailed, err)
+		}
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if stopErr := oauthServer.Stop(stopCtx); stopErr != nil {
+				log.Warnf("codex oauth server stop error: %v", stopErr)
 			}
+		}()
+
+		if !opts.NoBrowser {
+			fmt.Println("Opening browser for Codex authentication")
+			if !browser.IsAvailable() {
+				log.Warn("No browser available; please open the URL manually")
+				util.PrintSSHTunnelInstructions(callbackPort)
+				fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
+			} else if err = browser.OpenURL(authURL); err != nil {
+				log.Warnf("Failed to open browser automatically: %v", err)
+				util.PrintSSHTunnelInstructions(callbackPort)
+				fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
+			}
+		} else {
+			util.PrintSSHTunnelInstructions(callbackPort)
+			fmt.Printf("Visit the following URL to continue authentication:\n%s\n", authURL)
+		}
+
+		fmt.Println("Waiting for Codex authentication callback...")
+
+		callbackCh := make(chan *codex.OAuthResult, 1)
+		callbackErrCh := make(chan error, 1)
+
+		go func() {
+			result, errWait := oauthServer.WaitForCallback(5 * time.Minute)
+			if errWait != nil {
+				callbackErrCh <- errWait
+				return
+			}
+			callbackCh <- result
+		}()
+
+		var manualPromptTimer *time.Timer
+		var manualPromptC <-chan time.Time
+		if opts.Prompt != nil {
+			manualPromptTimer = time.NewTimer(15 * time.Second)
+			manualPromptC = manualPromptTimer.C
+			defer manualPromptTimer.Stop()
+		}
+
+		var manualInputCh <-chan string
+		var manualInputErrCh <-chan error
+
+	waitForCallback:
+		for {
 			select {
 			case result = <-callbackCh:
 				break waitForCallback
@@ -153,30 +153,45 @@ waitForCallback:
 					return nil, codex.NewAuthenticationError(codex.ErrCallbackTimeout, err)
 				}
 				return nil, err
-			default:
-			}
-			manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the Codex callback URL (or press Enter to keep waiting): ")
-			continue
-		case input := <-manualInputCh:
-			manualInputCh = nil
-			manualInputErrCh = nil
-			parsed, errParse := misc.ParseOAuthCallback(input)
-			if errParse != nil {
-				return nil, errParse
-			}
-			if parsed == nil {
+			case <-manualPromptC:
+				manualPromptC = nil
+				if manualPromptTimer != nil {
+					manualPromptTimer.Stop()
+				}
+				select {
+				case result = <-callbackCh:
+					break waitForCallback
+				case err = <-callbackErrCh:
+					if strings.Contains(err.Error(), "timeout") {
+						return nil, codex.NewAuthenticationError(codex.ErrCallbackTimeout, err)
+					}
+					return nil, err
+				default:
+				}
+				manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the Codex callback URL (or press Enter to keep waiting): ")
 				continue
+			case input := <-manualInputCh:
+				manualInputCh = nil
+				manualInputErrCh = nil
+				parsed, errParse := misc.ParseOAuthCallback(input)
+				if errParse != nil {
+					return nil, errParse
+				}
+				if parsed == nil {
+					continue
+				}
+				manualDescription = parsed.ErrorDescription
+				result = &codex.OAuthResult{
+					Code:  parsed.Code,
+					State: parsed.State,
+					Error: parsed.Error,
+				}
+				break waitForCallback
+			case errManual := <-manualInputErrCh:
+				return nil, errManual
 			}
-			manualDescription = parsed.ErrorDescription
-			result = &codex.OAuthResult{
-				Code:  parsed.Code,
-				State: parsed.State,
-				Error: parsed.Error,
-			}
-			break waitForCallback
-		case errManual := <-manualInputErrCh:
-			return nil, errManual
 		}
+
 	}
 
 	if result.Error != "" {

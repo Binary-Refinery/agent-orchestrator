@@ -2,6 +2,7 @@ package accountsmanager
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -40,8 +41,19 @@ func TestManagementClientOAuthEventStreamRejectsWrongContentType(t *testing.T) {
 	client := NewManagementClient(staticEndpointSource{endpoint: Endpoint{BaseURL: "http://127.0.0.1:12345", ManagementToken: "management-secret"}, ready: true}, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
 	})})
-	if err := client.StreamOAuthEvents(context.Background(), func(OAuthEvent) error { return nil }); err != ErrInvalidResponse {
+	if err := client.StreamOAuthEvents(context.Background(), func(OAuthEvent) error { return nil }); !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("StreamOAuthEvents() error = %v", err)
+	}
+}
+
+func TestManagementClientBoundsWholeOAuthEvent(t *testing.T) {
+	client := managementTestClient(func(req *http.Request) (*http.Response, error) {
+		body := strings.Repeat("data: "+strings.Repeat("x", 1024)+"\n", managementResponseLimit/1024+1)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})
+	err := client.StreamOAuthEvents(context.Background(), func(OAuthEvent) error { return nil })
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("oversized multi-line event = %v", err)
 	}
 }
 

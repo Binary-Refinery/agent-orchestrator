@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	routeTokenPrefix        = "ao-route-v1."
+	routeTokenPrefix        = "ao-route-v2."
 	routeAccessProviderType = "ao-route-capability"
 	routeAccessProviderName = "ao-route"
 )
@@ -32,15 +32,22 @@ const (
 var errPinnedAccountUnavailable = errors.New("pinned account is unavailable")
 
 type routeClaims struct {
-	Version   int    `json:"v"`
-	Provider  string `json:"provider"`
-	AuthIndex string `json:"auth_index"`
-	SessionID string `json:"session_id"`
+	AccountID       string `json:"account_id"`
+	BindingRevision int64  `json:"binding_revision"`
+	Version         int    `json:"v"`
+	Provider        string `json:"provider"`
+	AuthIndex       string `json:"auth_index"`
+	SessionID       string `json:"session_id"`
 }
 
 type routeCapability struct {
-	aead   cipher.AEAD
-	claims sync.Map // caller scope -> routeClaimsEntry
+	bindingMu         sync.RWMutex
+	bindingRevision   int64
+	bindings          map[string]routeBinding
+	bindingsCheckedAt time.Time
+	now               func() time.Time
+	aead              cipher.AEAD
+	claims            sync.Map // caller scope -> routeClaimsEntry
 }
 
 type routeClaimsEntry struct {
@@ -60,7 +67,7 @@ func newRouteCapability(key []byte) (*routeCapability, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize route capability: %w", err)
 	}
-	return &routeCapability{aead: aead}, nil
+	return &routeCapability{aead: aead, now: time.Now}, nil
 }
 
 func (c *routeCapability) Identifier() string { return routeAccessProviderName }
@@ -69,10 +76,10 @@ func (c *routeCapability) Mint(claims routeClaims) (string, error) {
 	claims.Provider = strings.ToLower(strings.TrimSpace(claims.Provider))
 	claims.AuthIndex = strings.TrimSpace(claims.AuthIndex)
 	claims.SessionID = strings.TrimSpace(claims.SessionID)
-	if claims.Provider != "codex" && claims.Provider != "claude" || claims.AuthIndex == "" || claims.SessionID == "" {
+	if !validRouteClaims(claims) || !c.admitsBinding(claims) {
 		return "", fmt.Errorf("invalid route capability claims")
 	}
-	claims.Version = 1
+	claims.Version = 2
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", fmt.Errorf("encode route capability: %w", err)
@@ -92,7 +99,7 @@ func (c *routeCapability) Authenticate(_ context.Context, request *http.Request)
 		return nil, sdkaccess.NewNotHandledError()
 	}
 	claims, err := c.open(token)
-	if err != nil {
+	if err != nil || !c.admitsBinding(claims) {
 		return nil, sdkaccess.NewInvalidCredentialError()
 	}
 	sum := sha256.Sum256([]byte(token))
@@ -120,16 +127,20 @@ func (c *routeCapability) open(token string) (routeClaims, error) {
 		return routeClaims{}, errors.New("invalid route capability")
 	}
 	var claims routeClaims
-	if err = json.Unmarshal(payload, &claims); err != nil || claims.Version != 1 {
+	if err = json.Unmarshal(payload, &claims); err != nil || claims.Version != 2 {
 		return routeClaims{}, errors.New("invalid route capability")
 	}
 	claims.Provider = strings.ToLower(strings.TrimSpace(claims.Provider))
 	claims.AuthIndex = strings.TrimSpace(claims.AuthIndex)
 	claims.SessionID = strings.TrimSpace(claims.SessionID)
-	if claims.Provider != "codex" && claims.Provider != "claude" || claims.AuthIndex == "" || claims.SessionID == "" {
+	if !validRouteClaims(claims) {
 		return routeClaims{}, errors.New("invalid route capability")
 	}
 	return claims, nil
+}
+
+func validRouteClaims(claims routeClaims) bool {
+	return validVaultProvider(claims.Provider) && validRouteAtom(claims.AuthIndex, 128) && validRouteAtom(claims.SessionID, 256) && validRouteAtom(claims.AccountID, 128) && claims.BindingRevision > 0
 }
 
 func routeTokenFromRequest(request *http.Request) string {
@@ -145,31 +156,31 @@ func routeTokenFromRequest(request *http.Request) string {
 
 type exactRouteSelector struct {
 	capability *routeCapability
-	fallback   coreauth.Selector
+	admit      func(context.Context, *coreauth.Auth) bool
 }
 
-func newExactRouteSelector(capability *routeCapability, fallback coreauth.Selector) *exactRouteSelector {
-	if fallback == nil {
-		fallback = &coreauth.FillFirstSelector{}
-	}
-	return &exactRouteSelector{capability: capability, fallback: fallback}
+func newExactRouteSelector(capability *routeCapability) *exactRouteSelector {
+	return &exactRouteSelector{capability: capability}
 }
 
 func (s *exactRouteSelector) Pick(ctx context.Context, provider, model string, opts coreexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
 	scope, _ := opts.Metadata[coreexecutor.CallerScopeMetadataKey].(string)
 	if claimsValue, ok := s.capability.claims.Load(strings.TrimSpace(scope)); ok {
 		claims := claimsValue.(routeClaimsEntry).claims
-		if !strings.EqualFold(claims.Provider, provider) {
+		if !s.capability.admitsBinding(claims) {
+			return nil, errPinnedAccountUnavailable
+		}
+		if provider != "mixed" && !strings.EqualFold(claims.Provider, provider) {
 			return nil, errPinnedAccountUnavailable
 		}
 		for _, auth := range auths {
-			if auth != nil && strings.EqualFold(auth.Provider, claims.Provider) && auth.Index == claims.AuthIndex && exactRouteAuthUsable(auth, model, time.Now()) {
+			if auth != nil && strings.EqualFold(auth.Provider, claims.Provider) && auth.Index == claims.AuthIndex && exactRouteAuthUsable(auth, model, time.Now()) && (s.admit == nil || s.admit(ctx, auth)) {
 				return auth, nil
 			}
 		}
 		return nil, errPinnedAccountUnavailable
 	}
-	return s.fallback.Pick(ctx, provider, model, opts, auths)
+	return nil, errPinnedAccountUnavailable
 }
 
 func exactRouteAuthUsable(auth *coreauth.Auth, model string, now time.Time) bool {

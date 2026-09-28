@@ -34,9 +34,10 @@ func TestLoadStateAcceptsPrivateLoopbackConfiguration(t *testing.T) {
 		"plugins:",
 		"  enabled: false",
 		"pprof:",
-		"  enabled: false",
+		"  enable: false",
 		"discovery:",
 		"  enabled: false",
+		"request-log: false",
 		"logging-to-file: false",
 		"usage-statistics-enabled: false",
 	}, "\n")+"\n")
@@ -184,9 +185,44 @@ func TestLoadStateRejectsUnsafeConfiguration(t *testing.T) {
 		{
 			name: "plugins enabled",
 			mutate: func(root, _ string) {
-				replaceInFile(t, filepath.Join(root, "config.yaml"), "enabled: false", "enabled: true")
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "plugins:\n  enabled: false", "plugins:\n  enabled: true")
 			},
 			want: "plugins",
+		},
+		{
+			name: "profiling enabled",
+			mutate: func(root, _ string) {
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "pprof:\n  enable: false", "pprof:\n  enable: true")
+			},
+			want: "pprof",
+		},
+		{
+			name: "discovery enabled",
+			mutate: func(root, _ string) {
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "discovery:\n  enabled: false", "discovery:\n  enabled: true")
+			},
+			want: "discovery",
+		},
+		{
+			name: "request logging enabled",
+			mutate: func(root, _ string) {
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "request-log: false", "request-log: true")
+			},
+			want: "request logging",
+		},
+		{
+			name: "file logging enabled",
+			mutate: func(root, _ string) {
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "logging-to-file: false", "logging-to-file: true")
+			},
+			want: "file logging",
+		},
+		{
+			name: "usage statistics enabled",
+			mutate: func(root, _ string) {
+				replaceInFile(t, filepath.Join(root, "config.yaml"), "usage-statistics-enabled: false", "usage-statistics-enabled: true")
+			},
+			want: "usage statistics",
 		},
 		{
 			name: "missing client key",
@@ -244,7 +280,7 @@ func validStateFixture(t *testing.T) (string, string) {
 	writePrivateFile(t, filepath.Join(root, "control.key"), "control-secret\n")
 	writePrivateFile(t, filepath.Join(root, "management.key"), "management-secret\n")
 	writePrivateFile(t, filepath.Join(root, "routing.key"), strings.Repeat("11", 32)+"\n")
-	writePrivateFile(t, filepath.Join(root, "config.yaml"), "host: 127.0.0.1\nport: 43127\nauth-dir: "+authDir+"\napi-keys:\n  - client-secret\nremote-management:\n  allow-remote: false\n  secret-key: ''\n  disable-control-panel: true\n  disable-auto-update-panel: true\nplugins:\n  enabled: false\npprof:\n  enabled: false\ndiscovery:\n  enabled: false\n")
+	writePrivateFile(t, filepath.Join(root, "config.yaml"), "host: 127.0.0.1\nport: 43127\nauth-dir: "+authDir+"\napi-keys:\n  - client-secret\nremote-management:\n  allow-remote: false\n  secret-key: ''\n  disable-control-panel: true\n  disable-auto-update-panel: true\nplugins:\n  enabled: false\npprof:\n  enable: false\ndiscovery:\n  enabled: false\nrequest-log: false\nlogging-to-file: false\nusage-statistics-enabled: false\n")
 	return root, authDir
 }
 

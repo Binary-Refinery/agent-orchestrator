@@ -52,7 +52,7 @@ func (m *Manager) prepareAccountsManagerRoute(
 		removeEnvCaseInsensitive(env, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN")
 		env["ANTHROPIC_BASE_URL"] = baseURL
 		env["ANTHROPIC_AUTH_TOKEN"] = route.Token
-		return &ports.AgentProviderRoute{BaseURL: baseURL, TokenEnv: "ANTHROPIC_AUTH_TOKEN"}, nil
+		return &ports.AgentProviderRoute{BaseURL: baseURL, TokenEnv: "ANTHROPIC_AUTH_TOKEN"}, nil // #nosec G101 -- TokenEnv is a variable name, not a secret value.
 	default:
 		return nil, nil
 	}
@@ -76,4 +76,18 @@ func (m *Manager) accountsManagerRoutingEnabled(ctx context.Context, harness dom
 	}
 	enabled, err := m.accountsManager.AgentRoutingEnabled(ctx, provider)
 	return err == nil && enabled
+}
+
+func (m *Manager) checkAccountsManagerChatMode(ctx context.Context, id domain.SessionID, harness domain.AgentHarness) error {
+	if harness != domain.HarnessCodex || m.accountsManager == nil {
+		return nil
+	}
+	pinned, err := m.accountsManager.HasAgentSessionRoute(ctx, id, domain.AccountsManagerProviderCodex)
+	if err != nil {
+		return fmt.Errorf("read Accounts Manager session binding: %w", err)
+	}
+	if pinned {
+		return fmt.Errorf("%w: this session is pinned to Accounts Manager; managed Chat is not supported", ports.ErrChatUnsupported)
+	}
+	return nil
 }

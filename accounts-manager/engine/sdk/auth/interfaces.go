@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -14,11 +15,15 @@ var ErrRefreshNotSupported = errors.New("cliproxy auth: refresh not supported")
 // LoginOptions captures generic knobs shared across authenticators.
 // Provider-specific logic can inspect Metadata for extra parameters.
 type LoginOptions struct {
-	NoBrowser    bool
-	ProjectID    string
-	CallbackPort int
-	Metadata     map[string]string
-	Prompt       func(prompt string) (string, error)
+	// CallbackListener transfers ownership to Login; only loopback TCP is accepted.
+	CallbackListener net.Listener
+	// AuthorizationURL delivers the URL privately when CallbackListener is set.
+	AuthorizationURL func(context.Context, string) error
+	NoBrowser        bool
+	ProjectID        string
+	CallbackPort     int
+	Metadata         map[string]string
+	Prompt           func(prompt string) (string, error)
 }
 
 // Authenticator manages login and optional refresh flows for a provider.

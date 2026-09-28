@@ -25,11 +25,24 @@ func TestRunnerHelperProcess(t *testing.T) {
 	if os.Getenv(runnerHelperEnvironment) != "1" {
 		return
 	}
+	if os.Getenv("AO_ACCOUNTS_MANAGER_TEST_VERIFICATION") == "1" {
+		original := http.DefaultTransport
+		http.DefaultTransport = runnerRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Host == "chatgpt.com" && request.URL.Path == "/backend-api/wham/usage" || request.URL.Host == "api.anthropic.com" && request.URL.Path == "/api/oauth/profile" {
+				return successfulCredentialCheck(request)
+			}
+			return original.RoundTrip(request)
+		})
+	}
+	if os.Getenv("AO_ACCOUNTS_MANAGER_TEST_MODEL_BARRIER") != "" {
+		runWithModelRefreshBarrier(t)
+		return
+	}
 	code := RunCLI(context.Background(), []string{"serve", "--state-dir", os.Getenv("AO_ACCOUNTS_MANAGER_TEST_STATE")}, os.Stdout, os.Stderr)
 	os.Exit(code)
 }
 
-func TestRunnerStreamsThroughFakeOpenAIProviderWithoutLeakingSecrets(t *testing.T) {
+func TestRunnerStreamsThroughSelectedAccountWithoutLeakingSecrets(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping runner integration in short mode")
 	}
@@ -43,7 +56,11 @@ func TestRunnerStreamsThroughFakeOpenAIProviderWithoutLeakingSecrets(t *testing.
 	)
 	upstreamRequest := make(chan []byte, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" && r.Header.Get("Authorization") == "Bearer "+providerKey {
+			_, _ = io.WriteString(w, `{"data":[{"id":"test-model"}]}`)
+			return
+		}
+		if r.URL.Path != "/v1/responses" {
 			http.Error(w, "unexpected path", http.StatusNotFound)
 			return
 		}
@@ -56,11 +73,11 @@ func TestRunnerStreamsThroughFakeOpenAIProviderWithoutLeakingSecrets(t *testing.
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
-		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"fake-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello \"},\"finish_reason\":null}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n")
 		flusher.Flush()
-		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"fake-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"world\"},\"finish_reason\":null}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n")
 		flusher.Flush()
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"test-response\",\"status\":\"completed\",\"output\":[]}}\n\n")
 		flusher.Flush()
 	}))
 	defer upstream.Close()
@@ -94,15 +111,7 @@ pprof:
   enable: false
 discovery:
   enabled: false
-openai-compatibility:
-  - name: fake-provider
-    base-url: %s/v1
-    api-key-entries:
-      - api-key: %s
-    models:
-      - name: fake-model
-        alias: fake-model
-`, runnerPort, authDir, clientKey, upstream.URL, providerKey)
+`, runnerPort, authDir, clientKey)
 	writePrivateFile(t, filepath.Join(stateDir, "config.yaml"), config)
 
 	executable, err := os.Executable()
@@ -145,9 +154,54 @@ openai-compatibility:
 		t.Fatalf("identity status=%d body=%s", identityResponse.StatusCode, identityBody)
 	}
 
-	requestBody := fmt.Sprintf(`{"model":"fake-model","messages":[{"role":"user","content":"%s"}],"stream":true}`, requestSecret)
-	request, _ := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions", strings.NewReader(requestBody))
-	request.Header.Set("Authorization", "Bearer "+clientKey)
+	createBody, _ := json.Marshal(map[string]string{"operationId": "stream-key", "provider": "codex", "key": providerKey, "baseUrl": upstream.URL + "/v1"})
+	create, _ := http.NewRequest(http.MethodPost, baseURL+credentialPath+"/api-key", bytes.NewReader(createBody))
+	create.Header.Set("Authorization", "Bearer "+managementKey)
+	createResponse, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credential credentialRecord
+	err = json.NewDecoder(createResponse.Body).Decode(&credential)
+	_ = createResponse.Body.Close()
+	if err != nil || createResponse.StatusCode != http.StatusOK || credential.AuthIndex == "" {
+		t.Fatalf("encrypted create status=%d err=%v", createResponse.StatusCode, err)
+	}
+	catalog, err := loadCredentialModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := catalog["codex"][0].ID
+	accountID := publicCredentialID(managementKey, credential.AuthIndex)
+	bindingBody, _ := json.Marshal(routeBindingSnapshot{Revision: 1, Bindings: []routeBinding{{SessionID: "stream-test", Provider: "codex", Mode: "managed", AccountID: accountID, Revision: 1}}})
+	syncBindings, _ := http.NewRequest(http.MethodPut, baseURL+"/ao/internal/routes/bindings", bytes.NewReader(bindingBody))
+	syncBindings.Header.Set("Authorization", "Bearer "+managementKey)
+	syncResponse, err := http.DefaultClient.Do(syncBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = syncResponse.Body.Close()
+	if syncResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("binding status=%d", syncResponse.StatusCode)
+	}
+	mintBody, _ := json.Marshal(map[string]any{"provider": "codex", "authIndex": credential.AuthIndex, "sessionId": "stream-test", "accountId": accountID, "bindingRevision": 1})
+	mint, _ := http.NewRequest(http.MethodPost, baseURL+"/ao/internal/routes/token", bytes.NewReader(mintBody))
+	mint.Header.Set("Authorization", "Bearer "+managementKey)
+	mintResponse, err := http.DefaultClient.Do(mint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var route struct {
+		Token string `json:"token"`
+	}
+	err = json.NewDecoder(mintResponse.Body).Decode(&route)
+	_ = mintResponse.Body.Close()
+	if err != nil || mintResponse.StatusCode != http.StatusOK || route.Token == "" {
+		t.Fatalf("mint status=%d err=%v", mintResponse.StatusCode, err)
+	}
+	requestBody := fmt.Sprintf(`{"model":%q,"input":"%s","stream":true}`, model, requestSecret)
+	request, _ := http.NewRequest(http.MethodPost, baseURL+"/v1/responses", strings.NewReader(requestBody))
+	request.Header.Set("Authorization", "Bearer "+route.Token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -158,7 +212,7 @@ openai-compatibility:
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("proxy status=%d body=%s logs=%s", response.StatusCode, stream, logs.String())
 	}
-	for _, chunk := range []string{"hello", "world", "[DONE]"} {
+	for _, chunk := range []string{"hello", "world", "response.completed"} {
 		if !bytes.Contains(stream, []byte(chunk)) {
 			t.Fatalf("stream missing %q: %s", chunk, stream)
 		}
@@ -174,7 +228,7 @@ openai-compatibility:
 	}
 
 	combinedPublicOutput := strings.Join([]string{string(runtimeBytes), string(identityBody), logs.String()}, "\n")
-	for _, secret := range []string{controlKey, clientKey, managementKey, providerKey, requestSecret} {
+	for _, secret := range []string{controlKey, clientKey, managementKey, providerKey, requestSecret, route.Token} {
 		if strings.Contains(combinedPublicOutput, secret) {
 			t.Fatalf("runner exposed secret %q", secret)
 		}
@@ -232,6 +286,7 @@ routing:
 	logs := &lockedBuffer{}
 	command := exec.Command(executable, "-test.run=^TestRunnerHelperProcess$")
 	command.Env = append(os.Environ(), runnerHelperEnvironment+"=1", "AO_ACCOUNTS_MANAGER_TEST_STATE="+stateDir, "GIN_MODE=release")
+	command.Env = append(command.Env, "AO_ACCOUNTS_MANAGER_TEST_VERIFICATION=1")
 	command.Stdout = logs
 	command.Stderr = logs
 	if err = command.Start(); err != nil {
@@ -245,6 +300,27 @@ routing:
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", runnerPort)
 	waitForRunnerHealth(t, baseURL)
 	managementURL := baseURL + "/v0/management/routing/strategy"
+	for _, path := range []string{"/v0/management/config.yaml", "/v0/management/request-log", "/v0/management/plugins"} {
+		request, _ := http.NewRequest(http.MethodGet, baseURL+path, nil)
+		request.Header.Set("Authorization", "Bearer "+managementKey)
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Errorf("unsupported management route %s returned %d", path, response.StatusCode)
+		}
+	}
+	callback, _ := http.NewRequest(http.MethodPost, baseURL+"/v0/management/oauth-callback", strings.NewReader(`{"state":"unknown","code":"example"}`))
+	callbackResponse, callbackErr := http.DefaultClient.Do(callback)
+	if callbackErr != nil {
+		t.Fatal(callbackErr)
+	}
+	_ = callbackResponse.Body.Close()
+	if callbackResponse.StatusCode != http.StatusUnauthorized {
+		t.Errorf("unauthenticated callback status = %d", callbackResponse.StatusCode)
+	}
 
 	for _, tt := range []struct {
 		name  string
@@ -286,7 +362,7 @@ routing:
 		})
 	}
 
-	authFilesRequest, err := http.NewRequest(http.MethodGet, baseURL+"/v0/management/auth-files", nil)
+	authFilesRequest, err := http.NewRequest(http.MethodGet, baseURL+credentialPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,8 +391,8 @@ routing:
 		{name: "fake-codex.json", provider: "codex"},
 		{name: "fake-claude.json", provider: "claude"},
 	} {
-		body := fmt.Sprintf(`{"type":%q,"email":%q,"access_token":%q}`, fixture.provider, fixture.provider+"@example.test", importedCredentialSecret+"-"+fixture.provider)
-		request, requestErr := http.NewRequest(http.MethodPost, baseURL+"/v0/management/auth-files?name="+url.QueryEscape(fixture.name), strings.NewReader(body))
+		body := fmt.Sprintf(`{"operationId":%q,"provider":%q,"credential":{"type":%q,"email":%q,"access_token":%q}}`, "import-"+fixture.provider, fixture.provider, fixture.provider, fixture.provider+"@example.test", importedCredentialSecret+"-"+fixture.provider)
+		request, requestErr := http.NewRequest(http.MethodPost, baseURL+credentialPath+"/import", strings.NewReader(body))
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
@@ -326,9 +402,10 @@ routing:
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
+		responseBody, _ := io.ReadAll(response.Body)
 		_ = response.Body.Close()
 		if response.StatusCode != http.StatusOK {
-			t.Fatalf("upload %s status = %d", fixture.provider, response.StatusCode)
+			t.Fatalf("upload %s status = %d, response=%s", fixture.provider, response.StatusCode, responseBody)
 		}
 	}
 
@@ -340,7 +417,7 @@ routing:
 	}
 	listCredentials := func() []listedCredential {
 		t.Helper()
-		request, requestErr := http.NewRequest(http.MethodGet, baseURL+"/v0/management/auth-files", nil)
+		request, requestErr := http.NewRequest(http.MethodGet, baseURL+credentialPath, nil)
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
@@ -378,8 +455,8 @@ routing:
 
 	target := imported[0]
 	for _, disabled := range []bool{true, false} {
-		body, _ := json.Marshal(map[string]any{"name": target.Name, "auth_index": target.AuthIndex, "disabled": disabled})
-		request, _ := http.NewRequest(http.MethodPatch, baseURL+"/v0/management/auth-files/status", bytes.NewReader(body))
+		body, _ := json.Marshal(map[string]any{"disabled": disabled})
+		request, _ := http.NewRequest(http.MethodPatch, baseURL+credentialPath+"/status?ref="+url.QueryEscape(target.AuthIndex), bytes.NewReader(body))
 		request.Header.Set("Authorization", "Bearer "+managementKey)
 		request.Header.Set("Content-Type", "application/json")
 		response, requestErr := http.DefaultClient.Do(request)
@@ -387,7 +464,7 @@ routing:
 			t.Fatal(requestErr)
 		}
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusOK {
+		if response.StatusCode != http.StatusNoContent {
 			t.Fatalf("set disabled=%t status = %d", disabled, response.StatusCode)
 		}
 		found := false
@@ -404,8 +481,7 @@ routing:
 		}
 	}
 
-	refreshBody, _ := json.Marshal(map[string]string{"name": target.Name})
-	refreshRequest, _ := http.NewRequest(http.MethodPost, baseURL+"/v0/management/auth-files/refresh", bytes.NewReader(refreshBody))
+	refreshRequest, _ := http.NewRequest(http.MethodPost, baseURL+credentialPath+"/refresh?ref="+url.QueryEscape(target.AuthIndex), nil)
 	refreshRequest.Header.Set("Authorization", "Bearer "+managementKey)
 	refreshRequest.Header.Set("Content-Type", "application/json")
 	refreshResponse, err := http.DefaultClient.Do(refreshRequest)
@@ -418,14 +494,14 @@ routing:
 	}
 
 	for _, credential := range imported {
-		request, _ := http.NewRequest(http.MethodDelete, baseURL+"/v0/management/auth-files?name="+url.QueryEscape(credential.Name), nil)
+		request, _ := http.NewRequest(http.MethodDelete, baseURL+credentialPath+"?ref="+url.QueryEscape(credential.AuthIndex), nil)
 		request.Header.Set("Authorization", "Bearer "+managementKey)
 		response, requestErr := http.DefaultClient.Do(request)
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusOK {
+		if response.StatusCode != http.StatusNoContent {
 			t.Fatalf("delete %s status = %d", credential.Provider, response.StatusCode)
 		}
 	}

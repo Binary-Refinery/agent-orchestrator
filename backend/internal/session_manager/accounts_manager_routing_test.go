@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -21,6 +22,23 @@ func (f fakeAccountsManagerRouter) PrepareAgentLaunchRoute(context.Context, doma
 
 func (f fakeAccountsManagerRouter) AgentRoutingEnabled(context.Context, domain.AccountsManagerProvider) (bool, error) {
 	return f.enabled, f.err
+}
+
+func (f fakeAccountsManagerRouter) HasAgentSessionRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider) (bool, error) {
+	return f.route != nil, f.err
+}
+
+func TestManagedSessionCannotTransitionToNativeChat(t *testing.T) {
+	m, st, _, _ := newManager()
+	m.chat = &transitionChat{}
+	m.accountsManager = fakeAccountsManagerRouter{route: &ports.AccountsManagerLaunchRoute{}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+	rec := st.sessions["mer-1"]
+	rec.Harness = domain.HarnessCodex
+	err := m.preflightInterfaceTarget(context.Background(), rec, domain.SessionInterfaceTransition{TargetMode: domain.SessionModeChat})
+	if !errors.Is(err, ports.ErrChatUnsupported) || !strings.Contains(err.Error(), "Accounts Manager") {
+		t.Fatalf("managed transition = %v", err)
+	}
 }
 
 func TestPrepareAccountsManagerRouteInjectsOnlyChildScopedCodexConfiguration(t *testing.T) {
@@ -70,7 +88,7 @@ func TestAccountsManagerRoutePrecedesLaunchAuthValidation(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			m, st, rt, _ := newManager()
 			m.accountsManager = fakeAccountsManagerRouter{
-				enabled: true,
+				enabled: operation != "switch",
 				route:   &ports.AccountsManagerLaunchRoute{BaseURL: "http://127.0.0.1:43127", Token: "route-token"},
 			}
 			agent := &launchAuthAgent{recordingAgent: &recordingAgent{}, status: ports.AgentAuthStatusUnauthorized}

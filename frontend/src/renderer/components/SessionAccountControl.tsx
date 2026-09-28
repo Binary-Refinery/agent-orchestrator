@@ -1,0 +1,192 @@
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { UsersRound } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAccountsManagerQuery } from "../hooks/useAccountsManagerQuery";
+import {
+  AccountControlError, accountControlMessage, accountSwitchIsActive, changeSessionAccountSwitch,
+  fetchSessionAccountControl, fetchSessionAccountSwitch, readSessionSwitchIntent, saveSessionSwitchIntent, startSessionAccountSwitch,
+  type AccountSwitch, type AccountSwitchRequest,
+} from "../lib/accounts-manager-controls";
+import { Button } from "./ui/button";
+import { TopbarButton } from "./TopbarButton";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { AccountUsage, accountUsageSummary, useAccountUsage } from "./settings/AccountUsage";
+
+export function SessionAccountButton({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return <Dialog open={open} onOpenChange={setOpen}>
+    <DialogTrigger asChild><TopbarButton variant="icon" aria-label={t("accountsManager.controls.sessionTitle")} title={t("accountsManager.controls.sessionTitle")}><UsersRound className="size-4" aria-hidden="true" /></TopbarButton></DialogTrigger>
+    <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogHeader><DialogTitle>{t("accountsManager.controls.sessionTitle")}</DialogTitle><DialogDescription>{t("accountsManager.controls.sessionDescription")}</DialogDescription></DialogHeader>
+      {open ? <SessionAccountControl sessionId={sessionId} /> : null}
+    </DialogContent>
+  </Dialog>;
+}
+
+export function SessionAccountControl({ sessionId }: { sessionId: string }) {
+  return <SessionAccountPanel key={sessionId} sessionId={sessionId} />;
+}
+
+function SessionAccountPanel({ sessionId }: { sessionId: string }) {
+  const { t, i18n } = useTranslation();
+  const client = useQueryClient();
+  const key = ["accounts-manager", "session", sessionId];
+  const inventory = useAccountsManagerQuery();
+  const current = useQuery({
+    queryKey: key,
+    queryFn: ({ signal }) => fetchSessionAccountControl(sessionId, signal),
+    retry: false,
+    refetchInterval: 1500,
+  });
+  const [target, setTarget] = useState("");
+  const [policy, setPolicy] = useState<"" | "drain" | "interrupt">("");
+  const [newConversation, setNewConversation] = useState(false);
+  const [initial] = useState(() => {
+    try { return { body: readSessionSwitchIntent(sessionId), unreadable: false }; }
+    catch { return { body: undefined, unreadable: true }; }
+  });
+  const [submitted, setSubmitted] = useState<AccountSwitchRequest | undefined>(initial.body);
+  const [localError, setLocalError] = useState(initial.unreadable ? t("accountsManager.controls.switchSavedError") : "");
+  const operationKey = (id?: string) => ["accounts-manager", "switch", sessionId, id];
+  const inFlight = useRef(false);
+  const mutation = useMutation({
+    mutationFn: (request: AccountSwitchRequest | { operationId: string; action: "retry" | "cancel" }) => "action" in request
+      ? changeSessionAccountSwitch(sessionId, request.operationId, request.action)
+      : startSessionAccountSwitch(sessionId, request),
+    retry: false,
+    onMutate: async (request) => {
+      await client.cancelQueries({ queryKey: operationKey(request.operationId) });
+    },
+    onSuccess: (result) => client.setQueryData(operationKey(result.id), result),
+    onError: (error, request) => {
+      if (!("action" in request) && error instanceof AccountControlError && [400, 409].includes(error.status)) {
+        try { saveSessionSwitchIntent(sessionId); setSubmitted(undefined); }
+        catch { setLocalError(t("accountsManager.controls.switchSavedError")); }
+      }
+    },
+    onSettled: async () => {
+      await client.invalidateQueries({ queryKey: key });
+      inFlight.current = false;
+    },
+  });
+  const binding = current.data;
+  const trackedId = submitted?.operationId ?? binding?.switch?.id;
+  const observed = useQuery({
+    queryKey: operationKey(trackedId),
+    queryFn: ({ signal }) => fetchSessionAccountSwitch(sessionId, trackedId!, signal),
+    enabled: Boolean(trackedId) && !mutation.isPending && !current.isError,
+    retry: false,
+    refetchInterval: query => query.state.data && !accountSwitchIsActive(query.state.data) ? false : 1500,
+  });
+  const operation: AccountSwitch | undefined = observed.data ?? (binding?.switch?.id === trackedId ? binding?.switch : undefined);
+  const active = accountSwitchIsActive(operation);
+  const serverActive = accountSwitchIsActive(binding?.switch);
+  const unconfirmed = Boolean(submitted && !operation);
+  const pendingCommit = operation?.phase === "ready" && (!binding || binding.revision < operation.targetRevision);
+  const unavailable = current.isError || !binding;
+  const busy = mutation.isPending || current.isFetching;
+  useEffect(() => {
+    const completed = observed.data;
+    if (!submitted || !completed || accountSwitchIsActive(completed) || !binding?.switch) return;
+    const sameTerminal = binding.switch.id === completed.id && !accountSwitchIsActive(binding.switch);
+    const nextPending = binding.switch.id !== completed.id && accountSwitchIsActive(binding.switch)
+      && binding.revision >= Math.max(completed.sourceRevision, completed.targetRevision);
+    if (!sameTerminal && !nextPending) return;
+    try { saveSessionSwitchIntent(sessionId); setSubmitted(undefined); }
+    catch { setLocalError(t("accountsManager.controls.switchSavedError")); }
+  }, [submitted, observed.data, binding, sessionId]);
+  const accounts = inventory.data?.accounts.filter(account => account.provider === binding?.provider) ?? [];
+  const usage = useAccountUsage(accounts);
+  const inventoryReady = inventory.data?.availability === "ready" && !inventory.data.stale && !inventory.isError;
+  const selected = target.startsWith("managed:") ? accounts.find(account => account.id === target.slice(8)) : undefined;
+  const selectedReady = target === "native" || (inventoryReady && selected && selected.verification === "verified" && !selected.disabled && !selected.unavailable && selected.status === "active");
+  const request = () => {
+    if (!binding || busy || unavailable || active || serverActive || unconfirmed || pendingCommit || localError || binding.blocked || !selectedReady || !policy || inFlight.current) return;
+    const body: AccountSwitchRequest = {
+      operationId: crypto.randomUUID(), expectedRevision: binding.revision,
+      mode: target === "native" ? "native" : "managed",
+      ...(selected ? { accountId: selected.id } : {}), policy, newConversation,
+    };
+    try { saveSessionSwitchIntent(sessionId, body); }
+    catch { setLocalError(t("accountsManager.controls.switchSaveError")); return; }
+    inFlight.current = true;
+    setSubmitted(body);
+    mutation.mutate(body);
+  };
+  const change = (action: "retry" | "cancel") => {
+    if (!operation || unavailable || busy || observed.isFetching || observed.isError || inFlight.current) return;
+    inFlight.current = true;
+    mutation.mutate({ operationId: operation.id, action });
+  };
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-medium">{t("accountsManager.controls.session")}</h3>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => { void current.refetch(); if (trackedId) void observed.refetch(); }}>{t("accountsManager.controls.refreshSession")}</Button>
+      </div>
+      <p className="text-xs text-muted-foreground">{t("accountsManager.controls.noFallback")}</p>
+      {current.isPending ? <p role="status">{t("accountsManager.controls.checkingSession")}</p> : null}
+      {current.error ? <p role="alert" className="text-destructive">{accountControlMessage(current.error, t)}</p> : null}
+      {localError ? <p role="alert" className="text-destructive">{localError}</p> : null}
+      {binding ? (
+        <section aria-label={t("accountsManager.controls.committed")} className="rounded-md border border-border p-3 space-y-1">
+          <h4 className="font-medium">{t("accountsManager.controls.committed")}</h4>
+          <p>{binding.mode === "native" ? t("accountsManager.controls.native") : binding.accountId}</p>
+          <p className="text-xs text-muted-foreground">{t("accountsManager.controls.binding", { mode: binding.mode, revision: binding.revision, provider: binding.provider })}</p>
+          <p className="text-xs">{unavailable ? t("accountsManager.controls.stale") : t("accountsManager.controls.available")}</p>
+          {binding.blocked ? <p role="status">{t("accountsManager.controls.blocked")}</p> : null}
+        </section>
+      ) : null}
+      {unconfirmed ? <section aria-label={t("accountsManager.controls.unknownSwitch")} className="rounded-md border border-border p-3 space-y-2">
+        <p className="break-all">{t("accountsManager.controls.unknownId", { id: submitted!.operationId })}</p>
+        <p>{t("accountsManager.controls.unknownRequest")}</p>
+        <Button size="sm" disabled={busy || observed.isFetching || unavailable} onClick={() => void observed.refetch()}>{t("accountsManager.controls.checkSwitch")}</Button>
+        {observed.error instanceof AccountControlError && observed.error.status === 404 ? <Button size="sm" variant="outline" disabled={busy || unavailable} onClick={() => {
+          if (inFlight.current) return;
+          inFlight.current = true;
+          mutation.mutate(submitted!);
+        }}>{t("accountsManager.controls.resendSwitch")}</Button> : null}
+      </section> : null}
+      {observed.error ? <p role="alert" className="text-destructive">{accountControlMessage(observed.error, t)}</p> : null}
+      {operation ? (
+        <section aria-label={t("accountsManager.controls.switchOperation")} className="rounded-md border border-border p-3 space-y-2" aria-live="polite">
+          <h4 className="font-medium">{active ? t("accountsManager.controls.pendingSwitch") : t("accountsManager.controls.lastSwitch")}</h4>
+          <p className="break-all">{t("accountsManager.controls.operationId", { id: operation.id })}</p>
+          <p>{t("accountsManager.controls.phase", { phase: operation.phase })}</p>
+          <p>{t("accountsManager.controls.target", { target: operation.targetMode === "native" ? t("accountsManager.controls.native") : operation.targetAccountId })}</p>
+          <p>{t("accountsManager.controls.revisions", { policy: operation.policy, source: operation.sourceRevision, target: operation.targetRevision })}</p>
+          <p>{operation.newConversation ? t("accountsManager.controls.newConversation") : t("accountsManager.controls.preserveConversation")}</p>
+          <p className="text-xs text-muted-foreground">{t("accountsManager.controls.accepted")}</p>
+          {operation.recoveryRequired ? <p role="status">{t("accountsManager.controls.switchRecovery")}</p> : null}
+          <div className="flex gap-2">
+            {operation.phase === "recovery_required" ? <Button size="sm" disabled={busy || unavailable || observed.isFetching || observed.isError} onClick={() => change("retry")}>{t("accountsManager.controls.retrySwitch")}</Button> : null}
+            {["requested", "waiting"].includes(operation.phase) ? <Button size="sm" variant="outline" disabled={busy || unavailable || observed.isFetching || observed.isError} onClick={() => change("cancel")}>{t("accountsManager.controls.cancelSwitch")}</Button> : null}
+          </div>
+        </section>
+      ) : null}
+      {mutation.error ? <div role="alert" className="text-destructive space-y-1"><p>{accountControlMessage(mutation.error, t)}</p><p className="break-all">{t("accountsManager.controls.submitted", { id: mutation.variables?.operationId })}</p></div> : null}
+      {!unavailable ? (
+        <fieldset className="space-y-3" disabled={busy || active || serverActive || unconfirmed || pendingCommit || Boolean(localError) || binding.blocked}>
+          <label className="block space-y-1">{t("accountsManager.controls.targetLabel")}
+            <select aria-label={t("accountsManager.controls.targetLabel")} className="block w-full rounded-md border border-input bg-background p-2" value={target} onChange={event => setTarget(event.target.value)}>
+              <option value="">{t("accountsManager.controls.choose")}</option>
+              <option value="native">{t("accountsManager.controls.chooseNative")}</option>
+              {accounts.map((account,index) => <option key={account.id} value={`managed:${account.id}`} disabled={!inventoryReady || account.verification !== "verified" || account.disabled || account.unavailable || account.status !== "active"}>{account.label || account.id} ({account.id}) | {accountUsageSummary(account, usage[index], t, i18n.resolvedLanguage)}</option>)}
+            </select>
+          </label>
+          {!inventoryReady ? <p>{t("accountsManager.controls.inventoryUnavailable")}</p> : null}
+          {selected ? <AccountUsage key={`${selected.id}:${selected.generation}`} account={selected} /> : null}
+          <label className="block space-y-1">{t("accountsManager.controls.timing")}
+            <select aria-label={t("accountsManager.controls.timing")} className="block w-full rounded-md border border-input bg-background p-2" value={policy} onChange={event => setPolicy(event.target.value as typeof policy)}>
+              <option value="">{t("accountsManager.controls.chooseTiming")}</option><option value="drain">{t("accountsManager.controls.drain")}</option><option value="interrupt">{t("accountsManager.controls.interrupt")}</option>
+            </select>
+          </label>
+          <label className="flex gap-2"><input type="checkbox" checked={newConversation} onChange={event => setNewConversation(event.target.checked)} />{t("accountsManager.controls.startNew")}</label>
+          <Button disabled={!selectedReady || !policy} onClick={request}>{t("accountsManager.controls.requestSwitch")}</Button>
+        </fieldset>
+      ) : null}
+    </div>
+  );
+}

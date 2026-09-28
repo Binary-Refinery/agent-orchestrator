@@ -31,7 +31,6 @@ func TestManagementClientRoutingUsesManagementAuthentication(t *testing.T) {
 
 	const managementToken = "management-secret-do-not-expose"
 	for _, want := range []RoutingStrategy{RoutingRoundRobin, RoutingWeightedRoundRobin, RoutingFillFirst} {
-		want := want
 		t.Run(string(want), func(t *testing.T) {
 			t.Parallel()
 			authorized := false
@@ -69,11 +68,11 @@ func TestManagementClientMintsPrivateRouteCapability(t *testing.T) {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
-		var input map[string]string
+		var input map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatal(err)
 		}
-		if input["provider"] != "codex" || input["authIndex"] != "private-ref" || input["sessionId"] != "session-1" {
+		if input["provider"] != "codex" || input["authIndex"] != "private-ref" || input["sessionId"] != "session-1" || input["accountId"] != "public-id" || input["bindingRevision"] != float64(7) {
 			t.Fatalf("route request = %#v", input)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -82,7 +81,7 @@ func TestManagementClientMintsPrivateRouteCapability(t *testing.T) {
 	defer server.Close()
 
 	client := NewManagementClient(staticEndpointSource{endpoint: Endpoint{BaseURL: server.URL, ManagementToken: managementToken}, ready: true}, server.Client())
-	got, err := client.MintRoute(context.Background(), ProviderCodex, "private-ref", "session-1")
+	got, err := client.MintRoute(context.Background(), ProviderCodex, "private-ref", "session-1", "public-id", 7)
 	if err != nil {
 		t.Fatalf("MintRoute() error = %v", err)
 	}
@@ -206,8 +205,12 @@ func TestManagementClientListCredentialsFiltersAndRedacts(t *testing.T) {
 		responseName  = "private-codex-file.json"
 		metadataValue = "raw-metadata-secret"
 	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(req.URL.Path, "-api-key") {
+			_, _ = io.WriteString(w, `{"codex-api-key":[],"claude-api-key":[]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{
 			"observed_at":"2026-09-20T10:11:12Z",
 			"files":[
@@ -226,8 +229,8 @@ func TestManagementClientListCredentialsFiltersAndRedacts(t *testing.T) {
 	}
 	wantObservedAt := time.Date(2026, 9, 20, 10, 11, 12, 0, time.UTC)
 	want := []CredentialSummary{
-		{Ref: "codex-ref", Provider: ProviderCodex, Kind: "oauth", Email: "codex@example.com", Status: "active", ObservedAt: wantObservedAt},
-		{Ref: "claude-ref", Provider: ProviderClaude, Kind: "api_key", Email: "claude@example.com", Status: "disabled", Disabled: true, ObservedAt: wantObservedAt},
+		{Ref: "codex-ref", Provider: ProviderCodex, Kind: "oauth", Email: "codex@example.com", Status: "active", Verification: "unverified", Unavailable: true, ObservedAt: wantObservedAt},
+		{Ref: "claude-ref", Provider: ProviderClaude, Kind: "api_key", Email: "claude@example.com", Status: "disabled", Verification: "unverified", Unavailable: true, Disabled: true, ObservedAt: wantObservedAt},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("ListCredentials() count = %d, want %d", len(got), len(want))
@@ -297,7 +300,6 @@ func TestManagementClientJSONTransportSupportsAllMethods(t *testing.T) {
 
 	const managementToken = "management-secret"
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
-		method := method
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
 			transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {

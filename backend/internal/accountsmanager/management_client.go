@@ -23,18 +23,20 @@ const (
 	managementImportLimit   = 1 << 20
 )
 
+// ErrUnavailable and the other management errors exclude upstream response bodies.
 var (
-	ErrUnavailable          = errors.New("accounts manager unavailable")
-	ErrResponseTooLarge     = errors.New("accounts manager response is too large")
-	ErrRequestTooLarge      = errors.New("accounts manager request is too large")
-	ErrInvalidResponse      = errors.New("accounts manager returned an invalid response")
-	ErrUnsupportedProvider  = errors.New("accounts manager provider is unsupported")
-	ErrCredentialNotFound   = errors.New("accounts manager credential was not found")
-	ErrCredentialConflict   = errors.New("accounts manager credential is ambiguous or already exists")
-	ErrInvalidCredential    = errors.New("accounts manager credential is invalid")
-	ErrOperationUnsupported = errors.New("accounts manager operation is unsupported")
-	ErrOAuthBusy            = errors.New("accounts manager OAuth login is already in progress")
-	ErrOAuthExpired         = errors.New("accounts manager OAuth login expired")
+	ErrUnavailable             = errors.New("accounts manager unavailable")
+	ErrResponseTooLarge        = errors.New("accounts manager response is too large")
+	ErrRequestTooLarge         = errors.New("accounts manager request is too large")
+	ErrInvalidResponse         = errors.New("accounts manager returned an invalid response")
+	ErrUnsupportedProvider     = errors.New("accounts manager provider is unsupported")
+	ErrCredentialNotFound      = errors.New("accounts manager credential was not found")
+	ErrCredentialConflict      = errors.New("accounts manager credential is ambiguous or already exists")
+	ErrInvalidCredential       = errors.New("accounts manager credential is invalid")
+	ErrVerificationUnavailable = errors.New("accounts manager could not verify the credential")
+	ErrOperationUnsupported    = errors.New("accounts manager operation is unsupported")
+	ErrOAuthBusy               = errors.New("accounts manager OAuth login is already in progress")
+	ErrOAuthExpired            = errors.New("accounts manager OAuth login expired")
 )
 
 // ManagementStatusError reports an upstream HTTP status without retaining or
@@ -59,23 +61,29 @@ func (e *managementTransportError) Error() string {
 
 func (e *managementTransportError) Unwrap() error { return e.cause }
 
+// Provider limits management operations to supported account providers.
 type Provider string
 
+// ProviderCodex and the other provider constants identify supported account types.
 const (
 	ProviderCodex  Provider = "codex"
 	ProviderClaude Provider = "claude"
 )
 
+// CredentialKind distinguishes authentication formats without exposing their contents.
 type CredentialKind string
 
+// CredentialOAuth and the other credential kinds describe stored authentication formats.
 const (
 	CredentialOAuth   CredentialKind = "oauth"
 	CredentialAPIKey  CredentialKind = "api_key"
 	CredentialUnknown CredentialKind = "unknown"
 )
 
+// CredentialState records the runner's latest status, which may be unknown.
 type CredentialState string
 
+// CredentialActive and the other states are runner observations, not inferred health.
 const (
 	CredentialActive       CredentialState = "active"
 	CredentialPending      CredentialState = "pending"
@@ -85,6 +93,7 @@ const (
 	CredentialUnknownState CredentialState = "unknown"
 )
 
+// CredentialCooldown preserves provider-scoped retry timing for an account or model.
 type CredentialCooldown struct {
 	Scope            string    `json:"scope"`
 	Model            string    `json:"model_key"`
@@ -94,31 +103,40 @@ type CredentialCooldown struct {
 	HTTPStatus       int       `json:"http_status"`
 }
 
+// CredentialQuotaObservation keeps observation time separate from cached quota signals.
 type CredentialQuotaObservation struct {
 	ObservedAt time.Time
 	Signals    map[string]string
 }
 
+// CredentialSummary is a secret-free runner projection; Ref remains daemon-private.
 type CredentialSummary struct {
-	Ref             string
-	Provider        Provider
-	Kind            CredentialKind
-	Email           string
-	Status          CredentialState
-	Disabled        bool
-	Unavailable     bool
-	ObservedAt      time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastRefreshedAt time.Time
-	QuotaSupported  bool
-	Cooldowns       []CredentialCooldown
-	Quota           CredentialQuotaObservation
-	ModelQuota      map[string]CredentialQuotaObservation
+	Verification       string
+	VerifiedAt         time.Time
+	Label              string
+	Generation         uint64
+	ReconnectSupported bool
+	Ref                string
+	Provider           Provider
+	Kind               CredentialKind
+	Email              string
+	Status             CredentialState
+	Disabled           bool
+	Unavailable        bool
+	ObservedAt         time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastRefreshedAt    time.Time
+	QuotaSupported     bool
+	Cooldowns          []CredentialCooldown
+	Quota              CredentialQuotaObservation
+	ModelQuota         map[string]CredentialQuotaObservation
 }
 
+// RoutingStrategy describes the engine selector, independently of durable session pins.
 type RoutingStrategy string
 
+// RoutingRoundRobin and the other strategies are accepted engine selector values.
 const (
 	RoutingRoundRobin         RoutingStrategy = "round-robin"
 	RoutingWeightedRoundRobin RoutingStrategy = "weighted-round-robin"
@@ -132,16 +150,19 @@ type RouteCapability struct {
 	Token   string
 }
 
+// EndpointSource exposes private transport material with a readiness flag.
 type EndpointSource interface {
 	Endpoint() (Endpoint, bool)
 }
 
+// ManagementClient bounds private runner requests and serializes credential edits.
 type ManagementClient struct {
 	source     EndpointSource
 	client     *http.Client
 	mutationMu sync.Mutex
 }
 
+// NewManagementClient disables redirects so management credentials cannot be forwarded.
 func NewManagementClient(source EndpointSource, client *http.Client) *ManagementClient {
 	if client == nil {
 		client = &http.Client{}
@@ -156,12 +177,13 @@ func NewManagementClient(source EndpointSource, client *http.Client) *Management
 	return &ManagementClient{source: source, client: &bounded}
 }
 
+// ListCredentials filters runner records to supported providers without returning secrets.
 func (c *ManagementClient) ListCredentials(ctx context.Context) ([]CredentialSummary, error) {
 	var payload struct {
 		ObservedAt time.Time             `json:"observed_at"`
 		Files      []rawCredentialRecord `json:"files"`
 	}
-	if err := c.doJSON(ctx, "list credentials", http.MethodGet, "/v0/management/auth-files", nil, &payload); err != nil {
+	if err := c.doJSON(ctx, "list credentials", http.MethodGet, credentialManagementPath, nil, &payload); err != nil {
 		return nil, err
 	}
 
@@ -186,6 +208,7 @@ func (c *ManagementClient) ListCredentials(ctx context.Context) ([]CredentialSum
 	return credentials, nil
 }
 
+// RoutingStrategy returns only recognized selector values from the runner.
 func (c *ManagementClient) RoutingStrategy(ctx context.Context) (RoutingStrategy, error) {
 	var payload struct {
 		Strategy string `json:"strategy"`
@@ -202,21 +225,22 @@ func (c *ManagementClient) RoutingStrategy(ctx context.Context) (RoutingStrategy
 	}
 }
 
-func (c *ManagementClient) MintRoute(ctx context.Context, provider Provider, ref, sessionID string) (RouteCapability, error) {
+// MintRoute returns child-only material after verifying the runner's loopback origin.
+func (c *ManagementClient) MintRoute(ctx context.Context, provider Provider, ref, sessionID, accountID string, bindingRevision int64) (RouteCapability, error) {
 	if provider != ProviderCodex && provider != ProviderClaude {
 		return RouteCapability{}, ErrUnsupportedProvider
 	}
 	ref = strings.TrimSpace(ref)
 	sessionID = strings.TrimSpace(sessionID)
-	if ref == "" || sessionID == "" {
+	if ref == "" || sessionID == "" || accountID == "" || bindingRevision <= 0 {
 		return RouteCapability{}, ErrInvalidCredential
 	}
 	var payload struct {
 		BaseURL string `json:"baseUrl"`
 		Token   string `json:"token"`
 	}
-	err := c.doJSON(ctx, "mint route", http.MethodPost, "/ao/internal/routes/token", map[string]string{
-		"provider": string(provider), "authIndex": ref, "sessionId": sessionID,
+	err := c.doJSON(ctx, "mint route", http.MethodPost, "/ao/internal/routes/token", map[string]any{
+		"provider": string(provider), "authIndex": ref, "sessionId": sessionID, "accountId": accountID, "bindingRevision": bindingRevision,
 	}, &payload)
 	if err != nil {
 		var statusErr *ManagementStatusError
@@ -258,6 +282,7 @@ func (c *ManagementClient) doJSON(ctx context.Context, operation, method, path s
 			return ErrRequestTooLarge
 		}
 	}
+	defer clear(requestBody)
 	var bodyReader io.Reader
 	if requestBody != nil {
 		bodyReader = bytes.NewReader(requestBody)
@@ -278,7 +303,7 @@ func (c *ManagementClient) doJSON(ctx context.Context, operation, method, path s
 		}
 		return &managementTransportError{operation: operation, cause: err}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return &ManagementStatusError{Operation: operation, StatusCode: res.StatusCode}
 	}

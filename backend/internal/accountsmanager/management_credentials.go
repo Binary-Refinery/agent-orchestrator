@@ -2,57 +2,56 @@ package accountsmanager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 )
 
+const credentialManagementPath = "/ao/internal/credentials"
+
+// RenameCredential uses a generation check without changing provider identity.
+func (c *ManagementClient) RenameCredential(ctx context.Context, ref, label string, generation uint64) error {
+	if generation == 0 || len(label) > 320 {
+		return ErrInvalidCredential
+	}
+	return mapCredentialOperationError(c.doJSON(ctx, "rename credential", http.MethodPatch,
+		credentialManagementPath+"/label?"+url.Values{"ref": {ref}}.Encode(), struct {
+			Label      string `json:"label"`
+			Generation uint64 `json:"generation"`
+		}{label, generation}, nil))
+}
+
+// SetCredentialDisabled fences subsequent managed requests through this credential.
 func (c *ManagementClient) SetCredentialDisabled(ctx context.Context, ref string, disabled bool) error {
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
 	record, err := c.resolveCredential(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(record.Name) == "" {
-		return ErrOperationUnsupported
-	}
-	request := struct {
-		Name      string `json:"name"`
-		AuthIndex string `json:"auth_index"`
-		Disabled  bool   `json:"disabled"`
-	}{Name: record.Name, AuthIndex: record.AuthIndex, Disabled: disabled}
-	var response map[string]any
-	return mapCredentialOperationError(c.doJSON(ctx, "set credential status", http.MethodPatch, "/v0/management/auth-files/status", request, &response))
+	return mapCredentialOperationError(c.doJSON(ctx, "set credential status", http.MethodPatch,
+		credentialManagementPath+"/status?"+url.Values{"ref": {record.AuthIndex}}.Encode(),
+		map[string]bool{"disabled": disabled}, nil))
 }
 
+// RefreshCredential uses the runner's per-credential refresh coordination.
 func (c *ManagementClient) RefreshCredential(ctx context.Context, ref string) (CredentialSummary, error) {
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
 	record, err := c.resolveCredential(ctx, ref)
 	if err != nil {
 		return CredentialSummary{}, err
 	}
-	if strings.TrimSpace(record.Name) == "" {
-		return CredentialSummary{}, ErrOperationUnsupported
-	}
-	var response map[string]any
-	if err = c.doJSON(ctx, "refresh credential", http.MethodPost, "/v0/management/auth-files/refresh", map[string]string{"name": record.Name}, &response); err != nil {
+	var updated rawCredentialRecord
+	if err = c.doJSON(ctx, "refresh credential", http.MethodPost,
+		credentialManagementPath+"/refresh?"+url.Values{"ref": {record.AuthIndex}}.Encode(), nil, &updated); err != nil {
 		return CredentialSummary{}, mapCredentialOperationError(err)
 	}
-	updated, err := c.resolveCredential(ctx, ref)
-	if err != nil {
-		return CredentialSummary{}, err
+	if updated.AuthIndex != record.AuthIndex || updated.Provider != record.Provider {
+		return CredentialSummary{}, ErrInvalidResponse
 	}
 	return summaryFromRawCredential(updated), nil
 }
 
+// RemoveCredential never rewrites another credential or a configuration file.
 func (c *ManagementClient) RemoveCredential(ctx context.Context, ref string) error {
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
 	record, err := c.resolveCredential(ctx, ref)
 	if errors.Is(err, ErrCredentialNotFound) {
 		return nil
@@ -60,18 +59,9 @@ func (c *ManagementClient) RemoveCredential(ctx context.Context, ref string) err
 	if err != nil {
 		return err
 	}
-	if normalizeCredentialKind(record.AccountType) == CredentialAPIKey {
-		return c.removeAPIKeyCredential(ctx, record)
-	}
-	name := strings.TrimSpace(record.Name)
-	if name == "" || len(name) > 255 || filepath.Base(name) != name || strings.HasPrefix(name, ".") || !strings.HasSuffix(strings.ToLower(name), ".json") {
-		return ErrOperationUnsupported
-	}
-	query := url.Values{"name": []string{name}}
-	var response map[string]any
-	err = c.doJSON(ctx, "remove credential", http.MethodDelete, "/v0/management/auth-files?"+query.Encode(), nil, &response)
-	var statusErr *ManagementStatusError
-	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+	err = mapCredentialOperationError(c.doJSON(ctx, "remove credential", http.MethodDelete,
+		credentialManagementPath+"?"+url.Values{"ref": {record.AuthIndex}}.Encode(), nil, nil))
+	if errors.Is(err, ErrCredentialNotFound) {
 		return nil
 	}
 	return err
@@ -106,49 +96,6 @@ func (c *ManagementClient) resolveCredential(ctx context.Context, ref string) (r
 	}
 }
 
-func (c *ManagementClient) removeAPIKeyCredential(ctx context.Context, record rawCredentialRecord) error {
-	provider := Provider(strings.ToLower(strings.TrimSpace(record.Provider)))
-	if provider == "" {
-		provider = Provider(strings.ToLower(strings.TrimSpace(record.Type)))
-	}
-	if !validProvider(provider) {
-		return ErrUnsupportedProvider
-	}
-	endpoint, field := providerKeyEndpoint(provider)
-	items, err := c.readRawKeyList(ctx, endpoint, field)
-	if err != nil {
-		return err
-	}
-	ref := strings.TrimSpace(record.AuthIndex)
-	kept := make([]json.RawMessage, 0, len(items))
-	matches := 0
-	for _, item := range items {
-		var identity struct {
-			AuthIndex string `json:"auth-index"`
-		}
-		if json.Unmarshal(item, &identity) != nil {
-			return ErrInvalidResponse
-		}
-		if strings.TrimSpace(identity.AuthIndex) == ref {
-			matches++
-			continue
-		}
-		kept = append(kept, item)
-	}
-	if matches == 0 {
-		return nil
-	}
-	if matches > 1 {
-		return ErrCredentialConflict
-	}
-	payload, err := json.Marshal(kept)
-	if err != nil {
-		return ErrInvalidResponse
-	}
-	var response map[string]any
-	return mapCredentialOperationError(c.doJSON(ctx, "remove API key", http.MethodPut, endpoint, json.RawMessage(payload), &response))
-}
-
 func mapCredentialOperationError(err error) error {
 	if err == nil {
 		return nil
@@ -164,6 +111,12 @@ func mapCredentialOperationError(err error) error {
 		return ErrCredentialConflict
 	case http.StatusNotImplemented:
 		return ErrOperationUnsupported
+	case http.StatusUnprocessableEntity:
+		return ErrInvalidCredential
+	case http.StatusServiceUnavailable:
+		return ErrUnavailable
+	case http.StatusFailedDependency:
+		return ErrVerificationUnavailable
 	default:
 		return err
 	}

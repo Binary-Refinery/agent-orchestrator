@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
+// OAuthEvent contains validated login progress without provider tokens.
 type OAuthEvent struct {
+	TargetRef        string
 	Provider         Provider
 	Mode             OAuthMode
 	State            string
@@ -37,7 +39,7 @@ func (c *ManagementClient) StreamOAuthEvents(ctx context.Context, consume func(O
 	if !ready || !ok || strings.TrimSpace(endpoint.ManagementToken) == "" {
 		return ErrUnavailable
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/ao/internal/oauth/events", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/ao/internal/oauth/events", http.NoBody)
 	if err != nil {
 		return ErrUnavailable
 	}
@@ -52,7 +54,7 @@ func (c *ManagementClient) StreamOAuthEvents(ctx context.Context, consume func(O
 		}
 		return &managementTransportError{operation: "stream OAuth events", cause: err}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return &ManagementStatusError{Operation: "stream OAuth events", StatusCode: res.StatusCode}
 	}
@@ -64,30 +66,33 @@ func (c *ManagementClient) StreamOAuthEvents(ctx context.Context, consume func(O
 	scanner := bufio.NewScanner(res.Body)
 	scanner.Buffer(make([]byte, 4096), managementResponseLimit)
 	eventType := ""
-	data := ""
+	var data strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
 		case line == "":
-			if eventType == "oauth_session" && data != "" {
-				event, decodeErr := decodeOAuthEvent([]byte(data))
+			if eventType == "oauth_session" && data.Len() > 0 {
+				event, decodeErr := decodeOAuthEvent([]byte(data.String()))
 				if decodeErr != nil {
 					return decodeErr
 				}
-				if err = consume(event); err != nil {
+				if err := consume(event); err != nil {
 					return err
 				}
 			}
-			eventType, data = "", ""
+			eventType = ""
+			data.Reset()
 		case strings.HasPrefix(line, "event:"):
 			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		case strings.HasPrefix(line, "data:"):
 			part := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" {
-				data = part
-			} else {
-				data += "\n" + part
+			if data.Len()+len(part)+1 > managementResponseLimit {
+				return ErrResponseTooLarge
 			}
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(part)
 		}
 	}
 	if err = scanner.Err(); err != nil {
@@ -98,6 +103,7 @@ func (c *ManagementClient) StreamOAuthEvents(ctx context.Context, consume func(O
 
 func decodeOAuthEvent(data []byte) (OAuthEvent, error) {
 	var raw struct {
+		TargetRef        string    `json:"targetRef"`
 		Provider         string    `json:"provider"`
 		Mode             string    `json:"mode"`
 		State            string    `json:"state"`
@@ -111,13 +117,17 @@ func decodeOAuthEvent(data []byte) (OAuthEvent, error) {
 		return OAuthEvent{}, ErrInvalidResponse
 	}
 	event := OAuthEvent{Provider: Provider(strings.TrimSpace(raw.Provider)), Mode: OAuthMode(strings.TrimSpace(raw.Mode)), State: strings.TrimSpace(raw.State), Status: OAuthState(strings.TrimSpace(raw.Status)), AuthorizationURL: strings.TrimSpace(raw.AuthorizationURL), UserCode: strings.TrimSpace(raw.UserCode), FailureCode: strings.TrimSpace(raw.FailureCode), ExpiresAt: raw.ExpiresAt}
+	if len(raw.TargetRef) > 128 {
+		return OAuthEvent{}, ErrInvalidResponse
+	}
+	event.TargetRef = raw.TargetRef
 	if !validProvider(event.Provider) || event.State == "" || len(event.State) > 256 || event.ExpiresAt.IsZero() {
 		return OAuthEvent{}, ErrInvalidResponse
 	}
 	if event.Mode == "" {
 		event.Mode = OAuthModeCallback
 	}
-	if event.Mode != OAuthModeCallback && !(event.Provider == ProviderCodex && event.Mode == OAuthModeDevice) {
+	if event.Mode != OAuthModeCallback && (event.Provider != ProviderCodex || event.Mode != OAuthModeDevice) {
 		return OAuthEvent{}, ErrInvalidResponse
 	}
 	if event.AuthorizationURL != "" {
@@ -135,7 +145,7 @@ func decodeOAuthEvent(data []byte) (OAuthEvent, error) {
 		return OAuthEvent{}, ErrInvalidResponse
 	}
 	if event.Status == OAuthFailed {
-		event.FailureCode = "authentication_failed"
+		event.FailureCode = boundedOAuthFailure(event.FailureCode)
 	} else if event.Status == OAuthExpired && event.FailureCode != "cancelled" {
 		event.FailureCode = "expired"
 	} else if event.Status != OAuthExpired {
@@ -144,10 +154,21 @@ func decodeOAuthEvent(data []byte) (OAuthEvent, error) {
 	return event, nil
 }
 
+func boundedOAuthFailure(code string) string {
+	switch code {
+	case "identity_mismatch", "credential_changed", "storage_unavailable":
+		return code
+	default:
+		return "authentication_failed"
+	}
+}
+
+// CredentialPublicID hides the runner reference behind an installation-scoped identifier.
 func (c *ManagementClient) CredentialPublicID(ref string) (string, error) {
 	return c.publicID("account", ref, "amc_")
 }
 
+// OAuthPublicID hides callback state behind a separately namespaced identifier.
 func (c *ManagementClient) OAuthPublicID(state string) (string, error) {
 	return c.publicID("oauth", state, "amo_")
 }

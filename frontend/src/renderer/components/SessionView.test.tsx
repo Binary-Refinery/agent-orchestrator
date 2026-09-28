@@ -799,6 +799,27 @@ describe("SessionView", () => {
 		});
 	});
 
+	it.each(["tui", "chat"] as const)("opens managed account controls explicitly from a local %s session", async mode => {
+		workerSession("sess-1").mode = mode;
+		render(<SessionView sessionId="sess-1" />);
+		expect(reviewGetMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/account")).toHaveLength(0);
+		reviewGetMock.mockImplementation(async (path: string) => path === "/api/v1/sessions/{sessionId}/account"
+			? { error: { requestId: "capability-79" }, response: new Response(null, { status: 501 }) }
+			: { data: { revision: 1, accounts: [], availability: "ready", stale: false }, response: new Response(null, { status: 200 }) });
+		fireEvent.click(screen.getByRole("button", { name: "Session account controls" }));
+		const dialog = await screen.findByRole("dialog", { name: "Session account controls" });
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent("capability-79");
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+		fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Session account controls" })).not.toBeInTheDocument());
+	});
+
+	it("does not expose local account controls for a cloud session", () => {
+		workerSession("sess-1").cloud = { orgId: "cloud-org" };
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByRole("button", { name: "Session account controls" })).not.toBeInTheDocument();
+	});
+
 	// Regression: shell terminals are an app-wide list, so without a per-session
 	// filter a shell opened in another session would show up as a tab in this
 	// session's strip. Only this session's shells (not another session's, and no

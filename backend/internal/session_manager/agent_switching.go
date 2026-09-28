@@ -1331,6 +1331,13 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	// which these device-global probes cannot see. Its launch is authoritative.
 	unscopedAuthCanReject := harness != domain.HarnessClaudeCode
 	routedTarget := m.accountsManagerRoutingEnabled(ctx, harness)
+	if provider, supported := accountsManagerProvider(harness); supported && m.accountsManager != nil {
+		pinned, err := m.accountsManager.HasAgentSessionRoute(ctx, rec.ID, provider)
+		if err != nil {
+			return preparedTargetActivation{}, fmt.Errorf("read Accounts Manager session binding: %w", err)
+		}
+		routedTarget = routedTarget || pinned
+	}
 	if m.agentReadiness != nil {
 		readiness, readinessErr := m.agentReadiness.EnsureAgentReadiness(ctx, string(harness), domain.AgentReadinessPurposeLaunch)
 		if readinessErr != nil {
@@ -2587,6 +2594,10 @@ func (m *Manager) stopSourceRuntime(ctx context.Context, ref ports.FencedRuntime
 	if probe.Liveness == ports.FencedDead {
 		// Teardown committed externally even though its response failed.
 		return nil
+	}
+	if probe.Liveness != ports.FencedAlive {
+		// A reusable slot may have changed owners after the failed command.
+		return errors.Join(ErrSwitchSourceStopUnconfirmed, firstErr, fmt.Errorf("ownership probe before destroy retry: %s", probe.Reason))
 	}
 	secondErr := m.runtime.Destroy(ctx, ref.Handle)
 	if secondErr == nil {

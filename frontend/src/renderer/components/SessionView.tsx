@@ -34,6 +34,7 @@ import { CloudFileContentPane, CloudWorkspaceDiff } from "./CloudWorkspaceDiff";
 import { SessionFileTab } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
+import { SessionAccountButton } from "./SessionAccountControl";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceSwitchButton,
@@ -1729,6 +1730,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Spinner replaces the ⋮ at the same size, so the tab title does not need a
 	// wider action slot while switching.
 	const sessionTabActionWide = false;
+	const accountHeaderActions = useMemo(() => <>
+		{session && !session.cloud ? <SessionAccountButton key={session.id} sessionId={session.id} /> : null}
+		{sessionHeaderActions}
+	</>, [session?.id, session?.cloud]);
 
 	useEffect(() => {
 		setHandoffDialogOpen(false);
@@ -2054,7 +2059,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									onRenameShellTerminal={renameShellTerminalByHandle}
 									daemonReady={daemonStatus.state === "ready"}
 									theme={theme}
-									headerActions={sessionHeaderActions}
+									headerActions={accountHeaderActions}
 									sessionTabAction={sessionTabActions}
 									sessionTabActionWide={sessionTabActionWide}
 									tabStripAction={newShellTerminalAction}
@@ -2102,7 +2107,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}
 									theme={theme}
-									topbarActions={sessionHeaderActions}
+									topbarActions={accountHeaderActions}
 									sessionTabAction={sessionTabActions}
 									sessionTabActionWide={sessionTabActionWide}
 									tabStripAction={newShellTerminalAction}

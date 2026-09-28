@@ -17,9 +17,24 @@ type fakeClient struct {
 	stream      chan core.OAuthEvent
 	minted      []string
 	mintErr     map[string]error
+	bindings    core.BindingSnapshot
 }
 
-func (f *fakeClient) MintRoute(_ context.Context, provider core.Provider, ref, sessionID string) (core.RouteCapability, error) {
+func (f *fakeClient) SynchronizeBindings(_ context.Context, snapshot core.BindingSnapshot) error {
+	f.bindings = snapshot
+	return nil
+}
+
+func (f *fakeClient) MintRoute(_ context.Context, provider core.Provider, ref, sessionID, accountID string, revision int64) (core.RouteCapability, error) {
+	matched := false
+	for _, binding := range f.bindings.Bindings {
+		if binding.SessionID == sessionID && binding.Provider == string(provider) && binding.AccountID == accountID && binding.Revision == revision && binding.Mode == "managed" {
+			matched = true
+		}
+	}
+	if !matched {
+		return core.RouteCapability{}, core.ErrCredentialConflict
+	}
 	if err := f.mintErr[ref]; err != nil {
 		return core.RouteCapability{}, err
 	}
@@ -31,10 +46,74 @@ type fakeRoutingStore struct {
 	mu       sync.Mutex
 	policies map[domain.AccountsManagerProvider]domain.AccountsManagerRoutingPolicy
 	routes   map[string]domain.AccountsManagerSessionRoute
+	revision int64
+}
+
+type removalClient struct {
+	lifecycleClient
+	credentials []core.CredentialSummary
+	removeErr   error
+}
+
+func (f *removalClient) ListCredentials(context.Context) ([]core.CredentialSummary, error) {
+	return f.credentials, nil
+}
+func (*removalClient) CredentialPublicID(ref string) (string, error) { return "safe-" + ref, nil }
+func (f *removalClient) RemoveCredential(context.Context, string) error {
+	if f.removeErr == nil {
+		f.credentials = nil
+	}
+	return f.removeErr
+}
+
+func TestRemovalClearsOnlyItsDefaultAndPreservesPins(t *testing.T) {
+	for _, scenario := range []string{"selected", "other", "already removed", "runner failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			client := &removalClient{credentials: []core.CredentialSummary{{Ref: "a", Provider: core.ProviderCodex, Status: core.CredentialActive}}}
+			store := newFakeRoutingStore()
+			selected := "safe-a"
+			if scenario == "other" {
+				selected = "safe-b"
+			}
+			if scenario == "already removed" {
+				client.credentials = nil
+			}
+			if scenario == "runner failure" {
+				client.removeErr = core.ErrUnavailable
+			}
+			store.policies[domain.AccountsManagerProviderCodex] = domain.AccountsManagerRoutingPolicy{Provider: domain.AccountsManagerProviderCodex, Enabled: true, AccountIDs: []string{selected}}
+			store.routes["pinned"] = domain.AccountsManagerSessionRoute{AccountID: "safe-a"}
+			_, err := New(client, store).RemoveAccount(context.Background(), "safe-a")
+			if !errors.Is(err, client.removeErr) {
+				t.Fatalf("remove = %v", err)
+			}
+			policy := store.policies[domain.AccountsManagerProviderCodex]
+			if scenario == "selected" || scenario == "already removed" {
+				if policy.Enabled || len(policy.AccountIDs) != 0 {
+					t.Fatalf("removed default remains: %+v", policy)
+				}
+			} else if !policy.Enabled || len(policy.AccountIDs) != 1 || policy.AccountIDs[0] != selected {
+				t.Fatalf("unrelated or failed removal changed choice: %+v", policy)
+			}
+			if store.routes["pinned"].AccountID != "safe-a" {
+				t.Fatal("removal repinned the session")
+			}
+		})
+	}
 }
 
 func newFakeRoutingStore() *fakeRoutingStore {
-	return &fakeRoutingStore{policies: make(map[domain.AccountsManagerProvider]domain.AccountsManagerRoutingPolicy), routes: make(map[string]domain.AccountsManagerSessionRoute)}
+	return &fakeRoutingStore{policies: make(map[domain.AccountsManagerProvider]domain.AccountsManagerRoutingPolicy), routes: make(map[string]domain.AccountsManagerSessionRoute), revision: 1}
+}
+
+func (f *fakeRoutingStore) AccountsManagerBindings(context.Context) (domain.AccountsManagerBindingSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	snapshot := domain.AccountsManagerBindingSnapshot{Revision: f.revision}
+	for _, route := range f.routes {
+		snapshot.Bindings = append(snapshot.Bindings, route)
+	}
+	return snapshot, nil
 }
 
 func (f *fakeRoutingStore) GetAccountsManagerRoutingPolicy(_ context.Context, provider domain.AccountsManagerProvider) (domain.AccountsManagerRoutingPolicy, error) {
@@ -67,11 +146,16 @@ func (f *fakeRoutingStore) GetOrCreateAccountsManagerSessionRoute(_ context.Cont
 	if existing, ok := f.routes[key]; ok {
 		return existing, false, nil
 	}
+	if route.Mode == "" {
+		route.Mode = domain.AccountsManagerManaged
+	}
+	f.revision++
+	route.Revision = f.revision
 	f.routes[key] = route
 	return route, true, nil
 }
 
-func TestPrepareLaunchRoutePinsFirstUsableAccountAndNeverRepins(t *testing.T) {
+func TestPrepareLaunchRoutePinsExplicitDefaultAndNeverRepins(t *testing.T) {
 	client := &fakeClient{credentials: []core.CredentialSummary{
 		{Ref: "primary", Provider: core.ProviderCodex, Status: core.CredentialActive, Unavailable: true},
 		{Ref: "fallback", Provider: core.ProviderCodex, Status: core.CredentialActive},
@@ -80,7 +164,7 @@ func TestPrepareLaunchRoutePinsFirstUsableAccountAndNeverRepins(t *testing.T) {
 	store := newFakeRoutingStore()
 	store.policies[domain.AccountsManagerProviderCodex] = domain.AccountsManagerRoutingPolicy{
 		Provider: domain.AccountsManagerProviderCodex, Enabled: true,
-		AccountIDs: []string{"safe-primary", "safe-fallback", "safe-other"},
+		AccountIDs: []string{"safe-fallback"},
 	}
 	svc := New(client, store)
 
@@ -102,6 +186,102 @@ func TestPrepareLaunchRoutePinsFirstUsableAccountAndNeverRepins(t *testing.T) {
 	}
 	if route.AccountID != "safe-fallback" {
 		t.Fatalf("pinned route changed to %q", route.AccountID)
+	}
+}
+
+func TestPrepareLaunchRouteRequiresUnambiguousExplicitDefault(t *testing.T) {
+	for _, ids := range [][]string{nil, {"safe-primary", "safe-other"}, {"safe-primary"}} {
+		client := &fakeClient{credentials: []core.CredentialSummary{
+			{Ref: "primary", Provider: core.ProviderCodex, Status: core.CredentialActive, Unavailable: true},
+			{Ref: "other", Provider: core.ProviderCodex, Status: core.CredentialActive},
+		}}
+		store := newFakeRoutingStore()
+		store.policies[domain.AccountsManagerProviderCodex] = domain.AccountsManagerRoutingPolicy{Provider: domain.AccountsManagerProviderCodex, Enabled: true, AccountIDs: ids}
+		route, err := New(client, store).PrepareLaunchRoute(context.Background(), "new-session", core.ProviderCodex, "gpt-5")
+		if route != nil || err == nil || len(client.minted) != 0 || len(store.routes) != 0 {
+			t.Fatalf("ids=%v route=%v err=%v minted=%v routes=%v", ids, route, err, client.minted, store.routes)
+		}
+	}
+}
+
+func TestRefreshDoesNotRewriteSavedUserChoices(t *testing.T) {
+	store := newFakeRoutingStore()
+	store.policies[domain.AccountsManagerProviderCodex] = domain.AccountsManagerRoutingPolicy{
+		Provider: domain.AccountsManagerProviderCodex, Enabled: true, AccountIDs: []string{"safe-missing", "safe-other"},
+	}
+	client := &fakeClient{credentials: []core.CredentialSummary{{Ref: "other", Provider: core.ProviderCodex, Status: core.CredentialActive}}}
+	if _, err := New(client, store).Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := store.GetAccountsManagerRoutingPolicy(context.Background(), domain.AccountsManagerProviderCodex)
+	if len(policy.AccountIDs) != 2 || policy.AccountIDs[0] != "safe-missing" {
+		t.Fatalf("read changed the user's choice: %+v", policy)
+	}
+}
+
+func TestSetRoutingPolicyRejectsMultipleDefaults(t *testing.T) {
+	client := &fakeClient{credentials: []core.CredentialSummary{
+		{Ref: "a", Provider: core.ProviderCodex, Status: core.CredentialActive},
+		{Ref: "b", Provider: core.ProviderCodex, Status: core.CredentialActive},
+	}}
+	store := newFakeRoutingStore()
+	if _, err := New(client, store).SetRoutingPolicy(context.Background(), core.ProviderCodex, true, []string{"safe-a", "safe-b"}); err == nil {
+		t.Fatal("multiple defaults accepted")
+	}
+	if len(store.policies) != 0 {
+		t.Fatal("invalid policy was persisted")
+	}
+}
+
+func TestNativeBindingSurvivesLaterManagedDefault(t *testing.T) {
+	client := &fakeClient{credentials: []core.CredentialSummary{{Ref: "a", Provider: core.ProviderCodex, Status: core.CredentialActive}}}
+	store := newFakeRoutingStore()
+	service := New(client, store)
+	route, err := service.PrepareLaunchRoute(t.Context(), "existing", core.ProviderCodex, "model")
+	if err != nil || route != nil {
+		t.Fatal("native route changed")
+	}
+	store.policies[domain.AccountsManagerProviderCodex] = domain.AccountsManagerRoutingPolicy{Provider: domain.AccountsManagerProviderCodex, Enabled: true, AccountIDs: []string{"safe-a"}}
+	route, err = service.PrepareLaunchRoute(t.Context(), "existing", core.ProviderCodex, "model")
+	if err != nil || route != nil || len(client.minted) != 0 {
+		t.Fatal("default captured an existing native session")
+	}
+	managed, err := service.HasAgentSessionRoute(t.Context(), "existing", domain.AccountsManagerProviderCodex)
+	if err != nil || managed {
+		t.Fatal("native binding incorrectly blocks native mode")
+	}
+	route, err = service.PrepareLaunchRoute(t.Context(), "new", core.ProviderCodex, "model")
+	if err != nil || route == nil || route.AccountID != "safe-a" {
+		t.Fatal("explicit default was not applied to a new session")
+	}
+}
+
+func TestSlowSubscriberReceivesNewestSnapshot(t *testing.T) {
+	service := New(&fakeClient{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := service.Subscribe(ctx)
+	for range 20 {
+		service.markDegraded()
+	}
+	var last Snapshot
+	for len(updates) > 0 {
+		last = <-updates
+	}
+	if last.Revision != service.Snapshot().Revision {
+		t.Fatalf("last revision=%d current=%d", last.Revision, service.Snapshot().Revision)
+	}
+}
+
+func TestTerminalLoginCannotRegressToPending(t *testing.T) {
+	service := New(&fakeClient{})
+	terminal := OAuthSession{ID: "login", Status: core.OAuthCompleted, terminalAt: time.Now()}
+	service.mu.Lock()
+	service.upsertOAuthLocked(terminal)
+	service.upsertOAuthLocked(OAuthSession{ID: "login", Status: core.OAuthPending})
+	service.mu.Unlock()
+	if got := service.Snapshot().OAuthSessions[0]; got.Status != core.OAuthCompleted || got.terminalAt.IsZero() {
+		t.Fatalf("terminal state overwritten: %+v", got)
 	}
 }
 

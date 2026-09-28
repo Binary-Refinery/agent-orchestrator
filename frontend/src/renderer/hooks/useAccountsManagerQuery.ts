@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage, getApiBaseUrl } from "../lib/api-client";
+import { apiClient, getApiBaseUrl } from "../lib/api-client";
+import { accountRequestError } from "../lib/accounts-manager-controls";
 
 export type AccountsManagerSnapshot =
   components["schemas"]["AccountsManagerAccountsResponse"];
@@ -27,20 +28,49 @@ export function selectAccountsManagerSnapshot(
 }
 
 export async function fetchAccountsManager(): Promise<AccountsManagerSnapshot> {
-  const { data, error } = await apiClient.GET(
+  const { data, error, response } = await apiClient.GET(
     "/api/v1/accounts-manager/accounts",
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 
-export function useAccountsManagerQuery() {
-  return useQuery({
+const inventoryReads = new WeakMap<AccountsManagerSnapshot, {
+  query: object | undefined;
+  updates: number | undefined;
+}>();
+
+function accountsManagerQueryOptions(client: QueryClient) {
+  const cachedQuery = () => client.getQueryCache().find({ queryKey: accountsManagerQueryKey, exact: true });
+  return queryOptions({
     queryKey: accountsManagerQueryKey,
-    queryFn: fetchAccountsManager,
+    queryFn: async () => {
+      const query = cachedQuery();
+      const updates = query?.state.dataUpdateCount;
+      const snapshot = { ...await fetchAccountsManager() };
+      inventoryReads.set(snapshot, { query, updates });
+      return snapshot;
+    },
+    structuralSharing: (current, incoming) => {
+      const snapshot = incoming as AccountsManagerSnapshot;
+      const read = inventoryReads.get(snapshot);
+      inventoryReads.delete(snapshot);
+      const query = cachedQuery();
+      // Check at cache commit, including writes between promise continuations.
+      if (read && current !== undefined &&
+          (read.query !== query || read.updates !== query?.state.dataUpdateCount)) {
+        return current;
+      }
+      return selectAccountsManagerSnapshot(current as AccountsManagerSnapshot | undefined, snapshot);
+    },
     staleTime: Number.POSITIVE_INFINITY,
+    refetchOnMount: "always",
     retry: 1,
   });
+}
+
+export function useAccountsManagerQuery() {
+  return useQuery(accountsManagerQueryOptions(useQueryClient()));
 }
 
 export function useAccountsManagerEvents(): void {
@@ -54,10 +84,11 @@ export function useAccountsManagerEvents(): void {
         accountsManagerQueryKey,
         (current) => selectAccountsManagerSnapshot(current, snapshot),
       );
+    const refresh = () => client.fetchQuery({ ...accountsManagerQueryOptions(client), staleTime: 0 });
     const connect = async (refreshFirst: boolean) => {
       if (refreshFirst)
         try {
-          apply(await fetchAccountsManager());
+          await refresh();
         } catch {
           /* keep the last safe snapshot */
         }
@@ -69,7 +100,7 @@ export function useAccountsManagerEvents(): void {
       );
       stream.addEventListener("accounts_manager", (event) => {
         try {
-          apply(
+          if (!closed) apply(
             JSON.parse(
               (event as MessageEvent<string>).data,
             ) as AccountsManagerSnapshot,
@@ -87,8 +118,7 @@ export function useAccountsManagerEvents(): void {
     };
     void connect(false);
     const focus = () =>
-      void fetchAccountsManager()
-        .then(apply)
+      void refresh()
         .catch(() => undefined);
     window.addEventListener("focus", focus);
     return () => {
@@ -103,94 +133,109 @@ export function useAccountsManagerEvents(): void {
 export async function startAccountsManagerOAuth(
   provider: "codex" | "claude",
   mode: "callback" | "device",
+  target?: { accountId: string; generation: number },
 ) {
-  const { data, error } = await apiClient.POST(
+  const { data, error, response } = await apiClient.POST(
     "/api/v1/accounts-manager/oauth-sessions",
-    { body: { provider, mode } },
+    { body: { provider, mode, ...target } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data;
 }
 export async function cancelAccountsManagerOAuth(operationId: string) {
-  const { error } = await apiClient.DELETE(
+  const { error, response } = await apiClient.DELETE(
     "/api/v1/accounts-manager/oauth-sessions/{operationId}",
     { params: { path: { operationId } } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
 }
 export async function addAccountsManagerAPIKey(
   provider: "codex" | "claude",
   key: string,
   baseUrl?: string,
+  operationId = crypto.randomUUID(),
 ) {
-  const { data, error } = await apiClient.POST(
+  const { data, error, response } = await apiClient.POST(
     "/api/v1/accounts-manager/accounts/api-key",
-    { body: { provider, key, ...(baseUrl ? { baseUrl } : {}) } },
+    { body: { provider, key, operationId, ...(baseUrl ? { baseUrl } : {}) } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 export async function importAccountsManagerCredential(
   provider: "codex" | "claude",
   filename: string,
   credential: Record<string, unknown>,
+  operationId = crypto.randomUUID(),
 ) {
-  const { data, error } = await apiClient.POST(
+  const { data, error, response } = await apiClient.POST(
     "/api/v1/accounts-manager/accounts/import",
-    { body: { provider, filename, credential } },
+    { body: { provider, filename, credential, operationId } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 export async function setAccountsManagerDisabled(
   accountId: string,
   disabled: boolean,
 ) {
-  const { data, error } = await apiClient.PATCH(
+  const { data, error, response } = await apiClient.PATCH(
     "/api/v1/accounts-manager/accounts/{accountId}",
     { params: { path: { accountId } }, body: { disabled } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 export async function refreshAccountsManagerAccount(accountId: string) {
-  const { data, error } = await apiClient.POST(
+  const { data, error, response } = await apiClient.POST(
     "/api/v1/accounts-manager/accounts/{accountId}/refresh",
     { params: { path: { accountId } } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
+  return data as AccountsManagerSnapshot;
+}
+export async function renameAccountsManagerAccount(
+  accountId: string,
+  label: string,
+  generation: number,
+) {
+  const { data, error, response } = await apiClient.PATCH(
+    "/api/v1/accounts-manager/accounts/{accountId}",
+    { params: { path: { accountId } }, body: { label, generation } },
+  );
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 export async function removeAccountsManagerAccount(accountId: string) {
-  const { data, error } = await apiClient.DELETE(
+  const { data, error, response } = await apiClient.DELETE(
     "/api/v1/accounts-manager/accounts/{accountId}",
     { params: { path: { accountId } } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }
 export async function fetchAccountsManagerModels(accountId: string) {
-  const { data, error } = await apiClient.GET(
+  const { data, error, response } = await apiClient.GET(
     "/api/v1/accounts-manager/accounts/{accountId}/models",
     { params: { path: { accountId } } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data;
 }
-export async function fetchAccountsManagerQuota(accountId: string) {
-  const { data, error } = await apiClient.GET(
+export async function fetchAccountsManagerQuota(accountId: string, signal?: AbortSignal) {
+  const { data, error, response } = await apiClient.GET(
     "/api/v1/accounts-manager/accounts/{accountId}/quota",
-    { params: { path: { accountId } } },
+    { params: { path: { accountId } }, signal },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data;
 }
 export async function resetAccountsManagerQuota(accountId: string) {
-  const { error } = await apiClient.POST(
+  const { error, response } = await apiClient.POST(
     "/api/v1/accounts-manager/accounts/{accountId}/quota/reset",
     { params: { path: { accountId } } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
 }
 
 export async function updateAccountsManagerRouting(
@@ -198,10 +243,10 @@ export async function updateAccountsManagerRouting(
   enabled: boolean,
   accountIds: string[],
 ) {
-  const { data, error } = await apiClient.PUT(
+  const { data, error, response } = await apiClient.PUT(
     "/api/v1/accounts-manager/routing/{provider}",
     { params: { path: { provider } }, body: { enabled, accountIds } },
   );
-  if (error) throw new Error(apiErrorMessage(error));
+  if (error) throw accountRequestError(error, response?.status);
   return data as AccountsManagerSnapshot;
 }

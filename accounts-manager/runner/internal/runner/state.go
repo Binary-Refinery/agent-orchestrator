@@ -79,7 +79,7 @@ func LoadState(root string) (*State, error) {
 	}
 	cfg, err := sdkconfig.ParseConfigBytes(configBytes)
 	if err != nil {
-		return nil, fmt.Errorf("load configuration: %w", err)
+		return nil, fmt.Errorf("load configuration: invalid private configuration")
 	}
 	if err = validateConfig(cfg, authDir); err != nil {
 		return nil, err
@@ -122,6 +122,15 @@ func validateConfig(cfg *sdkconfig.Config, authDir string) error {
 	}
 	if cfg.Discovery.Enabled {
 		return fmt.Errorf("configuration must keep discovery disabled")
+	}
+	if cfg.RequestLog {
+		return fmt.Errorf("configuration must keep request logging disabled")
+	}
+	if cfg.LoggingToFile {
+		return fmt.Errorf("configuration must keep file logging disabled")
+	}
+	if cfg.UsageStatisticsEnabled {
+		return fmt.Errorf("configuration must keep usage statistics disabled")
 	}
 	if len(cfg.APIKeys) != 1 || strings.TrimSpace(cfg.APIKeys[0]) == "" {
 		return fmt.Errorf("configuration must contain exactly one internal client key")

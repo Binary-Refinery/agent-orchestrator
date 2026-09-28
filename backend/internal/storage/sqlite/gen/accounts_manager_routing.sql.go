@@ -10,6 +10,36 @@ import (
 	"time"
 )
 
+const compareAndSwapAccountsManagerSessionRoute = `-- name: CompareAndSwapAccountsManagerSessionRoute :execrows
+UPDATE accounts_manager_session_bindings
+SET connection_mode = ?, account_id = ?, revision = (SELECT accounts_manager_binding_clock.revision + 1 FROM accounts_manager_binding_clock WHERE id = 1), updated_at = ?
+WHERE session_id = ? AND provider = ? AND accounts_manager_session_bindings.revision = ?
+`
+
+type CompareAndSwapAccountsManagerSessionRouteParams struct {
+	ConnectionMode string
+	AccountID      string
+	UpdatedAt      time.Time
+	SessionID      string
+	Provider       string
+	Revision       int64
+}
+
+func (q *Queries) CompareAndSwapAccountsManagerSessionRoute(ctx context.Context, arg CompareAndSwapAccountsManagerSessionRouteParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, compareAndSwapAccountsManagerSessionRoute,
+		arg.ConnectionMode,
+		arg.AccountID,
+		arg.UpdatedAt,
+		arg.SessionID,
+		arg.Provider,
+		arg.Revision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteAccountsManagerRoutingPolicyAccounts = `-- name: DeleteAccountsManagerRoutingPolicyAccounts :exec
 DELETE FROM accounts_manager_routing_policy_accounts WHERE provider = ?
 `
@@ -17,6 +47,17 @@ DELETE FROM accounts_manager_routing_policy_accounts WHERE provider = ?
 func (q *Queries) DeleteAccountsManagerRoutingPolicyAccounts(ctx context.Context, provider string) error {
 	_, err := q.db.ExecContext(ctx, deleteAccountsManagerRoutingPolicyAccounts, provider)
 	return err
+}
+
+const getAccountsManagerBindingRevision = `-- name: GetAccountsManagerBindingRevision :one
+SELECT revision FROM accounts_manager_binding_clock WHERE id = 1
+`
+
+func (q *Queries) GetAccountsManagerBindingRevision(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getAccountsManagerBindingRevision)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const getAccountsManagerRoutingPolicy = `-- name: GetAccountsManagerRoutingPolicy :one
@@ -33,8 +74,8 @@ func (q *Queries) GetAccountsManagerRoutingPolicy(ctx context.Context, provider 
 }
 
 const getAccountsManagerSessionRoute = `-- name: GetAccountsManagerSessionRoute :one
-SELECT session_id, provider, account_id, created_at, updated_at
-FROM accounts_manager_session_routes
+SELECT session_id, provider, connection_mode, account_id, revision, created_at, updated_at
+FROM accounts_manager_session_bindings
 WHERE session_id = ? AND provider = ?
 `
 
@@ -43,13 +84,15 @@ type GetAccountsManagerSessionRouteParams struct {
 	Provider  string
 }
 
-func (q *Queries) GetAccountsManagerSessionRoute(ctx context.Context, arg GetAccountsManagerSessionRouteParams) (AccountsManagerSessionRoute, error) {
+func (q *Queries) GetAccountsManagerSessionRoute(ctx context.Context, arg GetAccountsManagerSessionRouteParams) (AccountsManagerSessionBinding, error) {
 	row := q.db.QueryRowContext(ctx, getAccountsManagerSessionRoute, arg.SessionID, arg.Provider)
-	var i AccountsManagerSessionRoute
+	var i AccountsManagerSessionBinding
 	err := row.Scan(
 		&i.SessionID,
 		&i.Provider,
+		&i.ConnectionMode,
 		&i.AccountID,
+		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -73,23 +116,25 @@ func (q *Queries) InsertAccountsManagerRoutingPolicyAccount(ctx context.Context,
 }
 
 const insertAccountsManagerSessionRoute = `-- name: InsertAccountsManagerSessionRoute :execrows
-INSERT INTO accounts_manager_session_routes (session_id, provider, account_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO accounts_manager_session_bindings (session_id, provider, connection_mode, account_id, revision, created_at, updated_at)
+VALUES (?, ?, ?, ?, (SELECT accounts_manager_binding_clock.revision + 1 FROM accounts_manager_binding_clock WHERE id = 1), ?, ?)
 ON CONFLICT(session_id, provider) DO NOTHING
 `
 
 type InsertAccountsManagerSessionRouteParams struct {
-	SessionID string
-	Provider  string
-	AccountID string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	SessionID      string
+	Provider       string
+	ConnectionMode string
+	AccountID      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (q *Queries) InsertAccountsManagerSessionRoute(ctx context.Context, arg InsertAccountsManagerSessionRouteParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertAccountsManagerSessionRoute,
 		arg.SessionID,
 		arg.Provider,
+		arg.ConnectionMode,
 		arg.AccountID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -120,6 +165,58 @@ func (q *Queries) ListAccountsManagerRoutingPolicyAccounts(ctx context.Context, 
 			return nil, err
 		}
 		items = append(items, account_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountsManagerSessionBindings = `-- name: ListAccountsManagerSessionBindings :many
+SELECT b.session_id, b.provider, b.connection_mode, b.account_id, b.revision, b.created_at, b.updated_at,
+       EXISTS (SELECT 1 FROM accounts_manager_switches AS op WHERE op.session_id = b.session_id
+               AND op.phase IN ('stopping', 'stopped', 'recovery_required')
+               UNION ALL SELECT 1 FROM accounts_manager_removals AS removal WHERE removal.account_id = b.account_id AND removal.phase != 'cancelled') AS blocked
+FROM accounts_manager_session_bindings AS b
+ORDER BY b.session_id, b.provider
+`
+
+type ListAccountsManagerSessionBindingsRow struct {
+	SessionID      string
+	Provider       string
+	ConnectionMode string
+	AccountID      string
+	Revision       int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Blocked        bool
+}
+
+func (q *Queries) ListAccountsManagerSessionBindings(ctx context.Context) ([]ListAccountsManagerSessionBindingsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAccountsManagerSessionBindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountsManagerSessionBindingsRow{}
+	for rows.Next() {
+		var i ListAccountsManagerSessionBindingsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Provider,
+			&i.ConnectionMode,
+			&i.AccountID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Blocked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

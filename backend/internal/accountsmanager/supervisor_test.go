@@ -69,6 +69,28 @@ func TestEnsureStateCreatesPrivateLoopbackConfiguration(t *testing.T) {
 	}
 }
 
+func TestSupervisorRejectsRedirectsWithoutForwardingControlKey(t *testing.T) {
+	forwarded := make(chan string, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded <- r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+	supervisor := New(Config{})
+	if supervisor.requestOK(context.Background(), http.MethodPost, source.URL, "private-control", http.StatusNoContent) {
+		t.Error("redirect was accepted")
+	}
+	select {
+	case <-forwarded:
+		t.Fatal("control request followed a redirect")
+	default:
+	}
+}
+
 func TestEnsureStateRejectsUnsafeManagementKey(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -174,7 +196,7 @@ func TestTryAttachAuthenticatesIdentityAndRenewsLease(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "instance-1", EngineVersion: "v7.3.8"})
+		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "instance-1", EngineVersion: "v7.3.8", CredentialProtocol: credentialProtocolVersion})
 	})
 	mux.HandleFunc("/ao/internal/lease", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+controlKey {
@@ -199,6 +221,25 @@ func TestTryAttachAuthenticatesIdentityAndRenewsLease(t *testing.T) {
 	}
 	if leaseCalls != 1 {
 		t.Fatalf("lease calls = %d, want 1", leaseCalls)
+	}
+}
+
+func TestTryAttachRejectsOldCredentialProtocol(t *testing.T) {
+	for _, version := range []int{0, credentialProtocolVersion - 1, credentialProtocolVersion + 1} {
+		leaseCalls := 0
+		mux := http.NewServeMux()
+		mux.HandleFunc("/ao/internal/identity", func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "old", CredentialProtocol: version})
+		})
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		mux.HandleFunc("/ao/internal/lease", func(w http.ResponseWriter, _ *http.Request) { leaseCalls++; w.WriteHeader(http.StatusNoContent) })
+		server := httptest.NewServer(mux)
+		s := New(Config{HTTPClient: server.Client()})
+		_, ok := s.tryAttach(t.Context(), RuntimeRecord{PID: os.Getpid(), Port: server.Listener.Addr().(*net.TCPAddr).Port, InstanceID: "old"}, "control", "client", "management")
+		server.Close()
+		if ok || leaseCalls != 0 {
+			t.Fatal("incompatible runner attached or received a lease")
+		}
 	}
 }
 
@@ -312,7 +353,7 @@ func TestStartReattachesExistingRunnerWithoutStartingBinary(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "reattach-instance", EngineVersion: "v7.3.8"})
+		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "reattach-instance", EngineVersion: "v7.3.8", CredentialProtocol: credentialProtocolVersion})
 	})
 	mux.HandleFunc("/ao/internal/lease", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+controlKey {
@@ -378,7 +419,7 @@ func TestAccountsManagerSupervisorEndpointFeedsManagementClient(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "integration-instance", EngineVersion: "v7.3.8"})
+		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "integration-instance", EngineVersion: "v7.3.8", CredentialProtocol: credentialProtocolVersion})
 	})
 	mux.HandleFunc("/ao/internal/lease", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+controlKey {
@@ -387,7 +428,7 @@ func TestAccountsManagerSupervisorEndpointFeedsManagementClient(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/v0/management/auth-files", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(credentialManagementPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+managementKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -446,7 +487,7 @@ func TestMaintainSpawnedDoesNotKillRunnerWhenDaemonContextIsCancelled(t *testing
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "shutdown-instance"})
+		_ = json.NewEncoder(w).Encode(controlIdentity{Service: serviceName, InstanceID: "shutdown-instance", CredentialProtocol: credentialProtocolVersion})
 	})
 	mux.HandleFunc("/ao/internal/lease", func(_ http.ResponseWriter, r *http.Request) {
 		close(leaseStarted)

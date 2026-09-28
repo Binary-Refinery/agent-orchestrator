@@ -53,6 +53,9 @@ func TestControlIdentityIsSafeAndLeaseRenews(t *testing.T) {
 	if err := json.Unmarshal(identityRes.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
+	if body["credentialProtocol"] != float64(credentialProtocolVersion) {
+		t.Fatal("credential protocol version was not advertised")
+	}
 	for _, forbidden := range []string{"port", "pid", "token", "path", "controlKey"} {
 		if _, ok := body[forbidden]; ok {
 			t.Fatalf("identity exposed forbidden field %q", forbidden)

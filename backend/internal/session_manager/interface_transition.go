@@ -105,6 +105,9 @@ func (m *Manager) InterfaceTransitionStatus(
 	if rec.IsTerminated {
 		status.ReasonCode = "SESSION_TERMINATED"
 		status.Reason = "Terminated sessions must be restored before switching interfaces."
+	} else if target == domain.SessionModeChat && m.checkAccountsManagerChatMode(ctx, rec.ID, rec.Harness) != nil {
+		status.ReasonCode = "MANAGED_CHAT_UNAVAILABLE"
+		status.Reason = "The session's Accounts Manager binding cannot be used in Chat."
 	} else if target == domain.SessionModeChat && (m.chat == nil || !m.chat.SupportsChat(rec.Harness)) {
 		status.ReasonCode = "CHAT_UNSUPPORTED"
 		status.Reason = fmt.Sprintf("%s does not support Chat UI.", rec.Harness)
@@ -169,6 +172,11 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, ErrTerminated
 	}
 	source := domain.NormalizeSessionMode(rec.Mode)
+	if target == domain.SessionModeChat {
+		if err := m.checkAccountsManagerChatMode(ctx, rec.ID, rec.Harness); err != nil {
+			return domain.SessionInterfaceTransition{}, err
+		}
+	}
 	if target == source {
 		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: session %s is already in %s mode",
 			ErrInterfaceAlreadySelected, id, source)
@@ -793,6 +801,9 @@ func (m *Manager) preflightInterfaceTarget(
 	transition domain.SessionInterfaceTransition,
 ) error {
 	if transition.TargetMode == domain.SessionModeChat {
+		if err := m.checkAccountsManagerChatMode(ctx, rec.ID, rec.Harness); err != nil {
+			return err
+		}
 		if m.chat == nil {
 			return ports.ErrChatUnsupported
 		}

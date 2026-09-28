@@ -14,7 +14,40 @@ type AccountsManagerLaunchRoute struct {
 	Token   string
 }
 
+// AccountsManagerLaunchRouter supplies private child routes without exposing runner implementation details.
 type AccountsManagerLaunchRouter interface {
 	PrepareAgentLaunchRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider, string) (*AccountsManagerLaunchRoute, error)
 	AgentRoutingEnabled(context.Context, domain.AccountsManagerProvider) (bool, error)
+	HasAgentSessionRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider) (bool, error)
+}
+
+// AccountsManagerNativeRecorder freezes native intent for an unsupported managed mode.
+type AccountsManagerNativeRecorder interface {
+	RecordNativeAgentSessionRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider) error
+}
+
+type AccountsManagerSwitchStore interface {
+	GetAccountsManagerSessionRoute(context.Context, domain.SessionID, domain.AccountsManagerProvider) (domain.AccountsManagerSessionRoute, bool, error)
+	GetOrCreateAccountsManagerSessionRoute(context.Context, domain.AccountsManagerSessionRoute) (domain.AccountsManagerSessionRoute, bool, error)
+	CreateAccountsManagerSwitch(context.Context, domain.AccountsManagerSwitch) (domain.AccountsManagerSwitch, bool, error)
+	GetAccountsManagerSwitch(context.Context, string) (domain.AccountsManagerSwitch, bool, error)
+	GetLatestAccountsManagerSwitch(context.Context, domain.SessionID) (domain.AccountsManagerSwitch, bool, error)
+	ListActiveAccountsManagerSwitches(context.Context) ([]domain.AccountsManagerSwitch, error)
+	AdvanceAccountsManagerSwitch(context.Context, string, domain.AccountsManagerSwitchPhase, domain.AccountsManagerSwitchPhase, string) (domain.AccountsManagerSwitch, error)
+	CommitAccountsManagerSwitch(context.Context, string) (domain.AccountsManagerSwitch, error)
+	AcknowledgeAccountsManagerSwitch(context.Context, string, string) (domain.AccountsManagerSwitch, error)
+	RetryAccountsManagerSwitch(context.Context, string, string, domain.SessionControllerOwner) (domain.AccountsManagerSwitch, error)
+	PrepareAccountsManagerSwitchStop(context.Context, string, bool, string, domain.SessionControllerOwner) (domain.AccountsManagerSwitch, error)
+}
+
+// AccountsManagerSwitchRouter serializes target admission and commitment with credential removal.
+type AccountsManagerSwitchRouter interface {
+	AdmitAgentAccountSwitch(context.Context, domain.AccountsManagerSwitch, string) (domain.AccountsManagerSwitch, bool, error)
+	ValidateAgentAccountTarget(context.Context, domain.AccountsManagerConnectionMode, domain.AccountsManagerProvider, string, string) error
+	CommitAgentAccountSwitch(context.Context, string, string) (domain.AccountsManagerSwitch, error)
+	SynchronizeAgentBindings(context.Context) error
+}
+
+type AccountsManagerSwitchPendingReader interface {
+	AgentAccountSwitchPending(context.Context, domain.SessionID) (bool, error)
 }

@@ -777,6 +777,7 @@ type AccountsManagerStatusResponse struct {
 	EngineVersion string  `json:"engineVersion,omitempty"`
 }
 
+// AccountsManagerCooldownResponse retains the scope and timing of an observed provider restriction.
 type AccountsManagerCooldownResponse struct {
 	Scope            string    `json:"scope"`
 	Model            string    `json:"model,omitempty"`
@@ -786,22 +787,30 @@ type AccountsManagerCooldownResponse struct {
 	HTTPStatus       int       `json:"httpStatus,omitempty"`
 }
 
+// AccountsManagerAccountResponse excludes raw credential references and authentication material.
 type AccountsManagerAccountResponse struct {
-	ID              string                            `json:"id"`
-	Provider        string                            `json:"provider" enum:"codex,claude"`
-	Kind            string                            `json:"kind" enum:"oauth,api_key,unknown"`
-	Email           string                            `json:"email,omitempty"`
-	Status          string                            `json:"status" enum:"active,pending,refreshing,error,disabled,unknown"`
-	Disabled        bool                              `json:"disabled"`
-	Unavailable     bool                              `json:"unavailable"`
-	CreatedAt       time.Time                         `json:"createdAt,omitempty"`
-	UpdatedAt       time.Time                         `json:"updatedAt,omitempty"`
-	LastRefreshedAt time.Time                         `json:"lastRefreshedAt,omitempty"`
-	QuotaSupported  bool                              `json:"quotaSupported"`
-	Cooldowns       []AccountsManagerCooldownResponse `json:"cooldowns"`
+	Verification       string                            `json:"verification,omitempty" enum:"unverified,verified,invalid"`
+	VerifiedAt         time.Time                         `json:"verifiedAt,omitempty"`
+	Label              string                            `json:"label,omitempty"`
+	Generation         uint64                            `json:"generation"`
+	ReconnectSupported bool                              `json:"reconnectSupported"`
+	ID                 string                            `json:"id"`
+	Provider           string                            `json:"provider" enum:"codex,claude"`
+	Kind               string                            `json:"kind" enum:"oauth,api_key,unknown"`
+	Email              string                            `json:"email,omitempty"`
+	Status             string                            `json:"status" enum:"active,pending,refreshing,error,disabled,unknown"`
+	Disabled           bool                              `json:"disabled"`
+	Unavailable        bool                              `json:"unavailable"`
+	CreatedAt          time.Time                         `json:"createdAt,omitempty"`
+	UpdatedAt          time.Time                         `json:"updatedAt,omitempty"`
+	LastRefreshedAt    time.Time                         `json:"lastRefreshedAt,omitempty"`
+	QuotaSupported     bool                              `json:"quotaSupported"`
+	Cooldowns          []AccountsManagerCooldownResponse `json:"cooldowns"`
 }
 
+// AccountsManagerOAuthSessionResponse exposes sign-in instructions with an opaque operation ID.
 type AccountsManagerOAuthSessionResponse struct {
+	AccountID        string    `json:"accountId,omitempty"`
 	ID               string    `json:"id"`
 	Provider         string    `json:"provider" enum:"codex,claude"`
 	Mode             string    `json:"mode" enum:"callback,device"`
@@ -812,6 +821,7 @@ type AccountsManagerOAuthSessionResponse struct {
 	ExpiresAt        time.Time `json:"expiresAt"`
 }
 
+// AccountsManagerAccountsResponse marks stale projections explicitly for disconnected clients.
 type AccountsManagerAccountsResponse struct {
 	Revision      int64                                 `json:"revision"`
 	Availability  string                                `json:"availability" enum:"starting,ready,degraded"`
@@ -821,54 +831,81 @@ type AccountsManagerAccountsResponse struct {
 	Routing       []AccountsManagerRoutingResponse      `json:"routing"`
 }
 
+// AccountsManagerRoutingResponse contains public account IDs, never engine references.
 type AccountsManagerRoutingResponse struct {
 	Provider   string   `json:"provider" enum:"codex,claude"`
 	Enabled    bool     `json:"enabled"`
 	AccountIDs []string `json:"accountIds"`
 }
 
+// UpdateAccountsManagerRoutingRequest replaces the provider's ordered routing preference.
 type UpdateAccountsManagerRoutingRequest struct {
 	Enabled    bool     `json:"enabled"`
 	AccountIDs []string `json:"accountIds"`
 }
 
+// AccountsManagerProviderParam binds the managed provider path parameter.
 type AccountsManagerProviderParam struct {
 	Provider string `path:"provider"`
 }
 
+// StartAccountsManagerOAuthRequest selects the provider and supported sign-in mode.
 type StartAccountsManagerOAuthRequest struct {
-	Provider string `json:"provider" enum:"codex,claude"`
-	Mode     string `json:"mode" enum:"callback,device"`
+	Provider   string `json:"provider" enum:"codex,claude"`
+	Mode       string `json:"mode" enum:"callback,device"`
+	AccountID  string `json:"accountId,omitempty"`
+	Generation uint64 `json:"generation,omitempty"`
 }
+
+// AccountsManagerAccountIDParam accepts a public account ID rather than a credential filename.
 type AccountsManagerAccountIDParam struct {
 	AccountID string `path:"accountId"`
 }
+
+// AccountsManagerOAuthOperationIDParam accepts a public operation ID rather than callback state.
 type AccountsManagerOAuthOperationIDParam struct {
 	OperationID string `path:"operationId"`
 }
+
+// AccountsManagerAPIKeyRequest is secret-bearing input and must not be logged or echoed.
 type AccountsManagerAPIKeyRequest struct {
-	Provider string `json:"provider" enum:"codex,claude"`
-	Key      string `json:"key"`
-	BaseURL  string `json:"baseUrl,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+	Provider    string `json:"provider" enum:"codex,claude"`
+	Key         string `json:"key"`
+	BaseURL     string `json:"baseUrl,omitempty"`
 }
+
+// AccountsManagerImportRequest carries an explicit import without granting filesystem access.
 type AccountsManagerImportRequest struct {
-	Provider   string          `json:"provider" enum:"codex,claude"`
-	Filename   string          `json:"filename"`
-	Credential json.RawMessage `json:"credential"`
+	OperationID string          `json:"operationId,omitempty"`
+	Provider    string          `json:"provider" enum:"codex,claude"`
+	Filename    string          `json:"filename"`
+	Credential  json.RawMessage `json:"credential"`
 }
+
+// UpdateAccountsManagerAccountRequest changes one user-owned account property.
 type UpdateAccountsManagerAccountRequest struct {
-	Disabled bool `json:"disabled"`
+	Disabled   *bool   `json:"disabled,omitempty"`
+	Label      *string `json:"label,omitempty"`
+	Generation uint64  `json:"generation,omitempty"`
 }
+
+// AccountsManagerModelResponse describes a model available to the selected account.
 type AccountsManagerModelResponse struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Owner       string `json:"owner,omitempty"`
 }
+
+// AccountsManagerModelsResponse bounds model discovery to one resolved account.
 type AccountsManagerModelsResponse struct {
 	Models []AccountsManagerModelResponse `json:"models"`
 }
+
+// AccountsManagerQuotaResponse preserves provider windows and server clock offset.
 type AccountsManagerQuotaResponse struct {
+	ObservedAt         time.Time                          `json:"observedAt"`
 	Subscription       *accountsmanager.QuotaSubscription `json:"subscription,omitempty"`
 	Summary            []accountsmanager.QuotaMetric      `json:"summary"`
 	ServerTimeOffsetMS int64                              `json:"serverTimeOffsetMs"`

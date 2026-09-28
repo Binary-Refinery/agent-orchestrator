@@ -1,6 +1,7 @@
 # Accounts Manager upstream engine
 
-The source under `engine/` is an unmodified snapshot of CLIProxyAPI.
+The source under `engine/` is a pinned snapshot of CLIProxyAPI with the callback
+extension listed below.
 
 - Upstream: https://github.com/router-for-me/CLIProxyAPI
 - Tag: `v7.3.8`
@@ -15,3 +16,18 @@ prevents AO-specific behavior from being mixed into the provider engine.
 When updating the snapshot, replace `engine/` from a clean upstream checkout,
 excluding only its `.git` directory, and update the tag and commit above in the
 same change.
+
+## Local callback extension
+
+`sdk/auth/LoginOptions` accepts an owned loopback callback listener and a private
+authorization-URL delivery function. The two existing browser authenticators use
+the in-memory callback receiver when supplied; their default flows and provider
+exchange implementation remain available. Callback state and redirect binding
+are checked before delivery, errors omit callback values, and cancellation closes
+the listener. Callback-related logging no longer prints authorization codes or
+state values.
+
+The extension and boundary tests live in `sdk/auth/listener_callback*.go`; the
+only existing SDK files changed are `interfaces.go` and the two browser
+authenticator entry points. Preserve or reapply this surface when updating the
+snapshot. Credential persistence and lifecycle integration stay in the runner.

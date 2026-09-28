@@ -9,56 +9,67 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-func TestAddAPIKeyPreservesUnknownFieldsAndIsIdempotent(t *testing.T) {
+func TestCredentialSummaryVerificationRequiresProof(t *testing.T) {
 	t.Parallel()
+	observed := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name         string
+		verification string
+		verifiedAt   time.Time
+		want         string
+	}{
+		{name: "absent", want: "unverified"},
+		{name: "unknown", verification: "trusted", verifiedAt: observed, want: "unverified"},
+		{name: "missing observation", verification: "verified", want: "unverified"},
+		{name: "invalid", verification: "invalid", verifiedAt: observed, want: "invalid"},
+		{name: "verified", verification: "verified", verifiedAt: observed, want: "verified"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := summaryFromRawCredential(rawCredentialRecord{
+				Verification: tt.verification, VerifiedAt: tt.verifiedAt, Status: "active",
+			})
+			if summary.Verification != tt.want || summary.Unavailable != (tt.want != "verified") {
+				t.Fatalf("verification state: %+v", summary)
+			}
+			if (tt.want == "verified" && !summary.VerifiedAt.Equal(observed)) ||
+				(tt.want != "verified" && !summary.VerifiedAt.IsZero()) {
+				t.Fatal("verification observation does not match proof")
+			}
+		})
+	}
+}
 
-	const newKey = "new-private-key"
-	var puts atomic.Int32
-	var added atomic.Bool
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/v0/management/codex-api-key" {
-			return managementJSONResponse(req, http.StatusNotFound, `{}`), nil
+func TestAddAPIKeyUsesPrivateIdempotentCommand(t *testing.T) {
+	t.Parallel()
+	var writes atomic.Int32
+	client := managementTestClient(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != credentialManagementPath+"/api-key" {
+			t.Fatalf("unexpected credential request: %s %s", req.Method, req.URL.Path)
 		}
-		switch req.Method {
-		case http.MethodGet:
-			items := `[{"api-key":"existing-key","base-url":"https://api.openai.com/v1","custom":{"keep":true},"auth-index":"existing-ref"}`
-			if added.Load() {
-				items += `,{"api-key":"` + newKey + `","base-url":"https://api.openai.com/v1","auth-index":"new-ref"}`
-			}
-			return managementJSONResponse(req, http.StatusOK, `{"codex-api-key":`+items+`]}`), nil
-		case http.MethodPut:
-			body, _ := io.ReadAll(req.Body)
-			if !strings.Contains(string(body), `"custom":{"keep":true}`) || !strings.Contains(string(body), `"api-key":"`+newKey+`"`) {
-				t.Fatalf("PUT did not preserve existing raw fields: %s", body)
-			}
-			puts.Add(1)
-			added.Store(true)
-			return managementJSONResponse(req, http.StatusOK, `{"status":"ok"}`), nil
-		default:
-			return managementJSONResponse(req, http.StatusMethodNotAllowed, `{}`), nil
+		var input struct {
+			OperationID string `json:"operationId"`
+			Provider    string `json:"provider"`
+			Key         string `json:"key"`
+			BaseURL     string `json:"baseUrl"`
 		}
+		if json.NewDecoder(req.Body).Decode(&input) != nil || input.OperationID != "add-key" || input.Key != "new-private-key" || input.Provider != string(ProviderCodex) || input.BaseURL != defaultCodexBaseURL {
+			t.Fatal("invalid private create command")
+		}
+		writes.Add(1)
+		return managementJSONResponse(req, http.StatusOK, `{"auth_index":"new-ref","provider":"codex","account_type":"api_key","status":"active"}`), nil
 	})
-	client := NewManagementClient(
-		staticEndpointSource{endpoint: Endpoint{BaseURL: "http://127.0.0.1:12345", ManagementToken: "management-secret"}, ready: true},
-		&http.Client{Transport: transport},
-	)
-
-	input := APIKeyInput{Provider: ProviderCodex, Key: newKey}
-	first, err := client.AddAPIKey(context.Background(), input)
-	if err != nil {
-		t.Fatalf("AddAPIKey() error = %v", err)
+	input := APIKeyInput{OperationID: "add-key", Provider: ProviderCodex, Key: "new-private-key"}
+	for range 2 {
+		created, err := client.AddAPIKey(context.Background(), input)
+		if err != nil || created.Ref != "new-ref" || created.Kind != CredentialAPIKey {
+			t.Fatalf("create: %+v %v", created, err)
+		}
 	}
-	second, err := client.AddAPIKey(context.Background(), input)
-	if err != nil {
-		t.Fatalf("duplicate AddAPIKey() error = %v", err)
-	}
-	if first.Ref != "new-ref" || second.Ref != first.Ref || first.Provider != ProviderCodex || first.Kind != "api_key" {
-		t.Fatalf("AddAPIKey() summaries = %#v %#v", first, second)
-	}
-	if puts.Load() != 1 {
-		t.Fatalf("PUT calls = %d, want 1", puts.Load())
+	if writes.Load() != 2 {
+		t.Fatal("unexpected command count")
 	}
 }
 
@@ -86,66 +97,41 @@ func TestAddAPIKeyValidatesProviderKeyAndBaseURL(t *testing.T) {
 	}
 }
 
-func TestAddAPIKeyDoesNotDuplicateMatchingEntryBeforeAuthIndexAppears(t *testing.T) {
+func TestAddAPIKeyRejectsUncommittedResponse(t *testing.T) {
 	t.Parallel()
-
-	var puts atomic.Int32
+	var calls atomic.Int32
 	client := managementTestClient(func(req *http.Request) (*http.Response, error) {
-		if req.Method == http.MethodPut {
-			puts.Add(1)
-		}
-		return managementJSONResponse(req, http.StatusOK, `{"codex-api-key":[{"api-key":"same-key","base-url":"https://api.openai.com/v1"}]}`), nil
+		calls.Add(1)
+		return managementJSONResponse(req, http.StatusOK, `{"provider":"codex","account_type":"api_key"}`), nil
 	})
-	_, err := client.AddAPIKey(context.Background(), APIKeyInput{Provider: ProviderCodex, Key: "same-key"})
-	if !errors.Is(err, ErrInvalidResponse) {
-		t.Fatalf("AddAPIKey() error = %v, want ErrInvalidResponse", err)
+	if _, err := client.AddAPIKey(context.Background(), APIKeyInput{Provider: ProviderCodex, Key: "same-key"}); !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("create error: %v", err)
 	}
-	if puts.Load() != 0 {
-		t.Fatalf("PUT calls = %d, want 0", puts.Load())
+	if calls.Load() != 1 {
+		t.Fatal("ambiguous creation was automatically repeated")
 	}
 }
 
-func TestImportCredentialValidatesUploadsAndVerifiesCatalog(t *testing.T) {
+func TestImportCredentialUsesPrivateBoundedDocument(t *testing.T) {
 	t.Parallel()
-
-	var uploaded atomic.Bool
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.Method == http.MethodGet && req.URL.Path == "/v0/management/auth-files":
-			files := `[]`
-			if uploaded.Load() {
-				files = `[{"auth_index":"import-ref","name":"safe-claude.json","provider":"claude","type":"claude","account_type":"oauth","status":"active"}]`
-			}
-			return managementJSONResponse(req, http.StatusOK, `{"files":`+files+`}`), nil
-		case req.Method == http.MethodPost && req.URL.Path == "/v0/management/auth-files":
-			if req.URL.Query().Get("name") != "safe-claude.json" {
-				t.Fatalf("upload name = %q", req.URL.Query().Get("name"))
-			}
-			body, _ := io.ReadAll(req.Body)
-			var object map[string]any
-			if json.Unmarshal(body, &object) != nil || object["type"] != "claude" {
-				t.Fatalf("upload body = %s", body)
-			}
-			uploaded.Store(true)
-			return managementJSONResponse(req, http.StatusOK, `{"status":"ok"}`), nil
-		default:
-			return managementJSONResponse(req, http.StatusNotFound, `{}`), nil
+	client := managementTestClient(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != credentialManagementPath+"/import" || req.URL.RawQuery != "" {
+			t.Fatal("unsafe import target")
 		}
+		body, _ := io.ReadAll(req.Body)
+		var input struct {
+			OperationID string          `json:"operationId"`
+			Provider    Provider        `json:"provider"`
+			Credential  json.RawMessage `json:"credential"`
+		}
+		if json.Unmarshal(body, &input) != nil || input.OperationID == "" || input.Provider != ProviderClaude || string(input.Credential) != `{"type":"claude","access_token":"private"}` || strings.Contains(string(body), "selected.json") {
+			t.Fatal("unsafe import body")
+		}
+		return managementJSONResponse(req, http.StatusOK, `{"auth_index":"import-ref","provider":"claude","account_type":"oauth","status":"active"}`), nil
 	})
-	client := NewManagementClient(
-		staticEndpointSource{endpoint: Endpoint{BaseURL: "http://127.0.0.1:12345", ManagementToken: "management-secret"}, ready: true},
-		&http.Client{Transport: transport},
-	)
-	got, err := client.ImportCredential(context.Background(), CredentialImport{
-		Provider: ProviderClaude,
-		Name:     "safe-claude.json",
-		JSON:     json.RawMessage(`{"type":"claude","access_token":"private"}`),
-	})
-	if err != nil {
-		t.Fatalf("ImportCredential() error = %v", err)
-	}
-	if got.Ref != "import-ref" || got.Provider != ProviderClaude || got.Kind != "oauth" {
-		t.Fatalf("ImportCredential() = %#v", got)
+	got, err := client.ImportCredential(context.Background(), CredentialImport{Provider: ProviderClaude, Name: "selected.json", JSON: json.RawMessage(`{"type":"claude","access_token":"private"}`)})
+	if err != nil || got.Ref != "import-ref" || got.Kind != CredentialOAuth {
+		t.Fatalf("import: %+v %v", got, err)
 	}
 }
 

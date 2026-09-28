@@ -1,6 +1,4 @@
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ChevronRight,
   LoaderCircle,
@@ -10,17 +8,19 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import type { MessageKey } from "../../i18n";
 import { aoBridge } from "../../lib/bridge";
+import { AccountControlError, accountControlMessage } from "../../lib/accounts-manager-controls";
 import {
   accountsManagerQueryKey,
   addAccountsManagerAPIKey,
   cancelAccountsManagerOAuth,
   fetchAccountsManagerModels,
-  fetchAccountsManagerQuota,
   importAccountsManagerCredential,
   refreshAccountsManagerAccount,
-  removeAccountsManagerAccount,
-  resetAccountsManagerQuota,
+  renameAccountsManagerAccount,
+  selectAccountsManagerSnapshot,
   setAccountsManagerDisabled,
   startAccountsManagerOAuth,
   updateAccountsManagerRouting,
@@ -34,15 +34,22 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { AgentProviderGroup } from "./AgentProviderGroup";
 import { SettingsSection } from "./SettingsSection";
+import { AccountRemovalDialog, AccountRemovalRecovery } from "./AccountRemovalControl";
+import { AccountUsage } from "./AccountUsage";
 
 type Provider = "codex" | "claude";
 type AddMethod = "device" | "browser" | "api-key" | "json";
+
+function providerLabel(provider: string): string {
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
 
 export function AccountsManagerSection({
   titleHidden,
 }: {
   titleHidden?: boolean;
 }) {
+  const { t } = useTranslation();
   const query = useAccountsManagerQuery();
   useAccountsManagerEvents();
   const client = useQueryClient();
@@ -51,25 +58,51 @@ export function AccountsManagerSection({
     claude: true,
   });
   const [adding, setAdding] = useState<Provider | null>(null);
+  const [reconnecting, setReconnecting] =
+    useState<AccountsManagerAccount | null>(null);
   const [method, setMethod] = useState<AddMethod>("device");
   const [secret, setSecret] = useState("");
   const [baseURL, setBaseURL] = useState("");
+  const [search, setSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<MessageKey | null>(null);
+  const [cancellationReceipt, setCancellationReceipt] = useState("");
+  const [requestId, setRequestId] = useState("");
+  const showError = (message: MessageKey, cause: unknown) => {
+    setError(cause instanceof AccountControlError && cause.code === "ACCOUNTS_MANAGER_INVALID_CREDENTIAL" ? "accountsManager.verification.rejected"
+      : cause instanceof AccountControlError && cause.code === "ACCOUNTS_MANAGER_VERIFICATION_UNAVAILABLE" ? "accountsManager.verification.unavailable" : message);
+    setRequestId(cause instanceof AccountControlError ? cause.requestId : "");
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   const cancelledOAuth = useRef(new Set<string>());
+  const cancellations = useRef(new Map<string, Promise<void>>());
+  const addGeneration = useRef(0);
   const activeOAuthID = useRef<string | null>(null);
   const data = query.data;
   const update = (next: AccountsManagerSnapshot) =>
-    client.setQueryData(accountsManagerQueryKey, next);
+    client.setQueryData<AccountsManagerSnapshot>(
+      accountsManagerQueryKey,
+      (current) => selectAccountsManagerSnapshot(current, next),
+    );
   const clearSensitive = () => {
     setSecret("");
     if (fileRef.current) fileRef.current.value = "";
   };
   const cancelOAuthOnce = async (id: string) => {
     if (cancelledOAuth.current.has(id)) return;
-    cancelledOAuth.current.add(id);
-    await cancelAccountsManagerOAuth(id);
+    let pending = cancellations.current.get(id);
+    if (!pending) {
+      pending = cancelAccountsManagerOAuth(id)
+        .then(() => {
+          cancelledOAuth.current.add(id);
+          setCancellationReceipt(id);
+        })
+        .finally(() => cancellations.current.delete(id));
+      cancellations.current.set(id, pending);
+    }
+    await pending;
   };
 
   const startOAuth = async (
@@ -78,20 +111,35 @@ export function AccountsManagerSection({
   ) => {
     setBusy(true);
     setError(null);
+    const generation = addGeneration.current;
     try {
-      const session = await startAccountsManagerOAuth(provider, mode);
+      const session = reconnecting
+        ? await startAccountsManagerOAuth(provider, mode, {
+            accountId: reconnecting.id,
+            generation: reconnecting.generation,
+          })
+        : await startAccountsManagerOAuth(provider, mode);
       activeOAuthID.current = session.id;
-      if (!session.authorizationUrl) {
-        throw new Error("Missing authorization URL");
+      if (generation !== addGeneration.current) {
+        try {
+          await cancelOAuthOnce(session.id);
+          activeOAuthID.current = null;
+        } catch (cause) {
+          setAdding(provider);
+          showError("accountsManager.errors.cancel", cause);
+        }
+        return;
       }
       try {
+        if (!session.authorizationUrl)
+          throw new Error("Missing authorization URL");
         await aoBridge.app.openExternal(session.authorizationUrl);
       } catch (openError) {
         await cancelOAuthOnce(session.id).catch(() => undefined);
         throw openError;
       }
-    } catch {
-      setError("Could not start sign-in. Try again.");
+    } catch (cause) {
+      showError("accountsManager.errors.start", cause);
     } finally {
       setBusy(false);
     }
@@ -104,8 +152,8 @@ export function AccountsManagerSection({
         await addAccountsManagerAPIKey(provider, secret, baseURL || undefined),
       );
       setAdding(null);
-    } catch {
-      setError("Could not add this API key.");
+    } catch (cause) {
+      showError("accountsManager.errors.addKey", cause);
     } finally {
       clearSensitive();
       setBusy(false);
@@ -129,8 +177,8 @@ export function AccountsManagerSection({
         ),
       );
       setAdding(null);
-    } catch {
-      setError("Choose a valid credential JSON file up to 1 MiB.");
+    } catch (cause) {
+      showError("accountsManager.errors.import", cause);
     } finally {
       clearSensitive();
       setBusy(false);
@@ -144,130 +192,258 @@ export function AccountsManagerSection({
     if (waiting) {
       activeOAuthID.current ??= waiting.id;
       setAdding(waiting.provider as Provider);
+      setReconnecting(
+        data?.accounts.find((account) => account.id === waiting.accountId) ??
+          null,
+      );
+      setMethod(waiting.mode === "device" ? "device" : "browser");
     }
   }, [waiting?.id]);
   useEffect(() => {
     const active = data?.oauthSessions.find(
       (session) => session.id === activeOAuthID.current,
     );
-    if (active?.status === "completed") {
+    if (
+      active?.status === "completed" ||
+      (active?.status === "expired" && active.failureCode === "cancelled")
+    ) {
       activeOAuthID.current = null;
       setAdding(null);
+      setReconnecting(null);
       setError(null);
     }
-    if (active?.status === "failed" || active?.status === "expired") {
+    if (
+      active?.status === "failed" ||
+      (active?.status === "expired" && active.failureCode !== "cancelled")
+    ) {
       activeOAuthID.current = null;
       setError(
         active.status === "expired"
-          ? "Sign-in expired. Try again."
-          : "Sign-in failed. Try again.",
+          ? "accountsManager.errors.expired"
+          : active.failureCode === "identity_mismatch"
+            ? "accountsManager.errors.identityMismatch"
+            : active.failureCode === "credential_changed"
+              ? "accountsManager.errors.credentialChanged"
+              : active.failureCode === "storage_unavailable"
+                ? "accountsManager.errors.storage"
+                : "accountsManager.errors.signIn",
       );
     }
   }, [data?.revision]);
   const closeAdd = async (provider: Provider) => {
+    addGeneration.current++;
     const pending = data?.oauthSessions.find(
       (session) =>
         session.provider === provider && session.status === "pending",
     );
-    if (pending) await cancelOAuthOnce(pending.id).catch(() => undefined);
+    const id = pending?.id ?? activeOAuthID.current;
+    if (id) {
+      setBusy(true);
+      try {
+        await cancelOAuthOnce(id);
+      } catch (cause) {
+        showError("accountsManager.errors.cancel", cause);
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    activeOAuthID.current = null;
     setAdding(null);
+    setReconnecting(null);
     setError(null);
     clearSensitive();
   };
 
   return (
-    <SettingsSection title="Accounts" titleHidden={titleHidden}>
+    <SettingsSection
+      title={t("accountsManager.title")}
+      titleHidden={titleHidden}
+    >
       <div className="space-y-4">
+        {query.error ? <p role="alert" className="text-sm text-destructive">{accountControlMessage(query.error, t)}</p> : null}
+        {error && requestId ? <p role="alert" className="text-xs text-destructive">{t("accountsManager.controls.requestId", { id: requestId })}</p> : null}
+        <AccountRemovalRecovery />
+        {cancellationReceipt ? <section aria-label={t("accountsManager.controls.cancelAckTitle")} className="rounded-md border border-border p-3 text-xs space-y-1" aria-live="polite">
+          <p>{t("accountsManager.controls.cancelAck", { id: cancellationReceipt })}</p>
+          <p>{t("accountsManager.controls.cancelAckDescription")}</p>
+          <p>{data?.oauthSessions.some(session => session.id === cancellationReceipt)
+            ? t("accountsManager.controls.observedLogin", { state: data.oauthSessions.find(session => session.id === cancellationReceipt)!.status })
+            : t("accountsManager.controls.loginUnknown")}</p>
+          <Button size="sm" variant="ghost" onClick={() => setCancellationReceipt("")}>{t("accountsManager.controls.dismissAck")}</Button>
+        </section> : null}
+        <div className="flex flex-wrap gap-2">
+          <Input
+            className="min-w-40 flex-1"
+            aria-label={t("accountsManager.search")}
+            placeholder={t("accountsManager.search")}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <select
+            className="rounded-md border border-input bg-background px-2 text-sm"
+            aria-label={t("accountsManager.filter.provider")}
+            value={providerFilter}
+            onChange={(event) => setProviderFilter(event.target.value)}
+          >
+            <option value="all">{t("accountsManager.filter.providers")}</option>
+            {(["codex", "claude"] as const).map((provider) => (
+              <option key={provider} value={provider}>
+                {providerLabel(provider)}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded-md border border-input bg-background px-2 text-sm"
+            aria-label={t("accountsManager.filter.state")}
+            value={stateFilter}
+            onChange={(event) => setStateFilter(event.target.value)}
+          >
+            <option value="all">{t("accountsManager.filter.states")}</option>
+            <option value="ready">{t("accountsManager.filter.available")}</option>
+            <option value="disabled">
+              {t("accountsManager.status.disabled")}
+            </option>
+            <option value="attention">
+              {t("accountsManager.status.error")}
+            </option>
+          </select>
+        </div>
         {data?.stale ? (
           <p className="text-xs text-muted-foreground">
-            Accounts Manager is temporarily unavailable. Showing the last
-            update.
+            {t("accountsManager.stale")}
           </p>
         ) : null}
-        {(["codex", "claude"] as const).map((provider) => {
-          const accounts =
-            data?.accounts.filter((account) => account.provider === provider) ??
-            [];
-          const unavailable = !data || data.availability !== "ready";
-          const routing = data?.routing?.find(
-            (policy) => policy.provider === provider,
-          ) ?? { provider, enabled: false, accountIds: [] };
-          return (
-            <AgentProviderGroup
-              key={provider}
-              provider={provider}
-              name={provider === "codex" ? "Codex" : "Claude"}
-              summary={`${accounts.length} saved account${accounts.length === 1 ? "" : "s"}`}
-              expanded={expanded[provider]}
-              onExpandedChange={(value) =>
-                setExpanded((current) => ({ ...current, [provider]: value }))
-              }
-              action={
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  disabled={unavailable}
-                  aria-label={`Add ${provider} account`}
-                  onClick={() => {
-                    setAdding(provider);
-                    setMethod(provider === "codex" ? "device" : "browser");
-                    setError(null);
-                  }}
-                >
-                  <Plus className="size-4" />
-                </Button>
-              }
-            >
-              <RoutingPanel
+        {(["codex", "claude"] as const)
+          .filter(
+            (provider) =>
+              providerFilter === "all" ||
+              providerFilter === provider ||
+              adding === provider,
+          )
+          .map((provider) => {
+            const accounts =
+              data?.accounts.filter(
+                (account) => account.provider === provider,
+              ) ?? [];
+            const visible = accounts.filter((account) => {
+              const matchesSearch =
+                `${account.label ?? ""} ${account.email ?? ""} ${account.id}`
+                  .toLocaleLowerCase()
+                  .includes(search.trim().toLocaleLowerCase());
+              const state = account.disabled
+                ? "disabled"
+                : account.unavailable || account.status !== "active"
+                  ? "attention"
+                  : "ready";
+              return (
+                matchesSearch &&
+                (stateFilter === "all" || stateFilter === state)
+              );
+            });
+            const unavailable =
+              !data || data.availability !== "ready" || data.stale || query.isError;
+            const routing = data?.routing?.find(
+              (policy) => policy.provider === provider,
+            ) ?? { provider, enabled: false, accountIds: [] };
+            return (
+              <AgentProviderGroup
+                key={provider}
                 provider={provider}
-                accounts={accounts}
-                policy={routing}
-                disabled={unavailable}
-                update={update}
-              />
-              {adding === provider ? (
-                <AddAccountPanel
+                name={providerLabel(provider)}
+                summary={t("accountsManager.saved", { count: accounts.length })}
+                expanded={expanded[provider]}
+                onExpandedChange={(value) =>
+                  setExpanded((current) => ({ ...current, [provider]: value }))
+                }
+                action={
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    disabled={unavailable || busy || Boolean(waiting)}
+                    aria-label={t("accountsManager.addProvider", { provider })}
+                    onClick={() => {
+                      clearSensitive();
+                      setBaseURL("");
+                      addGeneration.current++;
+                      setAdding(provider);
+                      setReconnecting(null);
+                      setMethod(provider === "codex" ? "device" : "browser");
+                      setError(null);
+                    }}
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                }
+              >
+                <RoutingPanel
                   provider={provider}
-                  method={method}
-                  setMethod={(next) => {
-                    if (next !== "api-key") clearSensitive();
-                    setMethod(next);
-                  }}
-                  secret={secret}
-                  setSecret={setSecret}
-                  baseURL={baseURL}
-                  setBaseURL={setBaseURL}
-                  busy={busy}
-                  waiting={waiting?.provider === provider ? waiting : undefined}
-                  error={error}
-                  dismissError={() => {
-                    setError(null);
-                    clearSensitive();
-                  }}
-                  close={() => void closeAdd(provider)}
-                  startOAuth={(mode) => void startOAuth(provider, mode)}
-                  submitKey={() => void submitKey(provider)}
-                  fileRef={fileRef}
-                  submitFile={(file) => void submitFile(provider, file)}
+                  accounts={accounts}
+                  policy={routing}
+                  disabled={unavailable}
+                  update={update}
                 />
-              ) : null}
-              {accounts.length ? (
-                accounts.map((account) => (
-                  <AccountRow
-                    key={account.id}
-                    account={account}
-                    disabled={unavailable}
-                    update={update}
+                {adding === provider ? (
+                  <AddAccountPanel
+                    provider={provider}
+                    reconnecting={reconnecting}
+                    method={method}
+                    setMethod={(next) => {
+                      if (next !== "api-key") clearSensitive();
+                      setMethod(next);
+                    }}
+                    secret={secret}
+                    setSecret={setSecret}
+                    baseURL={baseURL}
+                    setBaseURL={setBaseURL}
+                    busy={busy || unavailable}
+                    waiting={
+                      waiting?.provider === provider ? waiting : undefined
+                    }
+                    error={error}
+                    dismissError={() => {
+                      setError(null);
+                      clearSensitive();
+                    }}
+                    close={() => void closeAdd(provider)}
+                    startOAuth={(mode) => void startOAuth(provider, mode)}
+                    submitKey={() => void submitKey(provider)}
+                    fileRef={fileRef}
+                    submitFile={(file) => void submitFile(provider, file)}
                   />
-                ))
-              ) : (
-                <p className="px-4 py-5 text-sm text-muted-foreground">
-                  No {provider === "codex" ? "Codex" : "Claude"} accounts yet.
-                </p>
-              )}
-            </AgentProviderGroup>
-          );
-        })}
+                ) : null}
+                {visible.length ? (
+                  visible.map((account) => (
+                    <AccountRow
+                      key={account.id}
+                      account={account}
+                      disabled={unavailable}
+                      signInDisabled={busy || Boolean(waiting)}
+                      update={update}
+                      reconnect={() => {
+                        clearSensitive();
+                        addGeneration.current++;
+                        setReconnecting(account);
+                        setAdding(provider);
+                        setMethod(provider === "codex" ? "device" : "browser");
+                        setError(null);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <p className="px-4 py-5 text-sm text-muted-foreground">
+                    {unavailable && !accounts.length
+                      ? t("accountsManager.loading")
+                      : accounts.length
+                        ? t("accountsManager.noMatches")
+                        : t("accountsManager.emptyProvider", {
+                            provider: providerLabel(provider),
+                          })}
+                  </p>
+                )}
+              </AgentProviderGroup>
+            );
+          })}
       </div>
     </SettingsSection>
   );
@@ -286,55 +462,31 @@ function RoutingPanel({
   disabled: boolean;
   update: (next: AccountsManagerSnapshot) => void;
 }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<MessageKey | null>(null);
+  const [requestId, setRequestId] = useState("");
   const byID = new Map(accounts.map((account) => [account.id, account]));
-  const ordered = [
-    ...policy.accountIds
-      .map((id) => byID.get(id))
-      .filter((account): account is AccountsManagerAccount => Boolean(account)),
-    ...accounts.filter((account) => !policy.accountIds.includes(account.id)),
-  ];
+  const selectedID =
+    policy.accountIds.length === 1 ? policy.accountIds[0] : undefined;
+  const selected = selectedID ? byID.get(selectedID) : undefined;
   const eligible = (account: AccountsManagerAccount) =>
-    !account.disabled && !account.unavailable && account.status === "active";
+    account.verification === "verified" && !account.disabled && !account.unavailable && account.status === "active";
   const save = async (enabled: boolean, accountIds: string[]) => {
     setBusy(true);
     setError(null);
     try {
-      update(
-        await updateAccountsManagerRouting(provider, enabled, accountIds),
-      );
-    } catch {
-      setError("Could not update routing. Try again.");
+      update(await updateAccountsManagerRouting(provider, enabled, accountIds));
+    } catch (cause) {
+      setError("accountsManager.errors.routing");
+      setRequestId(cause instanceof AccountControlError ? cause.requestId : "");
     } finally {
       setBusy(false);
     }
   };
   const toggle = (checked: boolean) => {
-    const selected = policy.accountIds.filter((id) => byID.has(id));
-    const selectedHasEligibleAccount = selected.some((id) => {
-      const account = byID.get(id);
-      return account ? eligible(account) : false;
-    });
-    const next =
-      !checked || selectedHasEligibleAccount
-        ? selected
-        : accounts.filter(eligible).map((account) => account.id);
-    void save(checked, next);
-  };
-  const move = (id: string, delta: number) => {
-    const next = [...policy.accountIds];
-    const index = next.indexOf(id);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    void save(policy.enabled, next);
-  };
-  const setIncluded = (id: string, included: boolean) => {
-    const next = included
-      ? [...policy.accountIds, id]
-      : policy.accountIds.filter((value) => value !== id);
-    void save(policy.enabled, next);
+    if (checked && (!selected || !eligible(selected))) return;
+    void save(checked, selected ? [selected.id] : []);
   };
 
   return (
@@ -342,82 +494,70 @@ function RoutingPanel({
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium">
-            Route new sessions through Accounts Manager
+            {t("accountsManager.routing.title")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Changes apply to new sessions. Existing sessions keep their selected
-            account.
+            {t("accountsManager.routing.description")}
           </p>
           {provider === "codex" ? (
             <p className="mt-1 text-xs text-muted-foreground">
-              Codex Chat continues to use the native device account.
+              {t("accountsManager.routing.nativeChat")}
             </p>
           ) : null}
         </div>
         <Switch
-          aria-label={`Route new ${provider} sessions through Accounts Manager`}
+          aria-label={t("accountsManager.routing.toggle", { provider })}
           checked={policy.enabled}
-          disabled={disabled || busy || (!policy.enabled && !accounts.some(eligible))}
+          disabled={
+            disabled ||
+            busy ||
+            (!policy.enabled && (!selected || !eligible(selected)))
+          }
           onCheckedChange={toggle}
         />
       </div>
       {accounts.length ? (
         <div className="mt-3 space-y-1">
-          {ordered.map((account) => {
-            const index = policy.accountIds.indexOf(account.id);
-            const included = index >= 0;
+          {accounts.map((account) => {
+            const included = selectedID === account.id;
             const selectable = eligible(account);
             const label =
+              account.label ||
               account.email ||
-              `${provider === "codex" ? "Codex" : "Claude"} ${account.kind === "api_key" ? "API key" : "account"}`;
+              t(
+                account.kind === "api_key"
+                  ? "accountsManager.keyAccount"
+                  : "accountsManager.oauthAccount",
+                { provider: providerLabel(provider), id: account.id.slice(-6) },
+              );
             return (
               <div
                 key={account.id}
                 className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm"
               >
                 <span className="min-w-0 flex-1 truncate">{label}</span>
-                {included && index === 0 ? (
-                  <span className="text-xs text-muted-foreground">Preferred</span>
+                {included ? (
+                  <span className="text-xs text-muted-foreground">
+                    {t("accountsManager.routing.preferred")}
+                  </span>
                 ) : null}
                 {included ? (
-                  <>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Move ${label} up`}
-                      disabled={disabled || busy || index === 0}
-                      onClick={() => move(account.id, -1)}
-                    >
-                      <ArrowUp className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Move ${label} down`}
-                      disabled={
-                        disabled || busy || index === policy.accountIds.length - 1
-                      }
-                      onClick={() => move(account.id, 1)}
-                    >
-                      <ArrowDown className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={disabled || busy || (policy.enabled && policy.accountIds.length === 1)}
-                      onClick={() => setIncluded(account.id, false)}
-                    >
-                      Remove
-                    </Button>
-                  </>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={disabled || busy || policy.enabled}
+                    onClick={() => void save(false, [])}
+                  >
+                    {t("shell.remove")}
+                  </Button>
                 ) : (
                   <Button
                     size="sm"
                     variant="ghost"
                     disabled={disabled || busy || !selectable}
-                    onClick={() => setIncluded(account.id, true)}
+                    onClick={() => void save(policy.enabled, [account.id])}
                   >
-                    Use for routing
+                    {t("accountsManager.routing.use")}
                   </Button>
                 )}
               </div>
@@ -425,13 +565,17 @@ function RoutingPanel({
           })}
         </div>
       ) : null}
-      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+      {error ? (
+        <p className="mt-2 text-xs text-destructive">{t(error)}</p>
+      ) : null}
+      {error && requestId ? <p role="alert" className="text-xs text-destructive">{t("accountsManager.controls.requestId", { id: requestId })}</p> : null}
     </div>
   );
 }
 
 function AddAccountPanel(props: {
   provider: Provider;
+  reconnecting: AccountsManagerAccount | null;
   method: AddMethod;
   setMethod: (v: AddMethod) => void;
   secret: string;
@@ -440,7 +584,7 @@ function AddAccountPanel(props: {
   setBaseURL: (v: string) => void;
   busy: boolean;
   waiting?: AccountsManagerSnapshot["oauthSessions"][number];
-  error: string | null;
+  error: MessageKey | null;
   dismissError: () => void;
   close: () => void;
   startOAuth: (mode: "device" | "callback") => void;
@@ -448,28 +592,41 @@ function AddAccountPanel(props: {
   fileRef: RefObject<HTMLInputElement | null>;
   submitFile: (file?: File) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="border-b border-border bg-muted/20 p-4">
+      {props.reconnecting ? (
+        <p className="mb-3 text-sm" role="status">
+          {t("accountsManager.reconnect.description", {
+            account:
+              props.reconnecting.label ||
+              props.reconnecting.email ||
+              props.reconnecting.id.slice(-6),
+          })}
+        </p>
+      ) : null}
       <div className="mb-3 flex flex-wrap gap-2">
-        {([
-          ...(props.provider === "codex" ? (["device"] as const) : []),
-          "browser",
-          "api-key",
-          "json",
-        ] as const).map((method) => (
+        {(
+          [
+            ...(props.provider === "codex" ? (["device"] as const) : []),
+            "browser",
+            ...(props.reconnecting ? [] : (["api-key", "json"] as const)),
+          ] as const
+        ).map((method) => (
           <Button
             key={method}
             size="sm"
             variant={props.method === method ? "secondary" : "ghost"}
+            disabled={props.busy || Boolean(props.waiting)}
             onClick={() => props.setMethod(method)}
           >
             {method === "device"
-              ? "Device sign-in"
+              ? t("accountsManager.method.device")
               : method === "browser"
-                ? "Browser sign-in"
+                ? t("accountsManager.method.browser")
                 : method === "api-key"
-                  ? "API key"
-                  : "Credential JSON"}
+                  ? t("accountsManager.apiKey")
+                  : t("accountsManager.method.json")}
           </Button>
         ))}
       </div>
@@ -478,8 +635,7 @@ function AddAccountPanel(props: {
       ) : props.method === "device" ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
-            Recommended. AO will show a short code to enter on OpenAI’s secure
-            sign-in page.
+            {t("accountsManager.device.description")}
           </p>
           <Button
             disabled={props.busy}
@@ -488,7 +644,7 @@ function AddAccountPanel(props: {
             {props.busy ? (
               <LoaderCircle className="mr-2 size-4 animate-spin" />
             ) : null}
-            Continue with device code
+            {t("accountsManager.device.continue")}
           </Button>
         </div>
       ) : props.method === "browser" ? (
@@ -499,21 +655,21 @@ function AddAccountPanel(props: {
           {props.busy ? (
             <LoaderCircle className="mr-2 size-4 animate-spin" />
           ) : null}
-          Continue in browser
+          {t("accountsManager.browser.continue")}
         </Button>
       ) : props.method === "api-key" ? (
         <div className="space-y-2">
           <Input
-            aria-label="API key"
+            aria-label={t("accountsManager.apiKey")}
             autoComplete="off"
-            placeholder="API key"
+            placeholder={t("accountsManager.apiKey")}
             type="password"
             value={props.secret}
             onChange={(e) => props.setSecret(e.target.value)}
           />
           <Input
-            aria-label="Base URL"
-            placeholder="Base URL (optional)"
+            aria-label={t("accountsManager.baseURL")}
+            placeholder={t("accountsManager.baseURLPlaceholder")}
             value={props.baseURL}
             onChange={(e) => props.setBaseURL(e.target.value)}
           />
@@ -521,13 +677,14 @@ function AddAccountPanel(props: {
             disabled={props.busy || !props.secret.trim()}
             onClick={props.submitKey}
           >
-            Add account
+            {t("accountsManager.add")}
           </Button>
         </div>
       ) : (
         <input
           ref={props.fileRef}
           type="file"
+          aria-label={t("accountsManager.method.json")}
           accept="application/json,.json"
           disabled={props.busy}
           onChange={(e) => props.submitFile(e.currentTarget.files?.[0])}
@@ -535,14 +692,22 @@ function AddAccountPanel(props: {
       )}
       {props.error ? (
         <div className="mt-3 flex items-center gap-2 text-sm text-destructive">
-          <span>{props.error}</span>
+          <span>{t(props.error)}</span>
           <Button size="sm" variant="ghost" onClick={props.dismissError}>
-            Dismiss
+            {t("accountsManager.dismiss")}
           </Button>
         </div>
       ) : null}
-      <Button className="mt-2" size="sm" variant="ghost" onClick={props.close}>
-        Cancel
+      <Button
+        className="mt-2"
+        size="sm"
+        variant="ghost"
+        onClick={props.close}
+        disabled={
+          props.busy && (props.method === "api-key" || props.method === "json")
+        }
+      >
+        {t("confirm.cancel")}
       </Button>
     </div>
   );
@@ -553,12 +718,14 @@ function DeviceOrBrowserWaiting({
 }: {
   session: AccountsManagerSnapshot["oauthSessions"][number];
 }) {
+  const { t } = useTranslation();
   const userCode = session?.userCode;
-  if (!userCode) return <p className="text-sm">Waiting for sign-in…</p>;
+  if (!userCode)
+    return <p className="text-sm">{t("accountsManager.waiting")}</p>;
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">
-        Enter this code on the OpenAI sign-in page:
+        {t("accountsManager.device.enterCode")}
       </p>
       <div className="flex items-center gap-2">
         <code className="rounded-md bg-background px-3 py-2 text-base font-semibold tracking-wider">
@@ -571,10 +738,10 @@ function DeviceOrBrowserWaiting({
             void navigator.clipboard.writeText(userCode).catch(() => undefined)
           }
         >
-          Copy
+          {t("diffSelection.copy")}
         </Button>
       </div>
-      <p className="text-sm">Waiting for sign-in…</p>
+      <p className="text-sm">{t("accountsManager.waiting")}</p>
     </div>
   );
 }
@@ -583,38 +750,68 @@ function AccountRow({
   account,
   disabled,
   update,
+  reconnect,
+  signInDisabled,
 }: {
   account: AccountsManagerAccount;
   disabled: boolean;
   update: (next: AccountsManagerSnapshot) => void;
+  reconnect: () => void;
+  signInDisabled: boolean;
 }) {
+  const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<MessageKey | null>(null);
+  const [requestId, setRequestId] = useState("");
   const [details, setDetails] = useState<{
     models?: string[];
-    quota?: string;
   } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftLabel, setDraftLabel] = useState(account.label ?? "");
+  useEffect(() => {
+    if (!editing) setDraftLabel(account.label ?? "");
+  }, [account.label, editing]);
   const label =
+    account.label ||
     account.email ||
-    `${account.provider === "codex" ? "Codex" : "Claude"} ${account.kind === "api_key" ? "API key" : "account"}`;
+    t(
+      account.kind === "api_key"
+        ? "accountsManager.keyAccount"
+        : "accountsManager.oauthAccount",
+      { provider: providerLabel(account.provider), id: account.id.slice(-6) },
+    );
   const status = account.disabled
-    ? "Disabled"
+    ? t("accountsManager.status.disabled")
+    : account.verification !== undefined && account.verification !== "verified"
+      ? t(account.verification === "invalid" ? "accountsManager.verification.invalid" : "accountsManager.verification.unverified")
     : account.unavailable
-      ? "Unavailable"
+      ? t("accountsManager.status.unavailable")
       : account.status === "refreshing"
-        ? "Refreshing"
+        ? t("accountsManager.status.refreshing")
         : account.status === "error"
-          ? "Needs attention"
-          : "Ready";
+          ? t("accountsManager.status.error")
+          : account.status === "active"
+            ? t(
+                account.kind === "api_key"
+                  ? account.verification === "verified" ? "accountsManager.verification.verified" : "accountsManager.status.saved"
+                  : "accountsManager.status.ready",
+              )
+            : account.status === "pending"
+              ? t("accountsManager.status.pending")
+              : t("accountsManager.status.unknown");
   const action = async (task: () => Promise<AccountsManagerSnapshot>) => {
     setBusy(true);
     setError(null);
     try {
       update(await task());
-    } catch {
-      setError("Account action failed. Try again.");
+      return true;
+    } catch (cause) {
+      setError(cause instanceof AccountControlError && cause.code === "ACCOUNTS_MANAGER_INVALID_CREDENTIAL" ? "accountsManager.verification.rejected"
+        : cause instanceof AccountControlError && cause.code === "ACCOUNTS_MANAGER_VERIFICATION_UNAVAILABLE" ? "accountsManager.verification.unavailable" : "accountsManager.errors.action");
+      setRequestId(cause instanceof AccountControlError ? cause.requestId : "");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -623,20 +820,13 @@ function AccountRow({
     const next = !open;
     setOpen(next);
     if (next && !details) {
-      const [models, quota] = await Promise.allSettled([
+      const [models] = await Promise.allSettled([
         fetchAccountsManagerModels(account.id),
-        account.quotaSupported
-          ? fetchAccountsManagerQuota(account.id)
-          : Promise.resolve(null),
       ]);
       setDetails({
         models:
           models.status === "fulfilled"
             ? models.value.models.map((model) => model.displayName || model.id)
-            : [],
-        quota:
-          quota.status === "fulfilled" && quota.value
-            ? `${quota.value.groups.length} quota group${quota.value.groups.length === 1 ? "" : "s"}`
             : undefined,
       });
     }
@@ -656,14 +846,17 @@ function AccountRow({
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{label}</p>
             <p className="text-xs text-muted-foreground">{status}</p>
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {error ? (
+              <p className="text-xs text-destructive">{t(error)}</p>
+            ) : null}
+            {error && requestId ? <p role="alert" className="text-xs text-destructive">{t("accountsManager.controls.requestId", { id: requestId })}</p> : null}
           </div>
         </button>
         <Button
           size="icon"
           variant="ghost"
           disabled={disabled || busy}
-          aria-label="Refresh account"
+          aria-label={t(account.kind === "api_key" || account.verification === "unverified" || account.verification === "invalid" ? "accountsManager.verification.verify" : "accountsManager.refresh")}
           onClick={() =>
             void action(() => refreshAccountsManagerAccount(account.id))
           }
@@ -674,6 +867,23 @@ function AccountRow({
             <RefreshCw className="size-4" />
           )}
         </Button>
+        {account.kind === "oauth" ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={
+              disabled || busy || signInDisabled || !account.reconnectSupported
+            }
+            title={
+              account.reconnectSupported
+                ? undefined
+                : t("accountsManager.reconnect.unavailable")
+            }
+            onClick={reconnect}
+          >
+            {t("accountsManager.reconnect")}
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="ghost"
@@ -684,63 +894,93 @@ function AccountRow({
             )
           }
         >
-          {account.disabled ? "Enable" : "Disable"}
+          {account.disabled
+            ? t("accountsManager.enable")
+            : t("accountsManager.disable")}
         </Button>
-        {confirm ? (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-destructive/40 text-destructive hover:bg-destructive/10"
-              disabled={busy}
-              onClick={() =>
-                void action(() => removeAccountsManagerAccount(account.id))
-              }
-            >
-              Remove
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button
+        <Button
             size="icon"
             variant="ghost"
             disabled={disabled || busy}
-            aria-label="Remove account"
+            aria-label={t("accountsManager.remove")}
             onClick={() => setConfirm(true)}
           >
             <Trash2 className="size-4" />
           </Button>
-        )}
+        <AccountRemovalDialog accountId={account.id} open={confirm} onOpenChange={setConfirm} />
       </div>
       {open ? (
         <div className="space-y-2 border-t border-border px-10 py-3 text-xs text-muted-foreground">
-          <p>
-            {details
-              ? `${details.models?.length ?? 0} models${details.quota ? ` · ${details.quota}` : ""}`
-              : "Loading details…"}
-          </p>
-          {account.cooldowns[0]?.retryAt ? (
-            <p>
-              Cooldown active until{" "}
-              {new Date(account.cooldowns[0].retryAt).toLocaleString()}
-            </p>
-          ) : null}
-          {account.quotaSupported ? (
+          {editing ? (
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!busy)
+                  void action(() =>
+                    renameAccountsManagerAccount(
+                      account.id,
+                      draftLabel,
+                      account.generation,
+                    ),
+                  ).then((saved) => {
+                    if (saved) setEditing(false);
+                  });
+              }}
+            >
+              <Input
+                autoFocus
+                aria-label={t("accountsManager.label")}
+                maxLength={80}
+                value={draftLabel}
+                disabled={disabled || busy}
+                onChange={(event) => setDraftLabel(event.target.value)}
+              />
+              <Button type="submit" size="sm" disabled={disabled || busy}>
+                {t("accountsManager.saveLabel")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setEditing(false)}
+              >
+                {t("confirm.cancel")}
+              </Button>
+            </form>
+          ) : (
             <Button
               size="sm"
               variant="outline"
-              onClick={() =>
-                void resetAccountsManagerQuota(account.id).catch(() =>
-                  setError("Quota reset failed. Try again."),
-                )
-              }
+              disabled={disabled || busy}
+              onClick={() => setEditing(true)}
             >
-              Reset quota
+              {t("accountsManager.rename")}
             </Button>
+          )}
+          {account.kind === "oauth" && !account.reconnectSupported ? (
+            <p>{t("accountsManager.reconnect.unavailable")}</p>
           ) : null}
+          <p>
+            {details?.models === undefined && details
+              ? t("accountsManager.status.unknown")
+              : details
+                ? t("accountsManager.models", {
+                      count: details.models?.length ?? 0,
+                    })
+                : t("accountsManager.loadingDetails")}
+          </p>
+          {account.cooldowns?.[0]?.retryAt ? (
+            <p>
+              {t("accountsManager.cooldown", {
+                time: new Date(account.cooldowns[0].retryAt).toLocaleString(
+                  i18n.resolvedLanguage,
+                ),
+              })}
+            </p>
+          ) : null}
+          <AccountUsage key={`${account.id}:${account.generation}:${account.updatedAt}`} account={account} />
         </div>
       ) : null}
     </div>
