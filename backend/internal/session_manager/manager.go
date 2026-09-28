@@ -449,9 +449,14 @@ type Manager struct {
 	startupBackgroundReconcileOnce sync.Once
 	statusRecoveryMu               sync.RWMutex
 	statusRecoveryFailed           bool
+	statusRecoveryPending          bool
+	statusRecoveryRetrying         bool
 	statusRecoveryRevision         uint64
 	statusRecoveries               map[domain.SessionID]statusRecovery
 	statusVerificationLimit        time.Duration
+	statusRecoveryRetryInitial     time.Duration
+	statusRecoveryRetryMax         time.Duration
+	statusRecoveryRetryAttempts    int
 	agentOpMu                      sync.Mutex
 	agentOperations                map[domain.SessionID]agentOperationKind
 	interfaceRecoveryMu            sync.Mutex
@@ -849,6 +854,9 @@ func New(d Deps) *Manager {
 	}
 	m.statusRecoveries = make(map[domain.SessionID]statusRecovery)
 	m.statusVerificationLimit = statusVerificationLimit
+	m.statusRecoveryRetryInitial = 2 * time.Second
+	m.statusRecoveryRetryMax = 30 * time.Second
+	m.statusRecoveryRetryAttempts = 4
 	if m.reconcileWorkers < 1 {
 		m.reconcileWorkers = 1
 	}
@@ -3375,14 +3383,34 @@ func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
 // saved-session restoration passes. It is deliberately separate from the
 // startup safety pass so the daemon can serve durable SQLite-backed project
 // and session metadata while this best-effort work continues.
-func (m *Manager) ReconcileBackground(ctx context.Context) (resultErr error) {
-	defer func() {
-		m.statusRecoveryMu.Lock()
-		m.statusRecoveryFailed = resultErr != nil
-		m.statusRecoveryRevision++
-		m.statusRecoveryMu.Unlock()
-		m.startupBackgroundReconcileOnce.Do(func() { close(m.startupBackgroundReconcileDone) })
-	}()
+func (m *Manager) ReconcileBackground(ctx context.Context) error {
+	err := m.reconcileBackgroundPass(ctx)
+	retry := false
+	m.statusRecoveryMu.Lock()
+	if err != nil {
+		// A failed global discovery pass is ambiguous, not proof that every
+		// controller died. Keep reads neutral while one bounded retry loop owns
+		// discovery, then publish unavailable if the dependency stays broken.
+		m.statusRecoveryPending = true
+		m.statusRecoveryFailed = false
+		if !m.statusRecoveryRetrying {
+			m.statusRecoveryRetrying = true
+			retry = true
+		}
+	} else {
+		m.statusRecoveryPending = false
+		m.statusRecoveryFailed = false
+	}
+	m.statusRecoveryRevision++
+	m.statusRecoveryMu.Unlock()
+	m.startupBackgroundReconcileOnce.Do(func() { close(m.startupBackgroundReconcileDone) })
+	if retry {
+		go m.retryBackgroundReconcile(m.backgroundContext)
+	}
+	return err
+}
+
+func (m *Manager) reconcileBackgroundPass(ctx context.Context) error {
 	for _, interrupted := range m.startupTaskPreparations {
 		releaseWorkspaceGate := m.acquireWorkspaceGate(interrupted.ProjectID)
 		rec, ok, err := m.store.GetSession(ctx, interrupted.ID)
@@ -3434,6 +3462,18 @@ func (m *Manager) ReconcileBackground(ctx context.Context) (resultErr error) {
 	}
 	m.wakeTransitionMessageDispatcher()
 	return nil
+}
+
+func (m *Manager) retryBackgroundReconcile(ctx context.Context) {
+	err := m.retryStatusRecovery(ctx, func(recoveryCtx context.Context) error {
+		return m.reconcileBackgroundPass(recoveryCtx)
+	})
+	m.statusRecoveryMu.Lock()
+	m.statusRecoveryRetrying = false
+	m.statusRecoveryPending = false
+	m.statusRecoveryFailed = err != nil
+	m.statusRecoveryRevision++
+	m.statusRecoveryMu.Unlock()
 }
 
 func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
@@ -3523,51 +3563,54 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 // slow, a GUI-launched daemon missing a transient dependency, or another
 // process briefly owning a native writer is not proof that a session is dead.
 func (m *Manager) retryLiveRecovery(ctx context.Context, id domain.SessionID) {
-	backoff := 2 * time.Second
-	for {
+	before := domain.SessionRecord{ID: id}
+	err := m.retryStatusRecovery(ctx, func(recoveryCtx context.Context) error {
+		rec, ok, err := m.store.GetSession(recoveryCtx, id)
+		if err != nil {
+			return err
+		}
+		before = rec
+		if !ok || rec.IsTerminated {
+			return nil
+		}
+		if err := m.beginAgentOperation(recoveryCtx, id, agentOperationReconcile); err != nil {
+			return err
+		}
+		recoveryCtx, cancel := context.WithTimeout(recoveryCtx, m.statusVerificationLimit)
+		err = m.reconcileLive(recoveryCtx, rec)
+		cancel()
+		m.endAgentOperation(id, agentOperationReconcile)
+		return err
+	})
+	m.finishStatusRecovery(ctx, before, err)
+}
+
+func (m *Manager) retryStatusRecovery(ctx context.Context, attempt func(context.Context) error) error {
+	backoff := m.statusRecoveryRetryInitial
+	attempts := m.statusRecoveryRetryAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for range attempts {
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return
+			return ctx.Err()
 		case <-timer.C:
 		}
-
-		rec, ok, err := m.store.GetSession(ctx, id)
-		if err != nil {
-			backoff = nextRecoveryBackoff(backoff)
-			continue
+		lastErr = attempt(ctx)
+		if lastErr == nil || isUnrecoverableStartupRecoveryError(lastErr) {
+			return lastErr
 		}
-		if !ok || rec.IsTerminated {
-			m.finishStatusRecovery(ctx, rec, nil)
-			return
+		if backoff >= m.statusRecoveryRetryMax/2 {
+			backoff = m.statusRecoveryRetryMax
+		} else {
+			backoff *= 2
 		}
-		if err := m.beginAgentOperation(ctx, id, agentOperationReconcile); err != nil {
-			backoff = nextRecoveryBackoff(backoff)
-			continue
-		}
-		recoveryCtx, cancel := context.WithTimeout(ctx, m.statusVerificationLimit)
-		err = m.reconcileLive(recoveryCtx, rec)
-		cancel()
-		m.endAgentOperation(id, agentOperationReconcile)
-		if err == nil {
-			m.finishStatusRecovery(ctx, rec, nil)
-			return
-		}
-		if isUnrecoverableStartupRecoveryError(err) {
-			m.finishStatusRecovery(ctx, rec, err)
-			return
-		}
-		backoff = nextRecoveryBackoff(backoff)
 	}
-}
-
-func nextRecoveryBackoff(current time.Duration) time.Duration {
-	const maxBackoff = 30 * time.Second
-	if current >= maxBackoff/2 {
-		return maxBackoff
-	}
-	return current * 2
+	return lastErr
 }
 
 // Only typed, terminal conditions justify a persistent unavailable state.
@@ -3576,8 +3619,12 @@ func nextRecoveryBackoff(current time.Duration) time.Duration {
 func isUnrecoverableStartupRecoveryError(err error) bool {
 	return errors.Is(err, ErrIncompleteHandle) ||
 		errors.Is(err, ErrNotResumable) ||
+		errors.Is(err, ports.ErrAgentAuthRequired) ||
+		errors.Is(err, ports.ErrAgentBinaryNotFound) ||
 		errors.Is(err, ports.ErrChatUnsupported) ||
+		errors.Is(err, ports.ErrChatDriverUnavailable) ||
 		errors.Is(err, ports.ErrChatDriverIncompatible) ||
+		errors.Is(err, ports.ErrChatAuthRequired) ||
 		errors.Is(err, ports.ErrChatResumeFailed)
 }
 
@@ -3604,7 +3651,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		}
 		m.beginStatusRecovery(rec.ID)
 		err := m.attemptRestoreAllSession(ctx, rec.ID)
-		if err == nil || errors.Is(err, ErrNotFound) {
+		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotResumable) {
 			m.finishStatusRecovery(ctx, rec, nil)
 			continue
 		}
@@ -3634,29 +3681,18 @@ func (m *Manager) attemptRestoreAllSession(ctx context.Context, id domain.Sessio
 }
 
 func (m *Manager) retryRestoredRecovery(ctx context.Context, id domain.SessionID) {
-	backoff := 2 * time.Second
-	for {
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+	err := m.retryStatusRecovery(ctx, func(recoveryCtx context.Context) error {
+		err := m.attemptRestoreAllSession(recoveryCtx, id)
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotResumable) {
+			return nil
 		}
-
-		err := m.attemptRestoreAllSession(ctx, id)
-		if err == nil || errors.Is(err, ErrNotFound) {
-			rec, _, _ := m.store.GetSession(ctx, id)
-			m.finishStatusRecovery(ctx, rec, nil)
-			return
-		}
-		if isUnrecoverableStartupRecoveryError(err) {
-			rec, _, _ := m.store.GetSession(ctx, id)
-			m.finishStatusRecovery(ctx, rec, err)
-			return
-		}
-		backoff = nextRecoveryBackoff(backoff)
+		return err
+	})
+	rec, _, _ := m.store.GetSession(ctx, id)
+	if rec.ID == "" {
+		rec.ID = id
 	}
+	m.finishStatusRecovery(ctx, rec, err)
 }
 
 // restoreAllSession restores one terminated session marked for restore at

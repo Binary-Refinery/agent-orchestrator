@@ -55,6 +55,7 @@ export function ModelMenuChoices<T extends { id: string; label: string }>({
 						event.stopPropagation();
 						if (event.key === "Enter") {
 							event.preventDefault();
+							if (!normalizedQuery) return;
 							scrollRef.current?.querySelector<HTMLElement>('[role="menuitemradio"]')?.click();
 							return;
 						}

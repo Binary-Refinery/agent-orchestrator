@@ -599,6 +599,7 @@ export const SessionChatSurface = memo(function SessionChatSurface({
 				filePaths={paths}
 				filePathsTruncated={truncated}
 				localEchos={localEchos}
+				onAbandonLocalEcho={commands.abandonLocalEcho}
 				onStageAttachments={stageAttachments}
 				nativeImages={can(renderSnapshot, "images")}
 				// Gated on what the daemon advertises, so the control is never drawn for a

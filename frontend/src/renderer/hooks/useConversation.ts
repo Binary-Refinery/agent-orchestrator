@@ -410,6 +410,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 		gcTime: Number.POSITIVE_INFINITY,
 		staleTime: Number.POSITIVE_INFINITY,
 	}).data;
+	useQuery({
+		queryKey: conversationLocalEchosQueryKey,
+		queryFn: async (): Promise<ConversationLocalEchosBySession> => ({}),
+		initialData: emptyConversationLocalEchos,
+		enabled: false,
+		// These rows bridge the gap between an accepted HTTP request and the exact
+		// durable conversation row. Observing them prevents React Query's default
+		// five-minute GC from making a slow delivery disappear mid-flight; infinity
+		// also preserves the journal-backed recovery row across surface remounts.
+		gcTime: Number.POSITIVE_INFINITY,
+		staleTime: Number.POSITIVE_INFINITY,
+	});
 	const subscribeToLocalEchos = useCallback(
 		(onStoreChange: () => void) =>
 			queryClient.getQueryCache().subscribe((event) => {
@@ -451,6 +463,10 @@ export function useConversationCommands(sessionId: string | undefined) {
 
 	const send = useMutation({
 		onMutate: (variables: ConversationSendMutationInput) => {
+			const previousEcho = queryClient
+				.getQueryData<ConversationLocalEchosBySession>(conversationLocalEchosQueryKey)
+				?.[variables.targetSessionId]
+				?.find((echo) => echo.clientMessageId === variables.clientMessageId);
 			addConversationLocalEcho(queryClient, variables.targetSessionId, {
 				clientMessageId: variables.clientMessageId,
 				text: variables.input.text,
@@ -484,6 +500,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 					};
 				},
 			);
+			return { previousEcho };
 		},
 		mutationFn: async ({
 			targetSessionId,
@@ -557,13 +574,16 @@ export function useConversationCommands(sessionId: string | undefined) {
 			// accepted the message.
 			void refreshSessionInBackground(variables.targetSessionId);
 		},
-		onError: (error, variables) => {
+		onError: (error, variables, context) => {
 			releaseConversationDispatch(
 				queryClient,
 				variables.targetSessionId,
 				variables.clientMessageId,
 			);
-			if (DEFINITIVE_CHAT_SEND_REJECTIONS.has(apiErrorCode(error) ?? "")) {
+			if (
+				DEFINITIVE_CHAT_SEND_REJECTIONS.has(apiErrorCode(error) ?? "") &&
+				context?.previousEcho?.delivery !== "uncertain"
+			) {
 				releaseConversationLocalEcho(
 					queryClient,
 					variables.targetSessionId,
@@ -841,28 +861,6 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 	});
 
-	/**
-	 * Restart the tool servers.
-	 *
-	 * Worth offering because a server that failed to start is not a transient blip the
-	 * agent will retry: it will simply never call those tools, and nothing in the
-	 * timeline says so. Refused mid-turn, which is why the control is disabled rather
-	 * than allowed to fail.
-	 */
-	const reloadMcp = useMutation({
-		mutationFn: async () => {
-			const { data, error } = await apiClient.POST(
-				"/api/v1/sessions/{sessionId}/conversation/mcp/reload",
-				{
-					params: { path: { sessionId: sessionId as string } },
-				},
-			);
-			if (error) throw error;
-			return data;
-		},
-		onSuccess: invalidate,
-	});
-
 	const rollback = useMutation({
 		mutationFn: async (turnId: string) => {
 			const { data, error } = await apiClient.POST(
@@ -985,6 +983,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		[queryClient, sessionId],
 	);
+	const abandonLocalEcho = acknowledgeLocalEcho;
 	const sendTargetsCurrentSession = send.variables?.targetSessionId === sessionId;
 	const interruptTargetsCurrentSession = interrupt.variables?.targetSessionId === sessionId;
 	const retryTargetsCurrentSession = retryTurn.variables?.targetSessionId === sessionId;
@@ -1011,6 +1010,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		acknowledgeAcceptedTurn,
 		localEchos: sessionId ? localEchosBySession[sessionId] ?? [] : [],
 		acknowledgeLocalEcho,
+		abandonLocalEcho,
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (
 			requestId: string,
@@ -1139,13 +1139,6 @@ export function useConversationCommands(sessionId: string | undefined) {
 		 * answer is a property of the driver, not of the moment.
 		 */
 		steerUnsupported: apiErrorCode(steer.error) === "CHAT_STEER_UNSUPPORTED",
-		reloadMcpServers: () => reloadMcp.mutateAsync(),
-		reloadingMcpServers: reloadMcp.isPending,
-		mcpReloadUnsupported: apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
-		mcpReloadError:
-			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
-				? apiErrorMessage(reloadMcp.error)
-				: undefined,
 		busy:
 			trackedDispatch?.state === "pending" ||
 			(send.isPending && sendTargetsCurrentSession) ||

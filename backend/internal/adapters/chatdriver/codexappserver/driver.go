@@ -416,9 +416,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		// during an app restart. That is a liveness ambiguity, not proof that the
 		// saved conversation is gone; keep the AO session in recovery and retry.
 		resumeErrText := strings.ToLower(err.Error())
-		if strings.Contains(resumeErrText, "already has an active writer") ||
-			strings.Contains(resumeErrText, "internal server error") ||
-			strings.Contains(resumeErrText, "app-server error -32603") {
+		if strings.Contains(resumeErrText, "already has an active writer") {
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatRecoveryInconclusive, err)
 		}
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)

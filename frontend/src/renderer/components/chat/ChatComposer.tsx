@@ -167,6 +167,7 @@ export const ChatComposer = memo(function ChatComposer({
 	draftSessionId,
 	draftSessionIncarnation,
 	acceptedClientMessageIds,
+	onAbandonDelivery,
 	emptyPlaceholder,
 }: {
 	onSend: (
@@ -254,6 +255,8 @@ export const ChatComposer = memo(function ChatComposer({
 	draftSessionIncarnation?: string;
 	/** Client ids already present in daemon-authoritative conversation history. */
 	acceptedClientMessageIds?: ReadonlySet<string>;
+	/** Release renderer-only state when recovery for an uncertain send is abandoned. */
+	onAbandonDelivery?: (clientMessageId: string) => void;
 }) {
 	const translateDraft = useChatDraftTranslation();
 	const draftScope = useMemo<ChatDraftScope | undefined>(
@@ -477,9 +480,9 @@ export const ChatComposer = memo(function ChatComposer({
 			!submitting &&
 			!composerMutation.pending,
 	);
-	const canAbandonUncertainSteer = Boolean(
+	const canAbandonUncertainDelivery = Boolean(
 		deliveryUncertain &&
-			durableDelivery?.kind === "steer" &&
+			durableDelivery &&
 			durableDelivery.state === "dispatching" &&
 			draftScope &&
 			!submitting,
@@ -697,8 +700,8 @@ export const ChatComposer = memo(function ChatComposer({
 		[clearAcceptedDraft, draftScope],
 	);
 
-	const abandonUncertainSteer = useCallback(() => {
-		if (!draftScope || !durableDelivery || durableDelivery.kind !== "steer") return;
+	const abandonUncertainDelivery = useCallback(() => {
+		if (!draftScope || !durableDelivery) return;
 		const result = clearUncertainChatComposerDelivery(
 			draftScope,
 			durableDelivery.clientMessageId,
@@ -711,6 +714,9 @@ export const ChatComposer = memo(function ChatComposer({
 			);
 			return;
 		}
+		if (durableDelivery.kind === "send") {
+			onAbandonDelivery?.(durableDelivery.clientMessageId);
+		}
 		durableDeliveryRef.current = undefined;
 		setDeliveryUncertain(false);
 		setTextDraftPersistenceError(null);
@@ -718,7 +724,7 @@ export const ChatComposer = memo(function ChatComposer({
 		setSteerOutcomeNotice(
 			"chat.draft.abandonedSteer",
 		);
-	}, [draftScope, durableDelivery]);
+	}, [draftScope, durableDelivery, onAbandonDelivery]);
 
 	useEffect(() => {
 		const accepted = composerMutation.accepted;
@@ -1559,13 +1565,13 @@ export const ChatComposer = memo(function ChatComposer({
 						{translateDraft(attachmentError)}
 					</p>
 				) : null}
-				{canAbandonUncertainSteer ? (
+				{canAbandonUncertainDelivery ? (
 					<div className="px-1.5">
 						<Button
 							type="button"
 							variant="outline"
 							size="sm"
-							onClick={abandonUncertainSteer}
+							onClick={abandonUncertainDelivery}
 						>
 							{translateDraft("chat.draft.abandon")}
 						</Button>

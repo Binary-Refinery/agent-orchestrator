@@ -254,7 +254,7 @@ describe("AssistantMessage streaming", () => {
 		expect(frames.size).toBe(0);
 	});
 
-	it("flushes buffered text when streaming completes and restores actions", () => {
+	it("drains buffered text smoothly when streaming completes, then restores actions", () => {
 		const view = render(<AssistantMessage message={message()} showCopy />);
 		view.rerender(<AssistantMessage message={message({ text: "aThe complete answer", streaming: true })} showCopy />);
 		runFrame(0);
@@ -262,8 +262,23 @@ describe("AssistantMessage streaming", () => {
 			<AssistantMessage message={message({ text: "aThe complete answer", streaming: false })} showCopy />,
 		);
 
+		expect(screen.queryByText("aThe complete answer")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy message as markdown" })).not.toBeInTheDocument();
+		drainFrames();
+
 		expect(screen.getByText("aThe complete answer")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Copy message as markdown" })).toBeInTheDocument();
+	});
+
+	it("accelerates a large backlog enough to avoid an unbounded live-stream lag", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		const text = "a".padEnd(10_000, "x");
+		view.rerender(<AssistantMessage message={message({ text })} />);
+
+		runFrame(0);
+		for (let now = 16; now <= 1_500 && frames.size; now += 16) runFrame(now);
+
+		expect(document.querySelector("p")?.textContent?.length).toBeGreaterThan(text.length * 0.9);
 	});
 
 	it("shows the response spinner while text is still streaming", () => {

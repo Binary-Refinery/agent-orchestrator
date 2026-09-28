@@ -43,11 +43,15 @@ func (m *Manager) SessionStatusReadiness(rec domain.SessionRecord) string {
 	}
 	select {
 	case <-m.startupBackgroundReconcileDone:
-		if m.statusRecoveryFailed {
-			// A discovery/read failure says nothing about any individual
-			// controller's liveness. Don't turn every session red because the
-			// daemon couldn't complete its global startup scan.
+		if m.statusRecoveryPending {
 			return "checking"
+		}
+		if m.statusRecoveryFailed {
+			// A discovery failure says nothing about any one controller, so it
+			// remains neutral while bounded retries run. Once those retries are
+			// exhausted, surface an actionable retry state instead of loading
+			// forever.
+			return "unavailable"
 		}
 		return "ready"
 	default:

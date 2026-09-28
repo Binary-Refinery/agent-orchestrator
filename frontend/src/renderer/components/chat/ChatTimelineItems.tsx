@@ -118,7 +118,9 @@ const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
 /** Smooth baseline, with adaptive catch-up when provider chunks outrun playback. */
 const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
 const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
-const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
+const STREAM_TARGET_CATCHUP_MS = 500;
+const STREAM_SETTLED_CATCHUP_MS = 220;
+const STREAM_MAX_CHARACTERS_PER_SECOND = 20_000;
 const STREAM_MAX_FRAME_DELTA_MS = 100;
 const STREAM_MIN_UPDATE_INTERVAL_MS = 32;
 const STREAM_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -173,6 +175,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	}, [message.id, message.text]);
 	const visibleGraphemeCountRef = useRef(targetGraphemes.length);
 	const targetGraphemesRef = useRef(targetGraphemes);
+	const streamingRef = useRef(message.streaming);
 	const messageIdRef = useRef(message.id);
 	const frameRef = useRef<number | undefined>(undefined);
 	const lastFrameAtRef = useRef<number | undefined>(undefined);
@@ -224,9 +227,15 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			// Keep a small, intentional buffer for smoothness. As it grows, increase
 			// throughput instead of letting a long response fall further behind.
 			const catchup = Math.max(0, backlog - STREAM_TARGET_BACKLOG_CHARACTERS);
+			const catchupWindowMs = streamingRef.current
+				? STREAM_TARGET_CATCHUP_MS
+				: STREAM_SETTLED_CATCHUP_MS;
 			const charactersPerSecond = Math.min(
 				STREAM_MAX_CHARACTERS_PER_SECOND,
-				STREAM_BASE_CHARACTERS_PER_SECOND + catchup * 2,
+				Math.max(
+					STREAM_BASE_CHARACTERS_PER_SECOND,
+					catchup * 1000 / catchupWindowMs,
+				),
 			);
 			const elapsedMs = Math.min(STREAM_MAX_FRAME_DELTA_MS, Math.max(0, now - previousFrameAt));
 			fractionalCharactersRef.current += charactersPerSecond * elapsedMs / 1000;
@@ -265,13 +274,13 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 				cancelDrain();
 				return;
 			}
-			if (message.streaming && visibleGraphemeCountRef.current < targetGraphemesRef.current.length) {
+			if (visibleGraphemeCountRef.current < targetGraphemesRef.current.length) {
 				scheduleDrain();
 			}
 		};
 		document.addEventListener("visibilitychange", resumeVisibleStream);
 		return () => document.removeEventListener("visibilitychange", resumeVisibleStream);
-	}, [cancelDrain, message.streaming, scheduleDrain]);
+	}, [cancelDrain, scheduleDrain]);
 
 	useEffect(() => {
 		if (message.id !== messageIdRef.current) {
@@ -286,7 +295,8 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		}
 
 		targetGraphemesRef.current = targetGraphemes;
-		if (!message.streaming || reducedMotion) {
+		streamingRef.current = message.streaming;
+		if (reducedMotion) {
 			cancelDrain();
 			visibleRef.current = message.text;
 			visibleGraphemeCountRef.current = targetGraphemes.length;

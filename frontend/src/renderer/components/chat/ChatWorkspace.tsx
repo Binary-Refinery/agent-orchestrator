@@ -255,15 +255,6 @@ type MessageEditDraft = ChatDraftInlineEdit;
 function useQueuedMessages(snapshot: ConversationSnapshot): QueuedMessage[] {
 	const previous = useRef<QueuedMessage[]>([]);
 	return useMemo(() => {
-		// A queued turn is meaningful only behind an active provider turn. During
-		// completion/reconnect snapshots can briefly expose the durable queue after
-		// the controller has gone idle; never show that stale intermediate state as
-		// something waiting on the user.
-		const hasRunningTurn = snapshot.turns.some((turn) => turn.state === "running");
-		if (!hasRunningTurn) {
-			previous.current = [];
-			return previous.current;
-		}
 		const queuedTurnIds = new Set(
 			snapshot.turns.filter((turn) => turn.state === "queued").map((turn) => turn.id),
 		);
@@ -456,6 +447,8 @@ export interface ChatWorkspaceProps {
 	filePathsTruncated?: boolean;
 	/** Renderer-only human messages awaiting their exact durable counterpart. */
 	localEchos?: ConversationLocalEcho[];
+	/** Release a renderer-only uncertain send when its durable recovery is abandoned. */
+	onAbandonLocalEcho?: (clientMessageId: string) => void;
 	/**
 	 * Writes staged images into the worktree and answers with the paths the agent
 	 * can open. Absent means no attach control is offered — the fixture preview has
@@ -649,6 +642,7 @@ function ChatWorkspaceContent({
 	filePaths,
 	filePathsTruncated,
 	localEchos,
+	onAbandonLocalEcho,
 	onStageAttachments,
 	nativeImages,
 	onSteer,
@@ -1593,6 +1587,7 @@ function ChatWorkspaceContent({
 										draftPersistenceAvailable ? draftScope.incarnation : undefined
 									}
 									acceptedClientMessageIds={acceptedClientMessageIds}
+									onAbandonDelivery={onAbandonLocalEcho}
 									/>
 								</div>
 							</div>
@@ -3222,15 +3217,15 @@ function Timeline({
 									// Reserve the rollback slot as soon as a turn is live; it stays disabled
 									// until the provider has accepted the turn and the daemon can act on it.
 									canRollback={Boolean(onRollback && group.turnId && (group.rollbackable || group.live))}
-									rollbackDisabled={rollbackDisabled && !(group.outcome && turn?.id === group.turnId)}
+									rollbackDisabled={rollbackDisabled}
 									busy={busy}
 									queued={Boolean(group.turnId && queued.has(group.turnId) && hasEarlierHumanMessage)}
 								/>
 							</div>
 						);
 					})}
-					{turn && !groups.some((group) => group.turnId === turn.id) ? (
-						<TurnLiveStatus />
+					{turn?.state === "running" && !groups.some((group) => group.turnId === turn.id) ? (
+						<LiveResponseStatus startedAt={turn.startedAt ?? turn.requestedAt} />
 					) : null}
 					{messageEdit && !editedMessageVisible ? (
 						<div className="flex justify-end" data-chat-scroll-anchor="">
@@ -3492,7 +3487,6 @@ const TurnGroup = memo(function TurnGroup({
 	const humanRuns = group.outcome
 		? runs.filter((run) => isHumanRun(run.items[0]))
 		: [];
-	const hasWorkedActivity = workedRuns.some((run) => run.kind === "activities");
 	const finalRun = finalAssistantRunIndex >= 0 ? runs[finalAssistantRunIndex] : undefined;
 	const [showSettledStatus, setShowSettledStatus] = useState(!group.live);
 	useEffect(() => {
@@ -3548,9 +3542,6 @@ const TurnGroup = memo(function TurnGroup({
 						: undefined
 				}
 				rollbackDisabled={rollbackDisabled}
-				durationMs={
-					undefined
-				}
 			/>
 		);
 	return (
@@ -3610,13 +3601,10 @@ const TurnGroup = memo(function TurnGroup({
 								: undefined
 						}
 									rollbackDisabled={rollbackDisabled}
-						durationMs={
-							undefined
-						}
 					/>
 				),
 			)}
-			{group.outcome && showSettledStatus && hasWorkedActivity ? (
+			{group.outcome && showSettledStatus && workedRuns.length > 0 ? (
 				<Accordion type="single" collapsible className="-mx-1 border-b border-border" defaultValue="">
 					<AccordionItem value="worked" className="border-0">
 						<AccordionTrigger
@@ -3636,7 +3624,7 @@ const TurnGroup = memo(function TurnGroup({
 					</AccordionItem>
 				</Accordion>
 			) : null}
-			{group.outcome && showSettledStatus && !hasWorkedActivity ? (
+			{group.outcome && showSettledStatus && workedRuns.length === 0 ? (
 				<div className="flex h-7 items-center border-b border-border px-0 py-0 text-sm font-medium text-muted-foreground">
 					<span className="inline-flex w-fit items-center gap-1">
 						Worked for
@@ -3765,7 +3753,6 @@ function TimelineItem({
 	liveStatus,
 	onRollback,
 	rollbackDisabled,
-	durationMs,
 }: {
 	item: ConversationItem;
 	sessionId: string;
@@ -3804,8 +3791,6 @@ function TimelineItem({
 	onRollback?: () => void;
 	/** Keep the action row mounted while another turn is running. */
 	rollbackDisabled?: boolean;
-	/** Finished-turn duration; shown next to rollback on the final answer. */
-	durationMs?: number;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 }) {
@@ -3819,7 +3804,6 @@ function TimelineItem({
 					liveStatus={liveStatus}
 					onRollback={onRollback}
 					rollbackDisabled={rollbackDisabled}
-					durationMs={durationMs}
 				/>
 			);
 		}

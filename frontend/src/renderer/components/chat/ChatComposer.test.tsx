@@ -411,6 +411,31 @@ describe("send keys", () => {
 		expect(readChatSessionDraft(sessionId).composer.delivery?.state).toBe("dispatching");
 	});
 
+	it("abandons an uncertain send journal and releases its local echo", async () => {
+		const sessionId = "composer-send-abandon";
+		const onSend = vi.fn().mockRejectedValue(new Error("response lost"));
+		const onAbandonDelivery = vi.fn();
+		render(
+			<ChatComposer
+				draftSessionId={sessionId}
+				onSend={onSend}
+				onAbandonDelivery={onAbandonDelivery}
+			/>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "possibly delivered request");
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		await waitFor(() => expect(screen.getByRole("button", { name: "Abandon recovery" })).toBeEnabled());
+		const deliveryId = onSend.mock.calls[0]?.[2];
+		await userEvent.click(screen.getByRole("button", { name: "Abandon recovery" }));
+
+		expect(onAbandonDelivery).toHaveBeenCalledWith(deliveryId);
+		expect(readChatSessionDraft(sessionId).composer.delivery).toBeUndefined();
+		expect(field).toHaveAttribute("contenteditable", "true");
+		expect(field).toHaveTextContent("possibly delivered request");
+	});
+
 	it("locks an accepted draft whose durable clear failed and clears without redispatch", async () => {
 		const sessionId = "composer-accepted-clear-failure";
 		const durableStorage = window.localStorage;

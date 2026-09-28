@@ -3865,6 +3865,28 @@ func TestResumeAgentRejectsMissingWorkspaceBeforeCallingManager(t *testing.T) {
 	}
 }
 
+func TestResumeAgentLetsFailedProvisionRetryCreateMissingWorkspace(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, ProvisionState: domain.SessionProvisionFailed,
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions[rec.ID] = rec
+	fc := &fakeCommander{restoreResult: sessionmanager.RestoreResult{Session: rec, Mode: sessionmanager.RestoreModeSavedPrompt}}
+
+	got, err := (&Service{manager: fc, store: st}).ResumeAgent(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+	if len(fc.resumed) != 1 || fc.resumed[0] != rec.ID {
+		t.Fatalf("manager resume calls = %v, want [%s]", fc.resumed, rec.ID)
+	}
+	if got.Mode != RestoreModeViewSavedPrompt {
+		t.Fatalf("mode = %q, want %q", got.Mode, RestoreModeViewSavedPrompt)
+	}
+}
+
 func TestExitAgentPreservesSessionAndMapsExitedReadModel(t *testing.T) {
 	st := newFakeStore()
 	rec := domain.SessionRecord{

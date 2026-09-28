@@ -379,6 +379,57 @@ describe("accepted conversation sends", () => {
 		expect(invalidate).toHaveBeenCalled();
 	});
 
+	it("keeps local echoes out of React Query garbage collection", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, gcTime: 1 }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		renderHook(() => useConversationCommands("ao-echo-gc"), { wrapper: HookWrapper });
+
+		const query = queryClient.getQueryCache().find({ queryKey: ["conversation-local-echos"] });
+		expect(query?.options.gcTime).toBe(Number.POSITIVE_INFINITY);
+		expect(query?.getObserversCount()).toBe(1);
+	});
+
+	it("keeps the same uncertain echo recoverable when an idempotent retry is refused", async () => {
+		postMock
+			.mockResolvedValueOnce({ data: undefined, error: { code: "CHAT_SEND_FAILED" } })
+			.mockResolvedValueOnce({ data: undefined, error: { code: "CHAT_CONTROLLER_NOT_READY" } });
+		apiErrorCodeMock
+			.mockReturnValueOnce("CHAT_SEND_FAILED")
+			.mockReturnValueOnce("CHAT_CONTROLLER_NOT_READY");
+		const { result } = renderHook(() => useConversationCommands("ao-uncertain-retry"), { wrapper });
+		const input = { text: "deliver once", clientMessageId: "stable-delivery-id" };
+
+		await act(async () => { await result.current.send(input).catch(() => {}); });
+		await act(async () => { await result.current.send(input).catch(() => {}); });
+
+		expect(result.current.localEchos).toMatchObject([{
+			clientMessageId: "stable-delivery-id",
+			delivery: "uncertain",
+			text: "deliver once",
+		}]);
+		expect(postMock.mock.calls.map((call) => call[1].body.clientMessageId)).toEqual([
+			"stable-delivery-id",
+			"stable-delivery-id",
+		]);
+	});
+
+	it("releases an uncertain echo when its durable recovery is abandoned", async () => {
+		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_SEND_FAILED" } });
+		const { result } = renderHook(() => useConversationCommands("ao-abandon-send"), { wrapper });
+
+		await act(async () => {
+			await result.current.send({ text: "maybe delivered", clientMessageId: "abandon-id" }).catch(() => {});
+		});
+		expect(result.current.localEchos).toHaveLength(1);
+
+		act(() => result.current.abandonLocalEcho("abandon-id"));
+		expect(result.current.localEchos).toEqual([]);
+	});
+
 	it("retains content summaries and queued state on the optimistic echo", async () => {
 		const response = deferred<{ data: { turnId: string; state: "queued" }; error: undefined }>();
 		postMock.mockReturnValue(response.promise);
@@ -1201,40 +1252,6 @@ describe("steering refusals", () => {
 		await waitFor(() => {
 			expect(result.current.steerUnsupported).toBe(true);
 			expect(result.current.steerRefusal).toBeUndefined();
-		});
-	});
-});
-
-describe("tool server reload refusals", () => {
-	it("withdraws the control when the harness cannot reload", async () => {
-		apiErrorCodeMock.mockReturnValue("CHAT_MCP_RELOAD_UNSUPPORTED");
-		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_MCP_RELOAD_UNSUPPORTED" } });
-
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
-		await act(async () => {
-			await result.current.reloadMcpServers().catch(() => {});
-		});
-
-		await waitFor(() => {
-			expect(result.current.mcpReloadUnsupported).toBe(true);
-			// Not also an error message: the control disappearing is the whole answer.
-			expect(result.current.mcpReloadError).toBeUndefined();
-		});
-	});
-
-	it("surfaces a refusal the user can act on", async () => {
-		apiErrorCodeMock.mockReturnValue("CHAT_TURN_RUNNING");
-		apiErrorMessageMock.mockReturnValue("a turn is running");
-		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_TURN_RUNNING" } });
-
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
-		await act(async () => {
-			await result.current.reloadMcpServers().catch(() => {});
-		});
-
-		await waitFor(() => {
-			expect(result.current.mcpReloadUnsupported).toBe(false);
-			expect(result.current.mcpReloadError).toBe("a turn is running");
 		});
 	});
 });

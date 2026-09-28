@@ -514,14 +514,60 @@ describe("ChatWorkspace steering", () => {
 		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
 	});
 
-	it("hides stale queued messages after the active turn finishes", () => {
+	it("keeps durable queued messages cancellable after the previous turn fails", async () => {
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
 		const snapshot = {
 			...withQueuedMessages(),
 			turns: withQueuedMessages().turns.map((turn) =>
-				turn.state === "running" ? { ...turn, state: "completed" as const } : turn,
+				turn.state === "running"
+					? {
+							...turn,
+							state: "failed" as const,
+							completedAt: "2026-08-11T10:03:00Z",
+							errorMessage: "provider disconnected",
+						}
+					: turn,
 			),
 		};
-		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+		render(
+			<ChatWorkspace
+				snapshot={snapshot}
+				onSteer={vi.fn()}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("first queued")).toBeVisible();
+		await userEvent.click(
+			within(screen.getByTestId("queued-message-queued-1")).getByRole("button", {
+				name: "Delete queued message",
+			}),
+		);
+		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
+	});
+
+	it("keeps a first queued prompt out of the queue dock", () => {
+		const snapshot = {
+			...chatFixture,
+			turns: [{ id: "queued-first", state: "queued" as const, requestedAt: "2026-08-11T10:01:00Z" }],
+			items: [
+				{
+					kind: "message" as const,
+					id: "queued-first-message",
+					turnId: "queued-first",
+					sequence: 1,
+					revision: 0,
+					role: "user" as const,
+					origin: "human" as const,
+					text: "first prompt",
+					streaming: false,
+					createdAt: "2026-08-11T10:01:00Z",
+				},
+			],
+		};
+
+		render(<ChatWorkspace snapshot={snapshot} />);
 		expect(screen.queryByTestId("queued-message-dock")).not.toBeInTheDocument();
 	});
 

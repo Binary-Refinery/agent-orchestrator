@@ -150,6 +150,18 @@ describe.each(["native", "ACP submenu", "ACP standalone"] as const)("%s model se
 		expect(onChange).toHaveBeenCalledOnce();
 	});
 
+	it("does not change models when Enter is pressed before searching", async () => {
+		const { user, onChange, open } = setup();
+		await open();
+		if (path === "ACP standalone") {
+			await user.keyboard("{Escape}{Enter}");
+		}
+		const search = screen.getByRole("searchbox", { name: "Search models" });
+		expect(search).toHaveFocus();
+		await user.keyboard("{Enter}");
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it.each(["ArrowUp", "Shift+Tab"])("returns to the query with %s so it can be refined", async (key) => {
 		const { user, open } = setup();
 		await open();

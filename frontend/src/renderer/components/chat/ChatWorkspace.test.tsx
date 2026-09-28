@@ -665,6 +665,83 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
+	it("shows Working when a running turn has not produced a timeline group yet", () => {
+		const requestedAt = new Date(Date.now() - 2_000).toISOString();
+		const snapshot: ConversationSnapshot = {
+			...chatFixtureEmpty,
+			controller: { state: "busy" },
+			turns: [{ id: "turn-starting", state: "running", requestedAt }],
+		};
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByTestId("live-working-label")).toHaveTextContent(/^Working for /);
+		expect(screen.getByTestId("response-spinner")).toBeInTheDocument();
+	});
+
+	it("keeps single-item settled work inside the Worked accordion", async () => {
+		const user = userEvent.setup();
+		const snapshot: ConversationSnapshot = {
+			...chatFixtureEmpty,
+			latestSequence: 3,
+			turns: [
+				{
+					id: "turn-with-prose-work",
+					state: "completed",
+					providerTurnId: "provider-turn-with-prose-work",
+					requestedAt: "2026-08-11T10:01:00Z",
+					startedAt: "2026-08-11T10:01:01Z",
+					completedAt: "2026-08-11T10:01:04Z",
+				},
+			],
+			items: [
+				{
+					kind: "message",
+					id: "prompt",
+					turnId: "turn-with-prose-work",
+					sequence: 1,
+					revision: 0,
+					role: "user",
+					origin: "human",
+					text: "Inspect the implementation",
+					streaming: false,
+					createdAt: "2026-08-11T10:01:00Z",
+				},
+				{
+					kind: "message",
+					id: "intermediate-answer",
+					turnId: "turn-with-prose-work",
+					sequence: 2,
+					revision: 0,
+					role: "assistant",
+					origin: "provider",
+					text: "I found the relevant component.",
+					streaming: false,
+					createdAt: "2026-08-11T10:01:02Z",
+				},
+				{
+					kind: "message",
+					id: "final-answer",
+					turnId: "turn-with-prose-work",
+					sequence: 3,
+					revision: 0,
+					role: "assistant",
+					origin: "provider",
+					text: "The implementation is correct.",
+					streaming: false,
+					createdAt: "2026-08-11T10:01:04Z",
+				},
+			],
+		};
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const worked = screen.getByRole("button", { name: /Worked for/ });
+		expect(screen.getByText("The implementation is correct.")).toBeVisible();
+
+		await user.click(worked);
+		expect(screen.getByText("I found the relevant component.")).toBeVisible();
+	});
+
 	it("replaces the generic working label with Claude's live retry count and backoff", () => {
 		const snapshot = structuredClone(chatFixture);
 		snapshot.items = snapshot.items.filter(
