@@ -408,7 +408,11 @@ async function importAutoUpdater(
       return next;
     },
   );
-  vi.doMock("./update-settings", () => ({
+  // Spread the real module: only the persistence functions need stubbing, and a
+  // bare object silently drops the pure constants and state helpers, which then
+  // fail at import as missing exports rather than as anything readable.
+  vi.doMock("./update-settings", async () => ({
+    ...(await vi.importActual<typeof import("./update-settings")>("./update-settings")),
     readUpdateSettings,
     writeUpdateSettings,
     updateUpdateSettings,
@@ -473,12 +477,17 @@ function intervalWithDelay(
 function deferred<T = void>(): {
   promise: Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason: unknown) => void;
 } {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  // The download rejection is observed by the updater, not always by the test.
+  promise.catch(() => undefined);
+  return { promise, resolve, reject };
 }
 
 async function flushMicrotasks(turns = 16): Promise<void> {
@@ -3442,14 +3451,14 @@ describe("quitAndInstallUpdate", () => {
         updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
         return transfer.promise;
       });
-      const assertion = expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing changed/);
+      const assertion = expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
       await flushMicrotasks();
       await vi.advanceTimersByTimeAsync(180_000);
       await assertion;
       nativeAutoUpdater.emit("update-downloaded");
       transfer.resolve();
       await flushMicrotasks();
-      await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing changed/);
+      await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
       expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
       expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); restore(); }
@@ -3936,14 +3945,15 @@ describe("staged install rejection", () => {
     // A recoverable first failure: reported calmly, not as a red error.
     expect(statusMessages().at(-1)?.payload).toMatchObject({
       state: "retry-scheduled",
-      message: expect.stringContaining("try again automatically"),
+      message: expect.stringContaining("Downloading it again and retrying in about 15 minutes"),
     });
     consoleErrorSpy.mockRestore();
   });
 
-  it("discards the download once the same build fails a third time", async () => {
-    // Two re-extractions failing too is the first real evidence the bytes are
-    // suspect, so now the zip goes.
+  it("discards the download from the second failure so the retry re-downloads", async () => {
+    // A re-extraction failing too is the first real evidence the bytes are
+    // suspect, so the zip goes and the NEXT attempt is a genuine download.
+    // Without this the "retrying" the user is promised replays identical bytes.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -3955,15 +3965,13 @@ describe("staged install rejection", () => {
     updaterEvents.get("error")?.(rejection);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
     updaterEvents.get("error")?.(rejection);
-    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
-    updaterEvents.get("error")?.(rejection);
 
     // Deferred, not fired and forgotten: the clear is queued on the operation
     // chain, so it has not run at the instant the rejection is handled.
     expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    // Still calm. Running out of fast attempts is not a dead end any more.
     expect(statusMessages().at(-1)?.payload).toMatchObject({
-      state: "error",
-      message: expect.stringContaining("manually"),
+      state: "retry-scheduled",
     });
 
     // ...and the next operation cannot begin until it has. Awaiting one drains
@@ -4106,7 +4114,7 @@ describe("staged install rejection", () => {
     expect(statusMessages().at(-1)?.payload).toEqual(afterFirstDelivery);
     expect(statusMessages().at(-1)?.payload).toMatchObject({
       state: "retry-scheduled",
-      message: expect.stringContaining("try again automatically"),
+      message: expect.stringContaining("Downloading it again and retrying in about 15 minutes"),
     });
     // The repeat must not be miscounted as a genuine second failure, which
     // would discard a download that has only actually failed once.
@@ -4248,6 +4256,125 @@ describe("staged install rejection", () => {
 
     expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+
+  it("keeps the calm line when the same rejection also rejects the download promise", async () => {
+    // MacUpdater registers `nativeUpdater.once("error", reject)` on the download
+    // promise AND re-emits the error, so one Squirrel failure arrives twice by
+    // two different routes. The second route lands in the generic download catch,
+    // which used to be guarded by `lastStatus.state !== "error"` — a test for one
+    // literal state name, which `retry-scheduled` is not. That let the raw
+    // signature dump overwrite the calm line the first route had just set.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const consoleDebugSpy = vi
+      .spyOn(console, "debug")
+      .mockImplementation(() => undefined);
+    const transfer = deferred();
+    const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater();
+
+    // Both deliveries of the ONE failure, in the order MacUpdater produces them:
+    // the re-emitted event first, then the rejection of the awaited download.
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      updaterEvents.get("error")?.(rejection);
+      transfer.reject(rejection);
+      return Promise.resolve({ downloadPromise: transfer.promise });
+    });
+    await module.checkForUpdatesNow(stateDir);
+    await flushMicrotasks();
+
+    const shown = statusMessages().at(-1)?.payload as { state: string; message?: string };
+    expect(shown.state).toBe("retry-scheduled");
+    expect(shown.message).not.toMatch(/did not pass validation|static code/i);
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
+    consoleDebugSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("reports a signature rejection as a verification retry, not as a stall", async () => {
+    // The staging-message shortener used to rewrite anything matching /signature/
+    // to the stall line BEFORE anything classified it, so a verification failure
+    // surfaced to the user as "couldn't finish preparing the update", describing a
+    // stall that never happened. Driven through the NATIVE Squirrel error while a
+    // manual check is still in flight, which is the arrangement that puts the
+    // shortened message in front of the user.
+    const restore = stubProcess("darwin", process.execPath);
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const consoleDebugSpy = vi
+      .spyOn(console, "debug")
+      .mockImplementation(() => undefined);
+    try {
+      const transfer = deferred();
+      const { module, autoUpdater, updaterEvents, nativeUpdaterEvents, statusMessages } =
+        await importAutoUpdater(undefined, { nativeReadyManually: true });
+
+      autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+        updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+        return Promise.resolve({ downloadPromise: transfer.promise });
+      });
+      const checking = module.checkForUpdatesNow(stateDir);
+      await flushMicrotasks();
+      nativeUpdaterEvents.get("error")?.(rejection);
+      await flushMicrotasks();
+      await checking;
+
+      const shown = statusMessages().at(-1)?.payload as { message?: string };
+      expect(shown.message ?? "").not.toContain("finish preparing");
+      expect(module.getUpdateStatus().message ?? "").not.toContain("finish preparing");
+    } finally {
+      consoleDebugSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+      restore();
+    }
+  });
+
+  it("keeps retrying on a slower cadence instead of giving up", async () => {
+    // The old behaviour latched after the bound and told the user to go and
+    // download the app by hand. A transient cause (a truncated CDN response, a
+    // half-written cache) then had no automatic way back. Now it only PACES:
+    // auto-download stays off inside the backoff window and comes back after it.
+    // Pin the clock: the backoff is measured with Date.now(), so a real clock
+    // makes the two windows below depend on how long the suite took to get here.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      // Automatic updates explicitly on: autoDownload is gated on the setting, so
+      // relying on the ambient default makes the two assertions below depend on
+      // whatever ran before this file.
+      const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater({
+        enabled: true, channel: "latest", nightlyAck: true, feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+      failUntilExhausted(updaterEvents);
+
+      const shown = statusMessages().at(-1)?.payload as { state: string; message?: string };
+      expect(shown.state).toBe("retry-scheduled");
+      expect(shown.message).toContain("keep trying in the background");
+      // The manual routes are offered, but never as the only way out.
+      expect(shown.message).toContain("check for updates again");
+
+      // Inside the backoff window: still paused, so the app is not pulling the
+      // archive again every 15 minutes.
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      await module.startAutoUpdates(stateDir);
+      expect(autoUpdater.autoDownload).toBe(false);
+
+      // Past it: the retry resumes on its own, with no user action at all.
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      await module.startAutoUpdates(stateDir);
+      expect(autoUpdater.autoDownload).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -4401,12 +4528,14 @@ it("keeps timed-out native preparation non-installable even after a late event",
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
     await vi.advanceTimersByTimeAsync(3 * 60_000);
-    expect(module.getUpdateStatus()).toMatchObject({ state: "error", staged: { ready: false } });
-    expect(module.getUpdateStatus().message).toContain("nothing changed");
-    await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing changed/);
+    // A stall is AO's to retry, not the user's to fix, so it reports calmly even
+    // though Squirrel's missing cancel API means the retry waits for a restart.
+    expect(module.getUpdateStatus()).toMatchObject({ state: "retry-scheduled", staged: { ready: false } });
+    expect(module.getUpdateStatus().message).toContain("nothing on your Mac changed");
+    await expect(module.quitAndInstallUpdate()).rejects.toThrow(/nothing on your Mac changed/);
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
     nativeUpdaterEvents.get("update-downloaded")?.({}, "notes", "2.0.0");
-    expect(module.getUpdateStatus().state).toBe("error");
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
   } finally { restore(); vi.useRealTimers(); }
 });
 
@@ -4423,10 +4552,12 @@ it("gives the signature-verification plateau a grace before calling a stall", as
     // Past the 90s inactivity window but still inside the verification grace:
     // the plateau alone must not be treated as a stall yet.
     await vi.advanceTimersByTimeAsync(2 * 60_000);
-    expect(module.getUpdateStatus().state).not.toBe("error");
+    // Asserted positively: "not error" would also hold for the stall state this
+    // now reports, so it would pass even if the grace were removed entirely.
+    expect(module.getUpdateStatus().state).toBe("preparing");
     // Past the grace with the plateau unbroken: now it is a stall.
     await vi.advanceTimersByTimeAsync(2 * 60_000);
-    expect(module.getUpdateStatus()).toMatchObject({ state: "error", staged: { ready: false } });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "retry-scheduled", staged: { ready: false } });
   } finally { restore(); vi.useRealTimers(); }
 });
 
