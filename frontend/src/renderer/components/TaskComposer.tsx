@@ -5,17 +5,19 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { clientForHost, connectedHosts, subscribeConnectedHosts } from "../lib/host-clients";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	cacheAgentReadiness,
 	ensureAgentReadiness,
 	useAgentReadinessQuery,
+	type AgentReadiness,
 } from "../hooks/useAgentReadinessQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
 import { useSettings } from "../hooks/useSettings";
@@ -71,11 +73,15 @@ const CHAT_PREFLIGHT_CODES = new Set([
 
 const READINESS_RECONCILE_CODES = new Set(["AGENT_BINARY_NOT_FOUND", "AGENT_AUTH_REQUIRED", "CHAT_AUTH_REQUIRED"]);
 
-function cancelTaskPreparation(token: string): void {
+function cancelTaskPreparation(token: string, hostId?: string): void {
 	if (!token) return;
-	void apiClient.DELETE("/api/v1/task-preparations/{token}", {
-		params: { path: { token } },
-	});
+	try {
+		void (hostId ? clientForHost(hostId) : apiClient).DELETE("/api/v1/task-preparations/{token}", {
+			params: { path: { token } },
+		});
+	} catch {
+		// A disconnected host will reclaim this preparation on its own TTL.
+	}
 }
 
 class TaskCreateError extends Error {
@@ -98,6 +104,7 @@ function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | 
 
 export type TaskComposerProps = {
 	projectId?: string;
+	hostId?: string;
 	onCreated: (sessionId: string) => void;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
@@ -106,6 +113,7 @@ export type TaskComposerProps = {
 
 export function TaskComposer({
 	projectId,
+	hostId,
 	onCreated,
 	onDirtyChange,
 	onSubmittingChange,
@@ -119,6 +127,8 @@ export function TaskComposer({
 			: "";
 	}, [t]);
 	const queryClient = useQueryClient();
+	const remoteConnections = useSyncExternalStore(subscribeConnectedHosts, connectedHosts);
+	const hostConnected = !hostId || remoteConnections.includes(hostId);
 	const [isPromptDirty, setIsPromptDirty] = useState(false);
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
@@ -149,9 +159,9 @@ export function TaskComposer({
 	const selectedProvider = useSandboxProviderStore((s) => s.selectedProvider);
 	const cloudProjects = useCloudProjectsQuery();
 	const cloudProject = (cloudProjects.data ?? []).find((project) => project.id === projectId);
-	const isCloudProject = Boolean(cloudProject);
+	const isCloudProject = !hostId && Boolean(cloudProject);
 	const isStandalone = projectId === STANDALONE_WORKSPACE_ID;
-	const preferenceContext = projectId ?? "";
+	const preferenceContext = hostId ? `${hostId}:${projectId ?? ""}` : projectId ?? "";
 	const persistedPreferences = useMemo(
 		() => readTaskComposerPreferences(preferenceContext),
 		[preferenceContext],
@@ -191,11 +201,11 @@ export function TaskComposer({
 		[cloudClient, cloudOrg, queryClient, selectedProvider, t],
 	);
 
-	const createLocalTask = useCallback(
+	const createDaemonTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
 			try {
-				const { data, error } = await apiClient.POST("/api/v1/orchestrators/delegate", {
+				const { data, error } = await (hostId ? clientForHost(hostId) : apiClient).POST("/api/v1/orchestrators/delegate", {
 					headers: input.attachments?.length ? { "X-AO-Attachment-Upload": "1" } : undefined,
 					body: {
 						projectId: input.projectId,
@@ -228,8 +238,13 @@ export function TaskComposer({
 					input.agent
 				) {
 					try {
-						const completed = await ensureAgentReadiness([input.agent], "launch");
-						cacheAgentReadiness(queryClient, completed);
+						if (hostId) {
+							const response = await clientForHost(hostId).POST("/api/v1/agents/readiness/ensure", { body: { agentIds: [input.agent], purpose: "launch" } });
+							if (!response.error && response.data) queryClient.setQueryData(["agent-readiness", hostId], response.data);
+						} else {
+							const completed = await ensureAgentReadiness([input.agent], "launch");
+							cacheAgentReadiness(queryClient, completed);
+						}
 					} catch {
 						// Preserve the launch error when opportunistic reconciliation fails.
 					}
@@ -237,14 +252,14 @@ export function TaskComposer({
 				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
 			}
 		},
-		[queryClient, t],
+		[hostId, queryClient, t],
 	);
 
 	const createStandaloneTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { scope: "standalone" });
 			const displayName = input.brief.trim().slice(0, 100) || input.agent || "Standalone agent";
-			const { data, error } = await apiClient.POST("/api/v1/sessions", {
+			const { data, error } = await (hostId ? clientForHost(hostId) : apiClient).POST("/api/v1/sessions", {
 				headers: input.attachments?.length ? { "X-AO-Attachment-Upload": "1" } : undefined,
 				body: {
 					kind: "worker",
@@ -265,22 +280,22 @@ export function TaskComposer({
 			void captureRendererEvent("ao.renderer.task_create_succeeded", { scope: "standalone" });
 			return data.session.id;
 		},
-		[t],
+		[hostId, t],
 	);
 
 	const createTask = useCallback(
 		(input: CreateTaskInput): Promise<string> =>
-			isStandalone ? createStandaloneTask(input) : isCloudProject ? createCloudTask(input) : createLocalTask(input),
-		[isStandalone, isCloudProject, createStandaloneTask, createCloudTask, createLocalTask],
+			isStandalone ? createStandaloneTask(input) : isCloudProject ? createCloudTask(input) : createDaemonTask(input),
+		[isStandalone, isCloudProject, createStandaloneTask, createCloudTask, createDaemonTask],
 	);
 
 	const projectQuery = useQuery({
 		// A cloud project lives in the control plane, not the local daemon, so this
 		// local lookup would 404 (PROJECT_NOT_FOUND); skip it for cloud projects.
-		queryKey: ["project", projectId],
+		queryKey: hostId ? ["project", hostId, projectId] : ["project", projectId],
 		enabled: Boolean(projectId) && !isCloudProject && !isStandalone,
 		queryFn: async () => {
-			const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
+			const { data, error: apiError } = await (hostId ? clientForHost(hostId) : apiClient).GET("/api/v1/projects/{id}", {
 				params: { path: { id: projectId ?? "" } },
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError));
@@ -291,16 +306,22 @@ export function TaskComposer({
 	useEffect(() => {
 		const id = projectQuery.data?.id;
 		if (!id) return;
+		let client;
+		try {
+			client = hostId ? clientForHost(hostId) : apiClient;
+		} catch {
+			return;
+		}
 		let disposed = false;
 		taskPreparationRef.current = "";
-		void apiClient.POST("/api/v1/projects/{id}/tasks/prepare", {
+		void client.POST("/api/v1/projects/{id}/tasks/prepare", {
 			params: { path: { id } },
 		}).then(
 			({ data }) => {
 				const token = data?.taskPreparation ?? "";
 				if (!token) return;
 				if (disposed) {
-					cancelTaskPreparation(token);
+					cancelTaskPreparation(token, hostId);
 					return;
 				}
 				taskPreparationRef.current = token;
@@ -311,11 +332,30 @@ export function TaskComposer({
 			disposed = true;
 			const token = taskPreparationRef.current;
 			taskPreparationRef.current = "";
-			cancelTaskPreparation(token);
+			cancelTaskPreparation(token, hostId);
 		};
-	}, [projectQuery.data?.id]);
-	const agentsQuery = useAgentReadinessQuery();
-	const { settings } = useSettings();
+	}, [hostId, projectQuery.data?.id]);
+	const agentsQuery = useAgentReadinessQuery(!hostId);
+	const remoteAgentsQuery = useQuery({
+		queryKey: ["agent-readiness", hostId],
+		enabled: Boolean(hostId),
+		queryFn: async (): Promise<AgentReadiness> => {
+			const { data, error } = await clientForHost(hostId ?? "").POST("/api/v1/agents/readiness/ensure", { body: { purpose: "display" } });
+			if (error) throw new Error(apiErrorMessage(error));
+			return data as AgentReadiness;
+		},
+	});
+	const { settings: localSettings } = useSettings();
+	const remoteSettingsQuery = useQuery({
+		queryKey: ["settings", hostId],
+		enabled: Boolean(hostId),
+		queryFn: async () => {
+			const { data, error } = await clientForHost(hostId ?? "").GET("/api/v1/settings");
+			if (error) throw new Error(apiErrorMessage(error));
+			return data;
+		},
+	});
+	const settings = hostId ? remoteSettingsQuery.data : localSettings;
 	// The composer preselects the agent and model a spawn would actually use
 	// instead of parking the controls on a "default" label the user has to
 	// remember. Both resolved values remain directly editable.
@@ -333,7 +373,7 @@ export function TaskComposer({
 	const projectWorkerAgent = projectConfig?.worker?.agent ?? "";
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const configuredProjectAgent = projectWorkerAgent || globalDefaultAgent;
-	const agentCatalog = agentsQuery.data;
+	const agentCatalog = hostId ? remoteAgentsQuery.data : agentsQuery.data;
 	// Cloud projects only support the three control-plane agents (claude-code,
 	// codex, cursor), with readiness derived from the org's provider connections.
 	const cloudConnectionsQuery = useProviderConnections(isCloudProject ? cloudOrg?.id : undefined);
@@ -370,15 +410,16 @@ export function TaskComposer({
 		? defaultWorkerMode
 		: "";
 	// Shares the picker's query key, so this is the same fetch, not a second one.
-	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProjectId));
+	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProjectId, hostId));
 	const revalidationQuery = useQuery({
 		queryKey: [
 			"agent-model-revalidation",
+			hostId ?? "",
 			selectedAgent,
 			modelsProjectId,
 			modelCatalogQuery.data?.validatedAt ?? "",
 		],
-		queryFn: () => revalidateAgentModels(selectedAgent, modelsProjectId),
+		queryFn: () => revalidateAgentModels(selectedAgent, modelsProjectId, hostId),
 		enabled: selectedAgent !== "" && modelCatalogQuery.data?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -386,11 +427,11 @@ export function TaskComposer({
 	useEffect(() => {
 		if (revalidationQuery.data) {
 			queryClient.setQueryData(
-				agentModelsQueryKey(selectedAgent, modelsProjectId),
+				agentModelsQueryKey(selectedAgent, modelsProjectId, hostId),
 				revalidationQuery.data,
 			);
 		}
-	}, [modelsProjectId, queryClient, revalidationQuery.data, selectedAgent]);
+	}, [hostId, modelsProjectId, queryClient, revalidationQuery.data, selectedAgent]);
 	const modelWarning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
@@ -490,13 +531,20 @@ export function TaskComposer({
 				onEffortReset: setEffort,
 			};
 	const canSubmit =
+		hostConnected &&
 		Boolean(projectId) &&
 		(!isStandalone || selectedAgent !== "") &&
-		(isCloudProject || isStandalone || projectQuery.data !== undefined);
+		(!hostId || selectedAgent !== "") &&
+		(isCloudProject || isStandalone || projectQuery.data !== undefined) &&
+		(!hostId || (remoteAgentsQuery.isSuccess && remoteSettingsQuery.isSuccess));
+	const remoteLoadError = !hostId ? undefined : !hostConnected ? t("remote.hostOffline") :
+		[projectQuery.error, remoteAgentsQuery.error, remoteSettingsQuery.error]
+			.find((cause): cause is Error => cause instanceof Error)?.message ??
+			(remoteAgentsQuery.isSuccess && !agentCatalog?.agents.some(isReadyAgent) ? t("remote.noReadyAgent") : undefined);
 	const refreshSelectedModels = useCallback(async () => {
-		const refreshed = await refreshAgentModels(selectedAgent, modelsProjectId);
-		queryClient.setQueryData(agentModelsQueryKey(selectedAgent, modelsProjectId), refreshed);
-	}, [modelsProjectId, queryClient, selectedAgent]);
+		const refreshed = await refreshAgentModels(selectedAgent, modelsProjectId, hostId);
+		queryClient.setQueryData(agentModelsQueryKey(selectedAgent, modelsProjectId, hostId), refreshed);
+	}, [hostId, modelsProjectId, queryClient, selectedAgent]);
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
 	}, [agentTouched, defaultWorkerAgent]);
@@ -539,8 +587,13 @@ export function TaskComposer({
 		try {
 			if (!isCloudProject && selectedAgent) {
 				try {
-					const completed = await ensureAgentReadiness([selectedAgent], "launch");
-					cacheAgentReadiness(queryClient, completed);
+					if (hostId) {
+						const response = await clientForHost(hostId).POST("/api/v1/agents/readiness/ensure", { body: { agentIds: [selectedAgent], purpose: "launch" } });
+						if (!response.error && response.data) queryClient.setQueryData(["agent-readiness", hostId], response.data);
+					} else {
+						const completed = await ensureAgentReadiness([selectedAgent], "launch");
+						cacheAgentReadiness(queryClient, completed);
+					}
 				} catch {
 					// This check lacks the selected project's cwd and environment, so it
 					// is advisory. The project-aware launch path remains authoritative.
@@ -565,8 +618,8 @@ export function TaskComposer({
 			// DELETE is intentionally idempotent after a successful claim. It also
 			// reclaims a preparation that resolved after this submission captured its
 			// token, instead of leaving that unused worktree until TTL expiry.
-			cancelTaskPreparation(submittedPreparation);
-			cancelTaskPreparation(preparationAfterSubmit);
+			cancelTaskPreparation(submittedPreparation, hostId);
+			cancelTaskPreparation(preparationAfterSubmit, hostId);
 			if (selectedAgent) {
 				const preference: TaskComposerAgentPreference = {
 					model: selectedModel ? requestedModel ?? "" : "",
@@ -621,7 +674,7 @@ export function TaskComposer({
 				value: selectedAgent,
 				agents: isCloudProject ? cloudAgents : agentCatalog?.agents,
 				disabled:
-					isSubmitting || (!isCloudProject && agentsQuery.isFetching && agentCatalog === undefined),
+					isSubmitting || (!isCloudProject && (hostId ? remoteAgentsQuery.isFetching : agentsQuery.isFetching) && agentCatalog === undefined),
 				onChange: (value) => {
 					if (selectedAgent) {
 						agentDrafts[selectedAgent] = {
@@ -679,7 +732,7 @@ export function TaskComposer({
 			}}
 			submission={{
 				showFallbackAction: fallbackAction !== undefined,
-				error,
+				error: error ?? remoteLoadError ?? undefined,
 				isSubmitting,
 				modelWarning,
 				onFallbackAction: (brief) =>
@@ -688,7 +741,7 @@ export function TaskComposer({
 						: submitTask(brief, "tui")),
 				onSubmit: (brief) => void submitTask(brief, selectedAgent === "unreal-agent" ? "chat" : requiresTuiFallback ? "tui" : undefined),
 			}}
-			renderAgentControl={(control) => <DesktopAgentControl {...control} manageAgents={!isCloudProject} />}
+			renderAgentControl={(control) => <DesktopAgentControl {...control} manageAgents={!isCloudProject && !hostId} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} onRefresh={refreshSelectedModels}
 				showFollowAgentAction={Boolean(catalogDefaultOption || !isConcreteModelID(projectModelOrMode))}
 				tuning={modelTuning} />}

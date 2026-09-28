@@ -467,6 +467,19 @@ export function useRemoteWorkspaces(options: WorkspaceSubscriptionOptions = {}) 
 	};
 }
 
+/** A host-qualified project detail query for the board. It shares the remote
+ * session query's key, so session mutations refresh both detail surfaces. */
+export function useRemoteProjectQuery(hostId: string, projectId: string) {
+	return useQuery({
+		queryKey: remoteWorkspaceQueryKey(hostId),
+		queryFn: () => fetchRemoteWorkspaces(hostId),
+		select: (workspaces) => workspaces.find((workspace) => workspace.id === projectId),
+		enabled: Boolean(hostId && projectId),
+		retry: 1,
+		refetchInterval: 2_000,
+	});
+}
+
 export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const local = useQuery({ ...workspaceQueryOptions, subscribed: options.subscribed });
 	const cloud = useCloudProjectsQuery(options);

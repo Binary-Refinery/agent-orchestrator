@@ -437,6 +437,10 @@ type SidebarProps = {
 	remoteHosts?: RemoteHost[];
 	onStartRemoteHost?: (hostId: string) => void;
 	onAddRemoteProject?: (hostId: string) => void;
+	onOpenRemoteProject?: (hostId: string, projectId: string) => void;
+	onNewRemoteTask?: (hostId: string, projectId: string) => void;
+	onOpenRemoteOrchestrator?: (hostId: string, projectId: string) => void;
+	onConfigureRemoteProject?: (hostId: string, projectId: string) => void;
 	onRemoveRemoteProject?: (hostId: string, projectId: string) => Promise<void>;
 	onRetryRemoteHosts?: () => void;
 	remoteWorkspaces?: WorkspaceSummary[];
@@ -544,6 +548,10 @@ export function Sidebar({
 	remoteHosts = [],
 	onStartRemoteHost = () => undefined,
 	onAddRemoteProject = () => undefined,
+	onOpenRemoteProject = () => undefined,
+	onNewRemoteTask = () => undefined,
+	onOpenRemoteOrchestrator = () => undefined,
+	onConfigureRemoteProject = () => undefined,
 	onRemoveRemoteProject = async () => undefined,
 	onRetryRemoteHosts = () => undefined,
 	remoteWorkspaces = [],
@@ -1043,6 +1051,10 @@ export function Sidebar({
 											activeSessionId={selection.activeRemoteSessionId}
 											onStart={onStartRemoteHost}
 											onAddProject={onAddRemoteProject}
+											onOpenProject={onOpenRemoteProject}
+											onNewTask={onNewRemoteTask}
+											onOrchestrator={onOpenRemoteOrchestrator}
+											onConfigure={onConfigureRemoteProject}
 											onRemoveProject={onRemoveRemoteProject}
 											onRetry={onRetryRemoteHosts}
 											onOpenSession={(hostId, projectId, sessionId) => {

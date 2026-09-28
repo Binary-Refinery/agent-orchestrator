@@ -21,10 +21,13 @@ export function useRemoteHosts(): { hosts: RemoteHost[]; refresh: () => Promise<
 	const enabledRef = useRef(enabled);
 	enabledRef.current = enabled;
 	const [hosts, setHosts] = useState<RemoteHost[]>([]);
+	const refreshGeneration = useRef(0);
 	const refresh = useCallback(async () => {
 		if (!enabledRef.current) return;
+		const generation = ++refreshGeneration.current;
+		const current = () => enabledRef.current && refreshGeneration.current === generation;
 		const saved = await aoBridge.remotes.list();
-		if (!enabledRef.current) return;
+		if (!current()) return;
 		setHosts(saved.map((host) => ({ ...host, status: "connecting" })));
 		await Promise.all(saved.map(async (savedHost) => {
 			let status: RemoteHost["status"] = "connected";
@@ -37,8 +40,11 @@ export function useRemoteHosts(): { hosts: RemoteHost[]; refresh: () => Promise<
 				}
 			} catch {
 				status = "offline";
+				if (!current()) return;
+				// A failed reconnect must not leave the old proxy marked connected.
+				try { await disconnectHost(savedHost.hostId); } catch { /* Keep the offline state visible. */ }
 			}
-			if (!enabledRef.current) return;
+			if (!current()) return;
 			setHosts((current) => current.map((host) => host.url === savedHost.url ? { ...host, hostId: connectedHostId, status } : host));
 		}));
 	}, []);

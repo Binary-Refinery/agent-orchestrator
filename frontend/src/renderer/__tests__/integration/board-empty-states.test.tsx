@@ -179,6 +179,7 @@ function renderBoard(ui: ReactNode) {
 		cloneProject: cloneProjectMock,
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
+		openRemoteProjectSettings: vi.fn(),
 	};
 	return render(
 		<QueryClientProvider client={lastQueryClient}>
@@ -242,6 +243,7 @@ describe("global board first launch", () => {
 			cloneProject: cloneProjectMock,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
+			openRemoteProjectSettings: vi.fn(),
 		};
 		render(
 			<QueryClientProvider client={lastQueryClient}>
@@ -442,6 +444,7 @@ describe("global board first launch", () => {
 			cloneProject: cloneProjectMock,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
+			openRemoteProjectSettings: vi.fn(),
 		};
 		render(
 			<QueryClientProvider client={lastQueryClient}>

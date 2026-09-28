@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RemoteSessionRoute } from "../components/RemoteSessionView";
 import { refKey } from "../lib/hosts";
 
-export const Route = createFileRoute("/_shell/host/$hostId/project/$projectId/session/$sessionId")({
+export const Route = createFileRoute("/_shell/host/$hostId/project/$projectId_/session/$sessionId")({
 	component: HostProjectSessionRoute,
 });
 

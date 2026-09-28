@@ -55,14 +55,14 @@ import {
 } from "../lib/platform";
 import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
-import { CLOUD_PROJECT_KIND, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { CLOUD_PROJECT_KIND, hasConfiguredOrchestratorAgent, newestActiveOrchestrator, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
-import * as Dialog from "@radix-ui/react-dialog";
-import { RemoteSpawnSession } from "../components/RemoteSpawnSession";
 import { RemoteAddProjectDialog } from "../components/RemoteAddProjectDialog";
+import { RemoteProjectAgentsDialog } from "../components/RemoteProjectAgentsDialog";
 import { remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { clientForHost } from "../lib/host-clients";
+import { openRemoteOrchestrator } from "../lib/remote-orchestrator";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -187,8 +187,8 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const { hosts: remoteHosts, refresh: refreshRemoteHosts } = useRemoteHosts();
 	const { data: remoteWorkspaces, failedHostIds: remoteFailedHostIds, loadedProjectHostIds } = useRemoteWorkspaces();
-	const [remoteStartHostId, setRemoteStartHostId] = useState<string | null>(null);
 	const [remoteAddProjectHostId, setRemoteAddProjectHostId] = useState<string | null>(null);
+	const [remoteProjectSettings, setRemoteProjectSettings] = useState<{ hostId: string; projectId: string } | null>(null);
 	// Global shortcut listeners need the latest workspace list, but recreating
 	// those subscriptions for every streamed activity update is avoidable.
 	const workspacesRef = useRef(workspaces);
@@ -358,7 +358,7 @@ function ShellLayout() {
 	// rounded center panel. Settings owns its complete frame and remains
 	// self-framed.
 	const selfFramedCenterPanel = isSettingsRoute;
-	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform || Boolean(routeParams.hostId);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
@@ -745,6 +745,21 @@ function ShellLayout() {
 		void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(hostId) });
 		if (selectedProject) void navigate({ to: "/" });
 	}, [navigate, queryClient, remoteWorkspaces, routeParams.hostId, routeParams.projectId, routeParams.sessionId]);
+	const openRemoteProjectOrchestrator = useCallback(async (hostId: string, projectId: string) => {
+		const workspace = remoteWorkspaces.find((item) => item.hostId === hostId && item.id === projectId);
+		if (!workspace) return;
+		if (!hasConfiguredOrchestratorAgent(workspace)) {
+			setRemoteProjectSettings({ hostId, projectId });
+			return;
+		}
+		try {
+			const sessionId = await openRemoteOrchestrator(hostId, projectId, newestActiveOrchestrator(workspace.sessions));
+			await queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(hostId) });
+			void navigate({ to: "/host/$hostId/project/$projectId/session/$sessionId", params: { hostId, projectId, sessionId } });
+		} catch (cause) {
+			showGlobalToast(t("shell.couldNotSpawn"), cause instanceof Error ? cause.message : t("shell.couldNotSpawn"), "error");
+		}
+	}, [navigate, queryClient, remoteWorkspaces, showGlobalToast, t]);
 
 	const restartOrchestrator = useCallback(
 		async (projectId: string, mode?: "chat" | "tui", approvalMode?: "bypass-permissions") => {
@@ -887,7 +902,8 @@ function ShellLayout() {
 		() =>
 			aoBridge.app.onNewSessionShortcut(() => {
 			if (routeParams.hostId) {
-				setRemoteStartHostId(routeParams.hostId);
+				if (routeParams.projectId) requestNewTask(routeParams.projectId, routeParams.hostId);
+				else requestNewTask(STANDALONE_WORKSPACE_ID, routeParams.hostId);
 				return;
 			}
 				if (scopedProjectId) {
@@ -896,7 +912,7 @@ function ShellLayout() {
 					requestNewTask(STANDALONE_WORKSPACE_ID);
 				}
 			}),
-		[routeParams.hostId, scopedProjectId, requestNewTask],
+		[routeParams.hostId, routeParams.projectId, scopedProjectId, requestNewTask],
 	);
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
@@ -996,6 +1012,7 @@ function ShellLayout() {
 			cloneProject,
 			createProject,
 			initializeProjectRepository,
+			openRemoteProjectSettings: (hostId: string, projectId: string) => setRemoteProjectSettings({ hostId, projectId }),
 			validateImport,
 		}),
 		[
@@ -1044,25 +1061,21 @@ function ShellLayout() {
 					hostId={remoteAddProjectHostId}
 					hostLabel={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.label ?? remoteAddProjectHostId}
 					connected={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.status === "connected"}
-					onCreated={() => { void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteAddProjectHostId) }); }}
+					onCreated={(projectId, ready) => {
+						void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteAddProjectHostId) });
+						if (ready) void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId: remoteAddProjectHostId, projectId } });
+					}}
 					onOpenChange={(open) => { if (!open) setRemoteAddProjectHostId(null); }}
 				/>}
-				<Dialog.Root open={remoteStartHostId !== null} onOpenChange={(open) => { if (!open) setRemoteStartHostId(null); }}>
-					<Dialog.Portal>
-						<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-							<Dialog.Title className="settings-dialog-title px-4 pt-3">{remoteStartHostId
-								? t("remote.startOn", { label: remoteHosts.find((host) => host.hostId === remoteStartHostId)?.label ?? remoteStartHostId })
-								: t("remote.startTitle")}</Dialog.Title>
-							<Dialog.Description className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">{t("remote.startDescription")}</Dialog.Description>
-							{remoteStartHostId && <RemoteSpawnSession key={remoteStartHostId} hostId={remoteStartHostId} onCreated={(sessionId) => {
-								void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteStartHostId) });
-								void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: remoteStartHostId, sessionId } });
-								setRemoteStartHostId(null);
-							}} />}
-						</Dialog.Content>
-					</Dialog.Portal>
-				</Dialog.Root>
+				{remoteProjectSettings && <RemoteProjectAgentsDialog
+					key={`${remoteProjectSettings.hostId}:${remoteProjectSettings.projectId}`}
+					hostId={remoteProjectSettings.hostId}
+					projectId={remoteProjectSettings.projectId}
+					hostLabel={remoteHosts.find((host) => host.hostId === remoteProjectSettings.hostId)?.label ?? remoteProjectSettings.hostId}
+					connected={remoteHosts.find((host) => host.hostId === remoteProjectSettings.hostId)?.status === "connected"}
+					onSaved={() => { void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteProjectSettings.hostId) }); }}
+					onOpenChange={(open) => { if (!open) setRemoteProjectSettings(null); }}
+				/>}
 				<GlobalToast />
 				<SettingsDialog />
 				<RestartToUpdateDialog />
@@ -1142,8 +1155,12 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 						remoteHosts={remoteHosts}
-						onStartRemoteHost={setRemoteStartHostId}
+						onStartRemoteHost={(hostId) => requestNewTask(STANDALONE_WORKSPACE_ID, hostId)}
 						onAddRemoteProject={setRemoteAddProjectHostId}
+						onOpenRemoteProject={(hostId, projectId) => { void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId, projectId } }); }}
+						onNewRemoteTask={(hostId, projectId) => requestNewTask(projectId, hostId)}
+						onOpenRemoteOrchestrator={(hostId, projectId) => { void openRemoteProjectOrchestrator(hostId, projectId); }}
+						onConfigureRemoteProject={(hostId, projectId) => setRemoteProjectSettings({ hostId, projectId })}
 						onRemoveRemoteProject={removeRemoteProject}
 						onRetryRemoteHosts={() => {
 							void refreshRemoteHosts();
