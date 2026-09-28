@@ -664,7 +664,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// This component answers color-scheme queries itself so the reply
 				// follows the app theme, including theme style. xterm 6.1 also
 				// answers them from palette luminance; leave that off.
-				colorSchemeQuery: false,
+				vtExtensions: { colorSchemeQuery: false },
 				theme: props.theme === "dark" ? dark : light,
 			});
 		} catch (error) {
