@@ -1368,7 +1368,11 @@ async function runSerializedUpdaterOperation(
   requestId?: string,
 ): Promise<void> {
   const run = async () => {
-    if (nativePreparationBlocked) throw nativePreparationBlocked;
+    // The latch stops AO STAGING again, which is the thing Squirrel cannot be
+    // asked to cancel. Cleanup is not staging, and the stall handler queues a
+    // purge immediately after setting the latch, so gating that too made the
+    // purge unreachable and left the failed archive to be replayed next launch.
+    if (nativePreparationBlocked && operation !== "cache-clear") throw nativePreparationBlocked;
     // A completed proxy transfer is not completed native staging. Holding this
     // gate prevents a late native event for A being attributed to a newer B.
     if (nativePreparation) await nativePreparation.promise;
@@ -1687,7 +1691,7 @@ const MAX_FAST_INSTALL_ATTEMPTS = 3;
 /** Spacing between attempts once the fast ones are spent. */
 const RETRY_BACKOFF_MS = 60 * 60 * 1000;
 
-const RETRY_BACKOFF_LABEL = "an hour";
+const RETRY_BACKOFF_LABEL = "hour";
 
 /** How long until the next attempt, as the user-facing phrase. */
 function nextAttemptLabel(attempt: number): string {
@@ -2528,7 +2532,15 @@ export async function checkForUpdatesNow(
       // to install arrives here too, after the handler above has reported it
       // properly. Overwriting would replace the calm line with the raw Squirrel
       // text on exactly the path the user triggered by hand.
-      console.debug("manual check: install failure already reported, keeping it:", err);
+      //
+      // Re-broadcast rather than drop it: the renderer releases the Check button
+      // on a status carrying THIS request's id, so swallowing outright left the
+      // button spinning until the watchdog. Same message, this request's stamp.
+      console.debug("manual check: install failure already reported, restamping it:", err);
+      broadcastCompletedCheck({
+        ...lastStatus,
+        ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
+      });
     } else {
       broadcastCompletedCheck({
         state: "error",

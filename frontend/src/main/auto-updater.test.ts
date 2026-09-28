@@ -4258,6 +4258,36 @@ describe("staged install rejection", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("releases the Check button when a second delivery lands on the manual path", async () => {
+    // Keeping the calm message is only half the job. The renderer clears its
+    // pending manual check on a status carrying THAT request's id, so simply
+    // dropping the duplicate left the button spinning until the watchdog.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const consoleDebugSpy = vi
+      .spyOn(console, "debug")
+      .mockImplementation(() => undefined);
+    const transfer = deferred();
+    const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater();
+
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      updaterEvents.get("error")?.(rejection);
+      transfer.reject(rejection);
+      return Promise.resolve({ downloadPromise: transfer.promise });
+    });
+    await module.checkForUpdatesNow(stateDir, { requestId: "req-1" });
+    await flushMicrotasks();
+
+    const last = statusMessages().at(-1)?.payload as { state: string; requestId?: string; message?: string };
+    expect(last.requestId).toBe("req-1");
+    expect(last.state).toBe("retry-scheduled");
+    expect(last.message).not.toMatch(/did not pass validation|static code/i);
+    consoleDebugSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
   it("keeps the calm line when the same rejection also rejects the download promise", async () => {
     // MacUpdater registers `nativeUpdater.once("error", reject)` on the download
     // promise AND re-emits the error, so one Squirrel failure arrives twice by
@@ -4361,15 +4391,24 @@ describe("staged install rejection", () => {
       // The manual routes are offered, but never as the only way out.
       expect(shown.message).toContain("check for updates again");
 
+      // The clock is moved WITHOUT running timers. advanceTimersByTimeAsync also
+      // fires the periodic check, which sets automaticCheckInFlight and makes the
+      // startAutoUpdates below an early-returning no-op about half the time,
+      // leaving autoDownload at its stale value. The backoff is measured from
+      // Date.now(), so moving the clock is all this needs.
+      const base = Date.now();
+
       // Inside the backoff window: still paused, so the app is not pulling the
       // archive again every 15 minutes.
-      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      vi.setSystemTime(base + 30 * 60_000);
       await module.startAutoUpdates(stateDir);
+      await flushMicrotasks();
       expect(autoUpdater.autoDownload).toBe(false);
 
       // Past it: the retry resumes on its own, with no user action at all.
-      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      vi.setSystemTime(base + 61 * 60_000);
       await module.startAutoUpdates(stateDir);
+      await flushMicrotasks();
       expect(autoUpdater.autoDownload).toBe(true);
     } finally {
       consoleErrorSpy.mockRestore();
@@ -4617,4 +4656,56 @@ it("falls back to the 2 GiB cap when the archive size is unknown", async () => {
     updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
     expect(required.at(-1)).toBe(2 * 1024 * 1024 * 1024);
   } finally { restore(); }
+});
+
+it("purges the archive when preparation stalls, so the next launch re-downloads", async () => {
+  // The stall handler sets the no-more-staging latch and THEN queues the purge.
+  // The serialized queue used to reject every operation while that latch was
+  // set, including this one, so the purge never ran and the next launch replayed
+  // a zip that is still checksum-valid but cannot be extracted.
+  vi.useFakeTimers();
+  const restore = stubProcess("darwin", process.execPath);
+  try {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+    module.__setStagingProbesForTesting({ readStagingBytes: () => 1 });
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalled();
+  } finally { restore(); vi.useRealTimers(); }
+});
+
+it("answers a manual check made after a stall instead of silently dropping it", async () => {
+  // Once preparation stalls the latch never clears in this process, so EVERY
+  // later manual check throws that same error before anything is broadcast. The
+  // renderer only releases its Check button on a status carrying that request's
+  // id, so dropping the error left the button spinning for the whole watchdog.
+  vi.useFakeTimers();
+  const restore = stubProcess("darwin", process.execPath);
+  const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const consoleDebugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+  try {
+    const { module, updaterEvents, statusMessages } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+    module.__setStagingProbesForTesting({ readStagingBytes: () => 1 });
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(module.getUpdateStatus().state).toBe("retry-scheduled");
+
+    const before = statusMessages().length;
+    await module.checkForUpdatesNow(stateDir, { requestId: "req-after-stall" });
+    await flushMicrotasks();
+
+    const after = statusMessages().slice(before).map((m) => m.payload as { requestId?: string; state: string });
+    expect(after.some((s) => s.requestId === "req-after-stall")).toBe(true);
+    // ...and the answer is still the calm standing status, not a fresh red error.
+    expect(after.at(-1)?.state).toBe("retry-scheduled");
+  } finally {
+    consoleDebugSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    restore();
+    vi.useRealTimers();
+  }
 });
