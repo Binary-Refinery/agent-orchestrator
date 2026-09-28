@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { shouldReconcileUpdateStatus, type UpdateStatus } from "../../main/update-settings";
+import type { UpdateStatus } from "../../main/update-settings";
+import { shouldReconcileUpdateStatus } from "../../shared/update-state";
 import { aoBridge } from "../lib/bridge";
 
 let current: UpdateStatus = { state: "idle" };

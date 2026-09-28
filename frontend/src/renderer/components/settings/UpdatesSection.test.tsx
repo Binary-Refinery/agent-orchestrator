@@ -3,7 +3,8 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { MAX_MANUAL_CHECK_MS, UpdatesSection } from "./UpdatesSection";
 import { useUiStore } from "../../stores/ui-store";
-import { UPDATE_CHECK_TIMEOUT_MS, type UpdateStatus } from "../../../main/update-settings";
+import type { UpdateStatus } from "../../../main/update-settings";
+import { UPDATE_CHECK_TIMEOUT_MS } from "../../../shared/update-state";
 
 const {
 	updGetStatus,
