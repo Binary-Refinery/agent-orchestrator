@@ -4003,6 +4003,15 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+	// The public Send surface is interactive for terminal sessions. Chat keeps
+	// its established relay attribution unless a trusted caller supplies the
+	// explicit user-authored fact through SendWithOptions.
+	return m.SendWithOptions(ctx, id, message, attachment, ports.MessageDeliveryOptions{AuthoredByUser: true})
+}
+
+// SendWithOptions delivers a message with caller-supplied authorship facts that
+// are independent of the mechanism AO uses to carry it.
+func (m *Manager) SendWithOptions(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment, options ports.MessageDeliveryOptions) error {
 	if attachment != nil {
 		// Reuses StageAttachments rather than a bespoke writer: it already owns the
 		// empty-workspace guard (refusing beats writing under the daemon's cwd),
@@ -4014,7 +4023,7 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string,
 		}
 		message = appendAttachmentReferences(message, refs)
 	}
-	return m.send(ctx, id, message, "")
+	return m.send(ctx, id, message, "", options.AuthoredByUser)
 }
 
 // SendSemantic delivers an internal message and returns only after the target
@@ -4030,7 +4039,7 @@ func (m *Manager) SendSemantic(ctx context.Context, id domain.SessionID, message
 		return ErrNotFound
 	}
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
-		handled, sendErr := m.sendChat(ctx, id, message, clientMessageID)
+		handled, sendErr := m.sendChat(ctx, id, message, clientMessageID, false)
 		if !handled {
 			return ErrSemanticAcceptanceUnsupported
 		}
@@ -4043,7 +4052,7 @@ func (m *Manager) SendSemantic(ctx context.Context, id domain.SessionID, message
 		return nil
 	}
 	wrapped := domain.WrapReportDelivery(clientMessageID, message)
-	if err := m.send(ctx, id, wrapped, clientMessageID); err != nil {
+	if err := m.send(ctx, id, wrapped, clientMessageID, false); err != nil {
 		return err
 	}
 	deadline := time.NewTimer(10 * time.Second)
@@ -4112,7 +4121,7 @@ func (m *Manager) InterruptTUI(ctx context.Context, id domain.SessionID) error {
 // send carries an optional idempotency key used by durable transition-message
 // retries. Ordinary callers leave it empty; the outbox preserves the key across
 // restart, rollback, and even a second overlapping handoff.
-func (m *Manager) send(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+func (m *Manager) send(ctx context.Context, id domain.SessionID, message, clientMessageID string, authoredByUser bool) error {
 	// A controller transition deliberately has a short interval with no writer.
 	// Queue internal/lifecycle sends durably instead of racing either controller
 	// or dropping coordination work; the transition worker drains this outbox
@@ -4127,7 +4136,7 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	// refused as "missing runtime handles" — true of the handles, wrong about the
 	// session, and it left `ao send` and orchestrator-to-worker relay unable to
 	// reach a chat worker.
-	if handled, err := m.sendChat(ctx, id, message, clientMessageID); handled {
+	if handled, err := m.sendChat(ctx, id, message, clientMessageID, authoredByUser); handled {
 		return err
 	}
 
@@ -4137,7 +4146,7 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	}
 	var afterWrite func(context.Context) error
 	_, internalReportDelivery := domain.ReportDeliveryID(message)
-	if strings.TrimSpace(message) != "" && !internalReportDelivery {
+	if authoredByUser && strings.TrimSpace(message) != "" && !internalReportDelivery {
 		if recorder, ok := m.store.(latestUserPromptRecorder); ok {
 			afterWrite = func(writeCtx context.Context) error {
 				if _, recordErr := recorder.RecordSessionLatestUserPrompt(writeCtx, id, boundedConversationFact(message), m.clock()); recordErr != nil {
