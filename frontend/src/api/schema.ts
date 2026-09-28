@@ -3993,6 +3993,8 @@ export interface components {
         };
         ListPRFilesResponse: {
             commits: components["schemas"]["WorkspaceCommitSummary"][];
+            /** @description True when older commits were left out of commits: the list keeps the newest 250, and stops at the last commit whose changes fit the daemon's size cap. */
+            commitsTruncated?: boolean;
             files: components["schemas"]["WorkspaceFileSummary"][];
             sessionId: string;
             summary: components["schemas"]["WorkspaceSummary"];
@@ -4027,6 +4029,8 @@ export interface components {
             ahead?: null | number;
             behind?: null | number;
             commits: components["schemas"]["WorkspaceCommitSummary"][];
+            /** @description True when older commits were left out of commits: the list keeps the newest 250, and stops at the last commit whose changes fit the daemon's size cap. */
+            commitsTruncated?: boolean;
             compareBaseRef?: string;
             compareBaseSha?: string;
             /** @enum {string} */
