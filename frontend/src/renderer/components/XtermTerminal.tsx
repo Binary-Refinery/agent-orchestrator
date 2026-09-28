@@ -22,7 +22,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -99,32 +98,22 @@ export type XtermTerminalProps = {
 	onReady?: (terminal: AttachableTerminal) => void;
 };
 
-// Prefer the WebGL renderer, fall back to 2D canvas. Both rasterize box-drawing
-// glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
-// borders would drift. Loaded after open().
+// Prefer the WebGL renderer. It rasterizes box-drawing glyphs onto a fixed cell
+// grid; the DOM renderer does not, so TUI borders would drift. xterm 6.1 redraws
+// that canvas in the same turn it resizes it, so a live drag does not composite
+// a cleared frame. The canvas addon has no 6.x build, so a missing WebGL context
+// falls through to the DOM renderer. Loaded after open().
 function loadRenderer(term: Terminal): void {
-	let fallbackLoaded = false;
-	const loadCanvasFallback = () => {
-		if (fallbackLoaded) return;
-		fallbackLoaded = true;
-		try {
-			term.loadAddon(new CanvasAddon());
-		} catch (error) {
-			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
-		}
-	};
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
 			webgl.dispose();
-			loadCanvasFallback();
+			console.warn("xterm: WebGL context lost; box-drawing may drift");
 		});
 		term.loadAddon(webgl);
-		return;
-	} catch {
-		// WebGL context unavailable — fall through to the canvas renderer.
+	} catch (error) {
+		console.warn("xterm: WebGL renderer unavailable; box-drawing may drift", error);
 	}
-	loadCanvasFallback();
 }
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
@@ -647,7 +636,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				cursorBlink: true,
 				// Resolve the Nerd Font stack from --font-mono (styles.css) at
 				// construction so terminal glyphs follow the app's font tokens. The
-				// box-drawing grid is rasterized by the WebGL/canvas renderer itself,
+				// box-drawing grid is rasterized by the WebGL renderer itself,
 				// but powerline separators and file-type icons are real PUA codepoints
 				// that must come from a system-installed Nerd Font.
 				fontFamily:
@@ -672,6 +661,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// slim draggable scrollbar; other platforms retain the existing hidden
 				// scrollbar behavior for now.
 				scrollback: 5000,
+				// This component answers color-scheme queries itself so the reply
+				// follows the app theme, including theme style. xterm 6.1 also
+				// answers them from palette luminance; leave that off.
+				colorSchemeQuery: false,
 				theme: props.theme === "dark" ? dark : light,
 			});
 		} catch (error) {
@@ -704,20 +697,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
-		// xterm 5 has no public scrollbar-width option. Keep its private FitAddon
-		// reservation aligned with our CSS: a stable 7px macOS gutter, and no
-		// reservation on platforms where the scrollbar remains hidden.
+		// The app draws its own thumb and hides xterm's viewport scrollbar. Keep
+		// FitAddon's private reservation aligned with that CSS: a stable 7px macOS
+		// gutter, and no reservation where the scrollbar remains hidden.
 		configureScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
 		confineDragSelectionToTerminalWidth(term);
 
-		// xterm 5's native viewport scrollbar follows macOS's system auto-hide
-		// preference even when its WebKit pseudo-elements are styled. Keep the
-		// native viewport hidden and mirror its normal-buffer geometry into a small
-		// app-owned thumb. Like a native macOS overlay scrollbar, it appears while
-		// scrolling or dragging and fades after the interaction goes idle.
+		// xterm's viewport scrollbar follows macOS's system auto-hide preference
+		// even when its WebKit pseudo-elements are styled. Keep the native viewport
+		// hidden and mirror its normal-buffer geometry into a small app-owned thumb.
+		// Like a native macOS overlay scrollbar, it appears while scrolling or
+		// dragging and fades after the interaction goes idle.
 		const scrollbarTrack = scrollbarTrackRef.current;
 		const scrollbarThumb = scrollbarThumbRef.current;
 		let scrollbarFrame: number | null = null;
@@ -830,8 +823,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			});
 			return accepted;
 		};
-		// xterm 5 does not implement the modern terminal color-scheme protocol.
-		// OpenTUI clients use it to receive live light/dark changes after startup.
+		// OpenTUI clients use the color-scheme protocol to receive live light/dark
+		// changes after startup. The replies follow the app theme, so they stay
+		// here rather than using xterm's luminance-based replies.
 		let colorSchemeUpdatesEnabled = false;
 		let currentColorScheme = props.theme;
 		let currentThemeStyle = themeStyle;
@@ -1148,13 +1142,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (liveFitFrame !== null) return;
 			liveFitFrame = requestAnimationFrame(() => {
 				liveFitFrame = null;
-				if (host.closest('[data-terminal-live-resize="true"]')) {
-					fitTerminal();
-					return;
-				}
-				// The marker may have cleared while this frame was queued. Keep the
-				// ordinary final-fit path rather than skipping the terminal's last size.
-				scheduleVisibleFit();
+				// Fit on this frame, including the frame queued as the gesture ends, so
+				// the grid tracks the drag.
+				fitTerminal();
 			});
 		};
 
@@ -1171,7 +1161,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			void document.fonts.ready.then(() => scheduleStableFit());
 		}
 		const observer = new ResizeObserver(() => {
-			if (host.closest('[data-terminal-live-resize="true"]')) {
+			// Separator drags set is-resizing-x for the whole gesture. Fit on the
+			// next frame so the grid tracks the handle, instead of waiting until
+			// the pointer has been still.
+			if (
+				host.closest('[data-terminal-live-resize="true"]') ||
+				document.body.classList.contains("is-resizing-x")
+			) {
 				scheduleLiveFit();
 				return;
 			}
@@ -1234,7 +1230,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
 		// misses them. Listen on window directly as a session-long recovery path.
-		window.addEventListener("resize", scheduleVisibleFit);
+		window.addEventListener("resize", scheduleLiveFit);
 
 		// Do not replace this with term.onData. xterm's raw data stream can include
 		// terminal-generated control responses during attach/repaint; forwarding
@@ -1510,7 +1506,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			scrollbarTrack?.removeEventListener("pointermove", scrollbarPointerMove);
 			scrollbarTrack?.removeEventListener("pointerup", scrollbarPointerUp);
 			scrollbarTrack?.removeEventListener("pointercancel", scrollbarPointerUp);
-			window.removeEventListener("resize", scheduleVisibleFit);
+			window.removeEventListener("resize", scheduleLiveFit);
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			host.removeEventListener("pointerdown", pointerDown);

@@ -252,10 +252,6 @@ vi.mock("@xterm/addon-web-links", () => ({
 	},
 }));
 
-vi.mock("@xterm/addon-canvas", () => ({
-	CanvasAddon: class FakeCanvasAddon {},
-}));
-
 vi.mock("@xterm/addon-webgl", () => ({
 	WebglAddon: class FakeWebglAddon {
 		onContextLoss() {}
@@ -328,6 +324,49 @@ describe("XtermTerminal", () => {
 			act(() => frames.shift()?.(performance.now()));
 			expect(state.fit).toHaveBeenCalledTimes(1);
 		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			Object.defineProperty(window, "ResizeObserver", {
+				configurable: true,
+				writable: true,
+				value: originalResizeObserver,
+			});
+		}
+	});
+
+	it("fits on the next frame while the separator handle is dragging", () => {
+		const callbacks: ResizeObserverCallback[] = [];
+		const frames: FrameRequestCallback[] = [];
+		const originalResizeObserver = window.ResizeObserver;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		class CapturingResizeObserver implements ResizeObserver {
+			constructor(callback: ResizeObserverCallback) {
+				callbacks.push(callback);
+			}
+			disconnect() {}
+			observe() {}
+			unobserve() {}
+		}
+		Object.defineProperty(window, "ResizeObserver", {
+			configurable: true,
+			writable: true,
+			value: CapturingResizeObserver,
+		});
+		document.body.classList.add("is-resizing-x");
+		try {
+			render(<XtermTerminal theme="dark" />);
+			state.fit.mockClear();
+			frames.length = 0;
+
+			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
+
+			expect(state.fit).not.toHaveBeenCalled();
+			act(() => frames.shift()?.(performance.now()));
+			expect(state.fit).toHaveBeenCalledTimes(1);
+		} finally {
+			document.body.classList.remove("is-resizing-x");
 			requestAnimationFrameSpy.mockRestore();
 			Object.defineProperty(window, "ResizeObserver", {
 				configurable: true,
