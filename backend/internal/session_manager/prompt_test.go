@@ -161,6 +161,14 @@ func TestBuildSystemPrompt_WorkerDoesNotClaimReviewOnlyPR(t *testing.T) {
 			t.Fatalf("worker prompt missing review-only claim guard %q:\n%s", want, got)
 		}
 	}
+	for _, forbidden := range []string{
+		"If the task is to claim or continue an existing PR/MR, attach it",
+		"If you are continuing an existing PR, claim or attach it",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("worker prompt retained blanket PR claim rule %q:\n%s", forbidden, got)
+		}
+	}
 }
 
 func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff(t *testing.T) {
