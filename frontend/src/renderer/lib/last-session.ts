@@ -86,6 +86,13 @@ export function lastSessionTarget(record: LastSessionRecord): LastSessionTarget 
 	};
 }
 
+export function hasCurrentLastSession(
+	record: LastSessionRecord,
+	sessions: readonly { id: string; createdAt?: string }[],
+): boolean {
+	return sessions.some((session) => session.id === record.sessionId && session.createdAt === record.incarnation);
+}
+
 function localStorageOrNull(): Storage | null {
 	try {
 		return globalThis.localStorage ?? null;

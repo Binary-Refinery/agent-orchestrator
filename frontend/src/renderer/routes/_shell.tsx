@@ -54,7 +54,7 @@ import {
 	hidesShellTopbar,
 } from "../lib/platform";
 import { releaseColdSessionCopies } from "../lib/session-copy-lease";
-import { forgetLastSession, lastSessionTarget, readLastSession, rememberLastSession } from "../lib/last-session";
+import { forgetLastSession, hasCurrentLastSession, lastSessionTarget, readLastSession, rememberLastSession } from "../lib/last-session";
 import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { CLOUD_PROJECT_KIND, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
@@ -402,8 +402,8 @@ function ShellLayout() {
 			startupRestoreRef.current = "done";
 			const last = readLastSession();
 			if (!last) return;
-			const listed = workspaces.some((workspace) => workspace.sessions.some((session) => session.id === last.sessionId));
-			if (!listed) {
+			const sessions = workspaces.flatMap((workspace) => workspace.sessions);
+			if (!hasCurrentLastSession(last, sessions)) {
 				forgetLastSession();
 				return;
 			}

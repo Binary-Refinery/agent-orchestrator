@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { forgetLastSession, lastSessionTarget, readLastSession, rememberLastSession } from "./last-session";
+import { forgetLastSession, hasCurrentLastSession, lastSessionTarget, readLastSession, rememberLastSession } from "./last-session";
 import { STANDALONE_WORKSPACE_ID } from "../types/workspace";
 
 function memoryStorage() {
@@ -67,5 +67,17 @@ describe("last session memory", () => {
 				title: "Scratch",
 			}).to,
 		).toBe("/sessions/$sessionId");
+	});
+
+	it("does not restore a replacement session that reused the same id", () => {
+		const record = {
+			sessionId: "mer-1",
+			projectId: "mer",
+			incarnation: "2026-09-22T00:00:00Z",
+			title: "Old session",
+		};
+
+		expect(hasCurrentLastSession(record, [{ id: "mer-1", createdAt: "2026-09-23T00:00:00Z" }])).toBe(false);
+		expect(hasCurrentLastSession(record, [{ id: "mer-1", createdAt: record.incarnation }])).toBe(true);
 	});
 });
