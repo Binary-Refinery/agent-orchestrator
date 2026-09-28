@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths } from "../../api/schema";
 import { aoBridge } from "./bridge";
+import { apiClient } from "./api-client";
 import { LOCAL_HOST, type HostId } from "./hosts";
 
 type ConnectedHost = { hostId: HostId; label: string; url: string; base: string };
@@ -41,6 +42,11 @@ export function clientForHost(hostId: HostId) {
 		clients.set(hostId, client);
 	}
 	return client;
+}
+
+/** Resolve the daemon that owns a session at the point a request is made. */
+export function clientForSessionHost(hostId?: HostId) {
+	return hostId && hostId !== LOCAL_HOST ? clientForHost(hostId) : apiClient;
 }
 
 export async function connectHost(url: string): Promise<ConnectedHost> {

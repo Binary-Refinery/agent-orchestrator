@@ -75,7 +75,7 @@ import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presen
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useCanResumeAgent } from "../hooks/useCanResumeAgent";
-import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, remoteWorkspaceQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { resumeOrchestrator, spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -133,6 +133,7 @@ import { isMacPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
 import type { RemoteHost } from "../hooks/useRemoteHosts";
 import { sessionNavigateTarget } from "../lib/navigate-to-session";
+import { sessionUiKey } from "../lib/hosts";
 import { RemoteHostsSection } from "./RemoteHostsSection";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
@@ -813,7 +814,7 @@ export function Sidebar({
 	}, [handleProjectDragEnd, projectIds]);
 
 	const pinnedSessions = useMemo(
-		() => workspaces
+		() => [...workspaces, ...remoteWorkspaces]
 			.flatMap((w) => workerSessions(w.sessions))
 			.filter((s) => s.isPinned && s.isTerminated !== true)
 			.sort((a, b) => {
@@ -821,11 +822,20 @@ export function Sidebar({
 				const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
 				return bTime - aTime;
 			}),
-		[workspaces],
+		[workspaces, remoteWorkspaces],
 	);
 
 	const handlePinnedSessionKilled = useCallback(
 		(killedSession: WorkspaceSession) => {
+			if (killedSession.hostId) {
+				if (selection.activeRemoteHostId !== killedSession.hostId || selection.activeRemoteSessionId !== killedSession.id) return;
+				const workspace = remoteWorkspaces.find((candidate) => candidate.hostId === killedSession.hostId && candidate.id === killedSession.workspaceId);
+				const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id);
+				if (nextRoute.target === "session") void remoteNavigate(sessionNavigateTarget(killedSession.workspaceId, nextRoute.sessionId, killedSession.hostId));
+				else if (killedSession.workspaceId === STANDALONE_WORKSPACE_ID) selection.goHome();
+				else onOpenRemoteProject(killedSession.hostId, killedSession.workspaceId);
+				return;
+			}
 			if (selection.activeSessionId !== killedSession.id) return;
 			const workspace = workspaces.find((w) => w.id === killedSession.workspaceId);
 			const nextRoute = resolveNextNavigationAfterSessionKill(workspace, killedSession.id);
@@ -835,7 +845,7 @@ export function Sidebar({
 				selection.goProject(killedSession.workspaceId);
 			}
 		},
-		[selection, workspaces],
+		[onOpenRemoteProject, remoteNavigate, remoteWorkspaces, selection, workspaces],
 	);
 
 	return (
@@ -961,12 +971,17 @@ export function Sidebar({
 							>
 								{pinnedSessions.map((session) => (
 									<PinnedSessionRow
-										key={session.id}
+										key={sessionUiKey(session.id, session.hostId)}
 										session={session}
-										active={selection.activeSessionId === session.id}
+										active={session.hostId
+											? selection.activeRemoteHostId === session.hostId && selection.activeRemoteSessionId === session.id
+											: selection.activeSessionId === session.id}
+										hostLabel={session.hostId ? remoteHosts.find((host) => host.hostId === session.hostId)?.label ?? session.hostId : undefined}
 										layoutSettled={layoutSettled}
 										onKilled={handlePinnedSessionKilled}
-										onOpenSession={selection.goSession}
+										onOpenSession={(target) => target.hostId
+											? void remoteNavigate(sessionNavigateTarget(target.workspaceId, target.id, target.hostId))
+											: selection.goSession(target.workspaceId, target.id)}
 									/>
 								))}
 							</SidebarMenuSub>
@@ -1049,6 +1064,7 @@ export function Sidebar({
 											activeSessionId={selection.activeRemoteSessionId}
 											onAddProject={onAddRemoteProject}
 											onOpenProject={onOpenRemoteProject}
+											onOpenHome={selection.goHome}
 											onNewTask={onNewRemoteTask}
 											onOrchestrator={onOpenRemoteOrchestrator}
 											onConfigure={onConfigureRemoteProject}
@@ -1909,18 +1925,20 @@ function ScratchpadSection({
 const PinnedSessionRow = memo(function PinnedSessionRow({
 	session,
 	active,
+	hostLabel,
 	layoutSettled,
 	onKilled,
 	onOpenSession,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
+	hostLabel?: string;
 	layoutSettled: boolean;
 	onKilled?: (session: WorkspaceSession) => void;
-	onOpenSession: (projectId: string, sessionId: string) => void;
+	onOpenSession: (session: WorkspaceSession) => void;
 }) {
-	const onOpen = useCallback(() => onOpenSession(session.workspaceId, session.id), [onOpenSession, session.id, session.workspaceId]);
-	return <SessionRow session={session} active={active} disableLayout={!layoutSettled} indented={false} onKilled={onKilled} onOpen={onOpen} />;
+	const onOpen = useCallback(() => onOpenSession(session), [onOpenSession, session]);
+	return <SessionRow session={session} active={active} hostLabel={hostLabel} disableLayout={!layoutSettled} indented={false} onKilled={onKilled} onOpen={onOpen} />;
 });
 
 // A session row inside its project's drag context. The Pinned section renders
@@ -2108,6 +2126,7 @@ type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivat
 function SessionRow({
 	session,
 	active,
+	hostLabel,
 	indented = true,
 	layoutDependency,
 	listIsDragging = false,
@@ -2118,6 +2137,7 @@ function SessionRow({
 }: {
 	session: WorkspaceSession;
 	active: boolean;
+	hostLabel?: string;
 	indented?: boolean;
 	layoutDependency?: string;
 	listIsDragging?: boolean;
@@ -2139,8 +2159,8 @@ function SessionRow({
 	const describedBy = switchLabel ? switchStatusId : undefined;
 	const queryClient = useQueryClient();
 	const refreshWorkspaces = useCallback(
-		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-		[queryClient],
+		() => queryClient.invalidateQueries({ queryKey: session.hostId ? remoteWorkspaceQueryKey(session.hostId) : workspaceQueryKey }),
+		[queryClient, session.hostId],
 	);
 	const rename = useSessionRename(session, refreshWorkspaces);
 	const lastTouchAtRef = useRef(0);
@@ -2222,7 +2242,7 @@ function SessionRow({
 							aria-current={active ? "page" : undefined}
 							aria-describedby={describedBy}
 							aria-keyshortcuts="F2"
-							aria-label={t("shell.openSession", { title: session.title })}
+							aria-label={t("shell.openSession", { title: hostLabel ? `${session.title} · ${hostLabel}` : session.title })}
 							className={cn(
 								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pl-1.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 								session.lastUserMessageAt ? "pr-[36px]" : "pr-2.5",
@@ -2273,6 +2293,7 @@ function SessionRow({
 								>
 									{session.title}
 								</span>
+								{hostLabel ? <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-2xs">{hostLabel}</Badge> : null}
 								{switchLabel ? (
 									<span id={switchStatusId} className="max-w-28 shrink-0 truncate text-2xs text-muted-foreground">
 										{switchLabel}

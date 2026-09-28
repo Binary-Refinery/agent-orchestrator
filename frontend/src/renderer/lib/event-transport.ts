@@ -5,7 +5,7 @@ import { setEventsConnectionState } from "./events-connection";
 import { computeSseRetryDelayMs } from "./sse-backoff";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
-import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
+import { conversationQueryKey, conversationQueryRoot, refreshRemoteConversation } from "../hooks/useConversation";
 import {
 	reviewerConversationQueryKey,
 	reviewerConversationQueryRoot,
@@ -16,6 +16,7 @@ import { agentSwitchVisibility } from "./agent-switch-visibility";
 import { codexAccountsQueryKey, writeCodexAccounts } from "../hooks/codex-accounts-state";
 import type { components } from "../../api/schema";
 import { editorHandoffQueryKey, editorHandoffQueryRoot } from "../hooks/useEditorHandoff";
+import { baseUrlForHost, connectedHosts, subscribeConnectedHosts } from "./host-clients";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -47,9 +48,9 @@ const CDC_EVENT_TYPES = [
 /**
  * Wires live server state into the TanStack Query cache. Three sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
- *   - the backend CDC stream over SSE (project/session/PR changes)
+ *   - each connected daemon's CDC stream over SSE (project/session/PR changes)
  *   - the Codex account stream over SSE (account, capacity, and switch state)
- * Lifecycle and CDC events invalidate the workspace cache; durable per-session
+ * Lifecycle and CDC events invalidate the owning host's cache; durable per-session
  * updates also refresh editor-handoff readiness. Invalidations are batched
  * because a single user action can emit a burst of CDC events.
  */
@@ -72,6 +73,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			let accountSource: EventSource | undefined;
 			let accountSourceBaseUrl: string | undefined;
 			let disposed = false;
+			const remoteSources = new Map<string, {
+				base: string;
+				source?: EventSource;
+				retries: number;
+				retryTimer?: ReturnType<typeof setTimeout>;
+			}>();
 			// Do not repeatedly cancel a slow fetch under continuous CDC traffic. A
 			// key receives at most one in-flight refresh and one queued catch-up.
 			const refreshes = new Map<string, { dirty: boolean }>();
@@ -92,6 +99,82 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					if (state.dirty && !disposed) invalidate(queryKey);
 				};
 				void queryClient.invalidateQueries({ queryKey }, { cancelRefetch: false }).then(settled, settled);
+			};
+			const refreshRemote = (hostId: string, reconnect = false) => {
+				invalidate(["remote-workspaces", hostId]);
+				invalidate(["project", hostId]);
+				invalidate(["project-config", hostId]);
+				if (reconnect) invalidate(["remote-conversation", hostId]);
+				if (reconnect) invalidate(["reviewer-conversation", hostId]);
+				invalidate(["session-scm-summary", hostId]);
+				invalidate(["session-reviews", hostId]);
+				invalidate(["session-usage", hostId]);
+				invalidate(["session-usage", "detail", hostId]);
+				invalidate(["remote-session-agent-switches", hostId]);
+				invalidate(["session-interface-transition", hostId]);
+				invalidate(["agent-readiness", hostId]);
+				invalidate(["agent-models", hostId]);
+			};
+			const connectRemote = (hostId: string) => {
+				if (disposed || typeof EventSource === "undefined") return;
+				const base = baseUrlForHost(hostId);
+				if (!base) return;
+				let connection = remoteSources.get(hostId);
+				if (connection?.base !== base) {
+					connection?.source?.close();
+					if (connection?.retryTimer) clearTimeout(connection.retryTimer);
+					connection = { base, retries: 0 };
+					remoteSources.set(hostId, connection);
+				}
+				if (connection.source?.readyState !== EVENTSOURCE_CLOSED && connection.source) return;
+				connection.source?.close();
+				try {
+					const source = new EventSource(`${base.replace(/\/+$/, "")}/api/v1/events`);
+					connection.source = source;
+					source.onopen = () => {
+						if (disposed || remoteSources.get(hostId)?.source !== source) return;
+						connection.retries = 0;
+						refreshRemote(hostId, true);
+					};
+					const onEvent = (event: Event) => {
+						if (disposed || remoteSources.get(hostId)?.source !== source) return;
+						refreshRemote(hostId);
+						if (!("data" in event)) return;
+						try {
+							const decoded = JSON.parse(String((event as MessageEvent).data)) as { sessionId?: unknown; payload?: { conversationId?: unknown; reviewId?: unknown } };
+							if (typeof decoded.sessionId === "string" && typeof decoded.payload?.conversationId === "string" && typeof decoded.payload.reviewId !== "string") {
+								void refreshRemoteConversation(queryClient, decoded.sessionId, hostId).catch(() => undefined);
+							}
+							if (typeof decoded.payload?.reviewId === "string") {
+							invalidate(["reviewer-conversation", hostId, decoded.payload.reviewId]);
+							}
+						} catch {
+							// The host's project/session cache still refreshes after a malformed event.
+						}
+					};
+					source.onmessage = onEvent;
+					for (const type of CDC_EVENT_TYPES) source.addEventListener(type, onEvent);
+					source.onerror = () => {
+						if (disposed || remoteSources.get(hostId)?.source !== source || source.readyState !== EVENTSOURCE_CLOSED || connection.retryTimer) return;
+						connection.retries += 1;
+						connection.retryTimer = setTimeout(() => {
+							connection.retryTimer = undefined;
+							connectRemote(hostId);
+						}, computeSseRetryDelayMs(connection.retries));
+					};
+				} catch {
+					connection.source = undefined;
+				}
+			};
+			const syncRemoteSources = () => {
+				const active = new Set(connectedHosts());
+				for (const [hostId, connection] of remoteSources) {
+					if (active.has(hostId) && connection.base === baseUrlForHost(hostId)) continue;
+					connection.source?.close();
+					if (connection.retryTimer) clearTimeout(connection.retryTimer);
+					remoteSources.delete(hostId);
+				}
+				for (const hostId of active) connectRemote(hostId);
 			};
 			const applyAccountEvent = (event: Event) => {
 				if (disposed || !("data" in event)) return;
@@ -362,6 +445,8 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			// status-event ordering.
 			const removeBaseUrlListener = subscribeApiBaseUrl(connectSource);
 			connectSource();
+			const removeConnectedHostsListener = subscribeConnectedHosts(syncRemoteSources);
+			syncRemoteSources();
 
 			return () => {
 				healthAttempt += 1;
@@ -374,8 +459,14 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (retryTimer) clearTimeout(retryTimer);
 				removeDaemonListener();
 				removeBaseUrlListener();
+				removeConnectedHostsListener();
 				source?.close();
 				accountSource?.close();
+				for (const connection of remoteSources.values()) {
+					connection.source?.close();
+					if (connection.retryTimer) clearTimeout(connection.retryTimer);
+				}
+				remoteSources.clear();
 				setEventsConnectionState("idle");
 			};
 		},

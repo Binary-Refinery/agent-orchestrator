@@ -11,6 +11,8 @@ import { ProjectSettingsForm, type ProjectSettingsSaveState, type ProjectSetting
 import { DialogHeader, settingsDialogBodyClass, settingsDialogContentClass, settingsDialogHeaderClass } from "./ui/dialog";
 import { type GlobalSettingsSection, type SettingsModal, useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
+import { labelForHost } from "../lib/host-clients";
+import { LOCAL_HOST, refKey } from "../lib/hosts";
 import { globalSettingsItem, visibleGlobalSettings } from "./settings/settingsCatalog";
 
 function initialProjectSaveState(): ProjectSettingsSaveState {
@@ -22,7 +24,7 @@ export function SettingsDialog() {
 	const projectSettings = settingsModal?.scope === "project" ? settingsModal : settingsModal?.returnTo;
 	return (
 		<>
-			{projectSettings && <SettingsDialogLayer key={projectSettings.projectId} settingsModal={projectSettings} />}
+			{projectSettings && <SettingsDialogLayer key={refKey({ host: projectSettings.hostId ?? LOCAL_HOST, id: projectSettings.projectId })} settingsModal={projectSettings} />}
 			{settingsModal?.scope === "global" && <SettingsDialogLayer key="global" settingsModal={settingsModal} />}
 		</>
 	);
@@ -66,6 +68,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 	];
 
 	const isProjectSettings = displaySettings?.scope === "project";
+	const remoteHostId = displaySettings?.scope === "project" ? displaySettings.hostId : undefined;
 	const [activeSection, setActiveSection] = useState<GlobalSettingsSection>("general");
 	const [focusAgentId, setFocusAgentId] = useState<string>();
 	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
@@ -101,7 +104,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 	};
 	useEffect(() => {
 		if (!closeWhenSavedRef.current) return;
-		if (projectSaveState.phase === "failed") {
+		if (projectSaveState.phase === "failed" || projectSaveState.replacementError) {
 			closeWhenSavedRef.current = false;
 		} else if (!projectSaveState.dirty && !projectSaveState.requestPending &&
 			(projectSaveState.phase === "saved" || projectSaveState.phase === "idle")) {
@@ -223,11 +226,12 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 							{isProjectSettings &&
 								(projectSaveState.phase === "failed" ||
 									projectSaveState.phase === "pending" ||
-									projectSaveState.phase === "saving") && (
+									projectSaveState.phase === "saving" ||
+									(remoteHostId && projectSaveState.replacementError)) && (
 								<div className="mt-auto border-t border-(--color-border-settings-dialog-header) px-4 py-3 text-xs" role="status" aria-live="polite">
-									{projectSaveState.phase === "failed" ? (
+									{projectSaveState.phase === "failed" || (remoteHostId && projectSaveState.replacementError) ? (
 										<div className="space-y-2 text-error">
-											<p className="flex items-start gap-2" role="alert"><TriangleAlert className="size-4 shrink-0" aria-hidden="true" />{projectSaveState.error ?? t("settings.project.saveFailed")}</p>
+											<p className="flex items-start gap-2" role="alert"><TriangleAlert className="size-4 shrink-0" aria-hidden="true" />{projectSaveState.error ?? projectSaveState.replacementError ?? t("settings.project.saveFailed")}</p>
 											<button className="text-settings-label underline underline-offset-2" onClick={() => (document.getElementById("project-settings-form") as HTMLFormElement | null)?.requestSubmit()} type="button">{t("settings.models.retry")}</button>
 										</div>
 									) : (
@@ -243,7 +247,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 						{/* Main area — same bg as the app page */}
 						<div className="flex min-w-0 flex-1 flex-col bg-card">
 							<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between border-b-0 pb-3")}>
-								<Dialog.Title className="text-2xl font-bold text-foreground">{activeLabel}</Dialog.Title>
+								<Dialog.Title className="text-2xl font-bold text-foreground">{activeLabel}{remoteHostId && <span className="ml-2 text-sm font-normal text-muted-foreground">· {labelForHost(remoteHostId) ?? remoteHostId}</span>}</Dialog.Title>
 								<Dialog.Description className="sr-only">
 									{isProjectSettings
 										? t("settings.project.dialogDescription")
@@ -264,7 +268,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 							<div aria-busy={!isBodyReady} className={cn(settingsDialogBodyClass, "settings-dialog-body flex-1 px-(--size-modal-padding) pt-0")}>
 								{isBodyReady ? (
 									displaySettings?.scope === "project" ? (
-										<ProjectSettingsForm projectId={displaySettings.projectId} section={activeProjectSection} onSaveState={setProjectSaveState} />
+										<ProjectSettingsForm projectId={displaySettings.projectId} hostId={displaySettings.hostId} section={activeProjectSection} onSaveState={setProjectSaveState} />
 									) : (
 										<GlobalSettingsForm cloudEnabled={cloudEnabled} focusAgentId={focusAgentId} section={activeSection} />
 									)

@@ -22,6 +22,7 @@ const shellMocks = vi.hoisted(() => {
 		workspaces: [] as WorkspaceSummary[],
 		remoteWorkspaces: [] as WorkspaceSummary[],
 		removeRemoteProject: undefined as ((hostId: string, projectId: string) => Promise<void>) | undefined,
+		configureRemoteProject: undefined as ((hostId: string, projectId: string) => void) | undefined,
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
 			dataUpdatedAt: 0,
@@ -280,8 +281,13 @@ vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
 		SIDEBAR_DEFAULT_WIDTH: 240,
-		Sidebar: ({ topbarOffset, onRemoveRemoteProject }: { topbarOffset?: string; onRemoveRemoteProject: (hostId: string, projectId: string) => Promise<void> }) => {
+		Sidebar: ({ topbarOffset, onRemoveRemoteProject, onConfigureRemoteProject }: {
+			topbarOffset?: string;
+			onRemoveRemoteProject: (hostId: string, projectId: string) => Promise<void>;
+			onConfigureRemoteProject: (hostId: string, projectId: string) => void;
+		}) => {
 			shellMocks.state.removeRemoteProject = onRemoveRemoteProject;
+			shellMocks.state.configureRemoteProject = onConfigureRemoteProject;
 			const nonce = useStore((state) => state.createProjectNonce);
 			const folderDropRequest = useStore((state) => state.folderDropRequest);
 			return (
@@ -370,6 +376,7 @@ beforeEach(() => {
 	shellMocks.state.workspaces = workspaces;
 	shellMocks.state.remoteWorkspaces = [];
 	shellMocks.state.removeRemoteProject = undefined;
+	shellMocks.state.configureRemoteProject = undefined;
 	shellMocks.remoteDelete.mockReset().mockResolvedValue({});
 	shellMocks.state.workspaceQuery = {
 		data: workspaces,
@@ -396,6 +403,17 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("opens the shared Project settings dialog for the selected remote host", async () => {
+		shellMocks.state.remoteWorkspaces = [
+			{ hostId: "box-a", id: "shared", name: "Shared", path: "/a", sessions: [] },
+			{ hostId: "box-b", id: "shared", name: "Shared", path: "/b", sessions: [] },
+		] as WorkspaceSummary[];
+		await renderShell();
+
+		act(() => shellMocks.state.configureRemoteProject?.("box-b", "shared"));
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "shared", hostId: "box-b" });
+	});
+
 	it("leaves a remote session only when removing its project on the same host", async () => {
 		shellMocks.state.routeParams = { hostId: "box-a", sessionId: "same-session" };
 		shellMocks.state.remoteWorkspaces = [
@@ -868,6 +886,44 @@ describe("shell application shortcut subscriptions", () => {
 		expect(shellMocks.navigate).toHaveBeenCalledWith({
 			to: "/sessions/$sessionId",
 			params: { sessionId: "standalone-2" },
+		});
+	});
+
+	it("cycles only sessions on the selected remote host when IDs collide", async () => {
+		shellMocks.state.routeParams = { hostId: "box-b", sessionId: "sess-1" };
+		shellMocks.state.remoteWorkspaces = [
+			{ hostId: "box-a", id: "proj-1", sessions: [
+				{ id: "sess-1", status: "working" }, { id: "box-a-next", status: "idle" },
+			] },
+			{ hostId: "box-b", id: "proj-1", sessions: [
+				{ id: "sess-1", status: "working" }, { id: "box-b-next", status: "idle" },
+			] },
+		] as WorkspaceSummary[];
+		await renderShell();
+
+		act(() => shellMocks.state.nextSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/host/$hostId/project/$projectId/session/$sessionId",
+			params: { hostId: "box-b", projectId: "proj-1", sessionId: "box-b-next" },
+		});
+	});
+
+	it("cycles remote standalone sessions on their host", async () => {
+		shellMocks.state.routeParams = { hostId: "box-b", sessionId: "standalone-1" };
+		shellMocks.state.remoteWorkspaces = [{
+			hostId: "box-b", id: "__standalone__", sessions: [
+				{ id: "standalone-1", status: "working" },
+				{ id: "standalone-2", status: "idle" },
+			],
+		}] as WorkspaceSummary[];
+		await renderShell();
+
+		act(() => shellMocks.state.previousSessionListener?.());
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "box-b", sessionId: "standalone-2" },
 		});
 	});
 

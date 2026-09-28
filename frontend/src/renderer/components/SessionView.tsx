@@ -9,7 +9,6 @@ import {
 	useMemo,
 	useRef,
 	useState,
-	useSyncExternalStore,
 	type CSSProperties,
 	type ReactNode,
 	type RefObject,
@@ -21,12 +20,8 @@ import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shor
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import type { FileOpenOptions, FileViewMode } from "./FileContentPane";
-import {
-	SessionChatSurface,
-	type ConversationWorkState,
-} from "./chat/SessionChatSurface";
+import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { ReviewerChatSurface } from "./chat/ReviewerChatSurface";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
@@ -36,13 +31,6 @@ import { SessionFileTab } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
-import {
-	SessionInterfaceSwitchButton,
-	SessionInterfaceSwitchDialog,
-	SessionInterfaceSwitchMenuItem,
-	SessionInterfaceTransitionNotice,
-	interfaceTransitionOffersHistoryRecovery,
-} from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
@@ -59,19 +47,14 @@ import {
 	useRenameShellTerminal,
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
-import {
-	interfaceTransitionHasUnacknowledgedNotice,
-	interfaceTransitionIsActive,
-	interfaceTransitionNeedsRestart,
-	useSessionInterfaceTransition,
-} from "../hooks/useSessionInterfaceTransition";
+import { useSessionInterfaceSwitch } from "../hooks/useSessionInterfaceSwitch";
+import { discardCapturedPendingFileAttachments } from "../hooks/useFileAttachments";
 import { useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useWorkspaceSession, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { cloudLifecycleStage } from "../lib/cloud-lifecycle";
 import { useTerminalResetStore } from "../stores/terminal-reset-store";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
-import { useSettings } from "../hooks/useSettings";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -79,16 +62,7 @@ import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceF
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { aoBridge } from "../lib/bridge";
 import {
-	capturePendingFileAttachmentsForSession,
-	discardCapturedPendingFileAttachments,
-	type PendingFileAttachmentCapture,
-} from "../hooks/useFileAttachments";
-import {
-	chatDraftDiscardWarning,
 	chatDraftDialogCopy,
-	getChatDraftBoundaries,
-	subscribeChatDraftBoundaries,
-	type ChatDraftBoundaryKind,
 } from "../lib/chat-draft-boundary";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
@@ -160,52 +134,10 @@ const sessionHeaderActions = (
 );
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
-type SessionInterfaceTransition = components["schemas"]["SessionInterfaceTransition"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 type ReviewerChatTarget = { reviewId: string; harness: string };
-type InterfaceSwitchDialogScope = {
-	sessionId: string;
-	targetMode: "chat" | "tui";
-	historyPolicy?: "strict" | "provider_history";
-};
 
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
-
-type UnsafeDraftLeaveDecision =
-	| { kind: "safe" }
-	| { kind: "cancelled" }
-	| { kind: "confirmed"; pendingAttachments: PendingFileAttachmentCapture };
-
-type PendingUnsafeDraftLeave = {
-	sessionId: string;
-	promise: Promise<UnsafeDraftLeaveDecision>;
-	resolve: (decision: UnsafeDraftLeaveDecision) => void;
-};
-
-type ChatLeaveLock = {
-	sessionId: string;
-	requestId: number;
-	previousTransitionId?: string;
-	targetMode: "tui";
-	policy: "drain" | "interrupt";
-	transitionId?: string;
-	pendingAttachments?: PendingFileAttachmentCapture;
-	needsReconciliation?: boolean;
-};
-
-function chatLeaveTransitionMatches(
-	lock: ChatLeaveLock,
-	transition: SessionInterfaceTransition | undefined,
-): transition is SessionInterfaceTransition {
-	return Boolean(
-		transition &&
-			transition.id !== lock.previousTransitionId &&
-			transition.sessionId === lock.sessionId &&
-			transition.sourceMode === "chat" &&
-			transition.targetMode === lock.targetMode &&
-			transition.policy === lock.policy,
-	);
-}
 
 type InspectorSizing = {
 	chatMinWidth: number;
@@ -489,66 +421,15 @@ function CloudPausedStatus() {
 
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
-	const [confirmedDraftDiscard, setConfirmedDraftDiscard] = useState<{
-		sessionId: string;
-		transitionId: string;
-		pendingAttachments: PendingFileAttachmentCapture;
-	}>();
-	const [chatLeaveLock, setChatLeaveLock] = useState<ChatLeaveLock>();
-	const chatLeaveRequestIdRef = useRef(0);
-	const pendingUnsafeDraftLeaveRef = useRef<PendingUnsafeDraftLeave | undefined>(undefined);
-	const [unsafeDraftLeaveConfirmation, setUnsafeDraftLeaveConfirmation] = useState<{
-		sessionId: string;
-		boundaries: readonly ChatDraftBoundaryKind[];
-	}>();
-	const getCurrentChatDraftBoundaries = useCallback(
-		() => getChatDraftBoundaries(sessionId),
-		[sessionId],
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
 	);
-	const chatDraftBoundaries = useSyncExternalStore(
-		subscribeChatDraftBoundaries,
-		getCurrentChatDraftBoundaries,
-		getCurrentChatDraftBoundaries,
-	);
-	const confirmUnsafeDraftLeave = useCallback((): Promise<UnsafeDraftLeaveDecision> => {
-		const activeBoundaries = getChatDraftBoundaries(sessionId);
-		if (activeBoundaries.length === 0) return Promise.resolve({ kind: "safe" });
-		const pending = pendingUnsafeDraftLeaveRef.current;
-		if (pending?.sessionId === sessionId) return pending.promise;
-		if (pending) pending.resolve({ kind: "cancelled" });
-		let resolve!: (decision: UnsafeDraftLeaveDecision) => void;
-		const promise = new Promise<UnsafeDraftLeaveDecision>((settle) => {
-			resolve = settle;
-		});
-		pendingUnsafeDraftLeaveRef.current = { sessionId, promise, resolve };
-		setUnsafeDraftLeaveConfirmation({ sessionId, boundaries: [...activeBoundaries] });
-		return promise;
-	}, [sessionId]);
-	const settleUnsafeDraftLeave = useCallback((confirmed: boolean) => {
-		const pending = pendingUnsafeDraftLeaveRef.current;
-		if (!pending) return;
-		pendingUnsafeDraftLeaveRef.current = undefined;
-		setUnsafeDraftLeaveConfirmation((current) =>
-			current?.sessionId === pending.sessionId ? undefined : current,
-		);
-		pending.resolve(
-			confirmed
-				? {
-						kind: "confirmed",
-						pendingAttachments: capturePendingFileAttachmentsForSession(pending.sessionId),
-					}
-				: { kind: "cancelled" },
-		);
-	}, []);
-	useEffect(
-		() => () => {
-			const pending = pendingUnsafeDraftLeaveRef.current;
-			if (pending?.sessionId !== sessionId) return;
-			pendingUnsafeDraftLeaveRef.current = undefined;
-			pending.resolve({ kind: "cancelled" });
-		},
-		[sessionId],
-	);
+	const workspaceQuery = useWorkspaceSession(sessionId);
+	const session = workspaceQuery.data;
+	const interfaceUi = useSessionInterfaceSwitch(sessionId, session);
+	const { draftBoundaries: chatDraftBoundaries, confirmUnsafeDraftLeave } = interfaceUi;
 	useBlocker({
 		disabled: chatDraftBoundaries.length === 0,
 		enableBeforeUnload: chatDraftBoundaries.length > 0,
@@ -571,12 +452,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		() => () => aoBridge.app.setChatDraftRisk?.([]),
 		[sessionId],
 	);
-	const queryClient = useQueryClient();
-	const refreshWorkspaces = useCallback(
-		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-		[queryClient],
-	);
-	const workspaceQuery = useWorkspaceSession(sessionId);
 	const { client: cloudCpClient } = useCloudCp();
 	const theme = useResolvedTheme();
 	const browserOnly = Boolean(workspaceQuery.data && isOrchestratorSession(workspaceQuery.data));
@@ -678,31 +553,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		handoffDialogContainerRef.current = node;
 		setHandoffDialogContainer(node);
 	}, []);
-	const [interfaceSwitchDialogScope, setInterfaceSwitchDialogScope] =
-		useState<InterfaceSwitchDialogScope>();
-	const [chatConversationWork, setChatConversationWork] = useState<
-		ConversationWorkState & { sessionId?: string }
-	>({
-		controllerBusy: false,
-		hasRunningTurn: false,
-		queuedTurnCount: 0,
-	});
-	const handleConversationWorkChange = useCallback(
-		(next: ConversationWorkState) => {
-			setChatConversationWork((current) => {
-				if (
-					current.sessionId === sessionId &&
-					current.controllerBusy === next.controllerBusy &&
-					current.hasRunningTurn === next.hasRunningTurn &&
-					current.queuedTurnCount === next.queuedTurnCount
-				) {
-					return current;
-				}
-				return { sessionId, ...next };
-			});
-		},
-		[sessionId],
-	);
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
 		if (terminalLiveResizeTimerRef.current !== null) {
@@ -735,7 +585,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaceQuery.data;
 	const cloudStage = cloudLifecycleStage(session);
 	const cloudReconnecting = useTerminalResetStore((state) => Boolean(state.reconnecting[sessionId]));
 	// Latch the session that has reached "connected" at least once (keyed on
@@ -788,112 +637,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			? "active"
 			: "history";
 	useAgentSwitchRouteVisibility(`session/${sessionId}`, routeVisibilityOperation);
-	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
-	useEffect(() => {
-		setConfirmedDraftDiscard(undefined);
-	}, [sessionId]);
-	useEffect(() => {
-		if (!chatLeaveLock) return;
-		if (chatLeaveLock.sessionId !== sessionId) {
-			setChatLeaveLock((current) =>
-				current?.requestId === chatLeaveLock.requestId ? undefined : current,
-			);
-			return;
-		}
-		const transition = interfaceSwitch.transition;
-		if (!chatLeaveLock.transitionId) {
-			if (chatLeaveTransitionMatches(chatLeaveLock, transition)) {
-				setChatLeaveLock((current) =>
-					current?.requestId === chatLeaveLock.requestId
-						? {
-								...current,
-								transitionId: transition.id,
-								needsReconciliation: false,
-							}
-						: current,
-				);
-			}
-			return;
-		}
-		if (chatLeaveLock.pendingAttachments) {
-			setConfirmedDraftDiscard({
-				sessionId,
-				transitionId: chatLeaveLock.transitionId,
-				pendingAttachments: chatLeaveLock.pendingAttachments,
-			});
-			setChatLeaveLock((current) => {
-				if (current?.requestId !== chatLeaveLock.requestId) return current;
-				return { ...current, pendingAttachments: undefined };
-			});
-		}
-		if (session?.mode !== "chat") {
-			setChatLeaveLock((current) =>
-				current?.requestId === chatLeaveLock.requestId ? undefined : current,
-			);
-			return;
-		}
-		if (!transition || transition.id !== chatLeaveLock.transitionId) return;
-		if (
-			transition.phase === "failed" ||
-			transition.phase === "cancelled" ||
-			transition.phase === "recovery_required"
-		) {
-			setChatLeaveLock((current) =>
-				current?.requestId === chatLeaveLock.requestId ? undefined : current,
-			);
-		}
-	}, [chatLeaveLock, interfaceSwitch.transition, session?.mode, sessionId]);
-	useEffect(() => {
-		if (
-			!chatLeaveLock?.needsReconciliation ||
-			chatLeaveLock.transitionId ||
-			chatLeaveLock.sessionId !== sessionId
-		) return;
-		let active = true;
-		let retryTimer: number | undefined;
-		const reconcile = async () => {
-			try {
-				const status = await interfaceSwitch.refreshStatus();
-				if (!active) return;
-				setChatLeaveLock((current) => {
-					if (current?.requestId !== chatLeaveLock.requestId) return current;
-					return chatLeaveTransitionMatches(current, status?.transition)
-						? {
-								...current,
-								transitionId: status.transition.id,
-								needsReconciliation: false,
-							}
-						: undefined;
-				});
-			} catch {
-				if (!active) return;
-				retryTimer = window.setTimeout(() => void reconcile(), 1_000);
-			}
-		};
-		void reconcile();
-		return () => {
-			active = false;
-			if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-		};
-	}, [chatLeaveLock, interfaceSwitch.refreshStatus, sessionId]);
-	useEffect(() => {
-		if (!confirmedDraftDiscard || confirmedDraftDiscard.sessionId !== sessionId) return;
-		const transition = interfaceSwitch.transition;
-		if (!transition || transition.id !== confirmedDraftDiscard.transitionId) return;
-		switch (transition.phase) {
-			case "completed":
-				// This only invalidates renderer-owned in-flight generations. Bytes that
-				// already reached the daemon/worktree remain outside this discard boundary.
-				discardCapturedPendingFileAttachments(confirmedDraftDiscard.pendingAttachments);
-				setConfirmedDraftDiscard(undefined);
-				break;
-			case "failed":
-			case "cancelled":
-			case "recovery_required":
-				setConfirmedDraftDiscard(undefined);
-				break;
-		}
-	}, [confirmedDraftDiscard, interfaceSwitch.transition, sessionId]);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
 		enabled: Boolean(
@@ -1315,203 +1058,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		],
 	);
 
-	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
-	const hasInterfaceNotice = interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition);
-	const historyRecoveryNotice = hasInterfaceNotice && interfaceTransitionOffersHistoryRecovery(interfaceSwitch.transition);
-	const restartRequiredNotice = interfaceTransitionNeedsRestart(interfaceSwitch.transition);
-	const chatLeaveLocked = Boolean(
-		chatLeaveLock?.sessionId === sessionId && session?.mode === "chat",
-	);
-	const chatControllerTransitioning = Boolean(
-		session?.mode === "chat" &&
-			(chatLeaveLocked ||
-				interfaceSwitch.starting ||
-				(interfaceSwitch.transition?.targetMode === "tui" &&
-					(activeInterfaceTransition || interfaceSwitch.transition.phase === "completed")) ||
-				(interfaceSwitch.transition?.targetMode === "chat" &&
-					(activeInterfaceTransition || interfaceSwitch.settling))),
-	);
-	const interfaceTarget =
-		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
-		(session?.mode === "chat" ? "tui" : "chat");
-	const chatNewWorkDisabled = Boolean(
-		session?.mode === "chat" &&
-			((interfaceSwitch.starting && interfaceTarget === "tui") ||
-				(interfaceSwitch.transition?.targetMode === "tui" &&
-					(activeInterfaceTransition || interfaceSwitch.settling))),
-	);
-	const interfaceSwitchDialogOpen = Boolean(
-		interfaceSwitchDialogScope &&
-			session &&
-			interfaceSwitchDialogScope.sessionId === session.id &&
-			interfaceSwitchDialogScope.targetMode === interfaceTarget,
-	);
-	useEffect(() => {
-		setInterfaceSwitchDialogScope(undefined);
-	}, [interfaceTarget, sessionId]);
-	const selectedChatConversationWork =
-		chatConversationWork.sessionId === session?.id ? chatConversationWork : undefined;
-	const chatToTerminalNeedsPolicy = Boolean(
-		session?.mode === "chat" &&
-		interfaceTarget === "tui" &&
-		(!selectedChatConversationWork ||
-			selectedChatConversationWork.controllerBusy ||
-			selectedChatConversationWork.hasRunningTurn ||
-			selectedChatConversationWork.queuedTurnCount),
-	);
-	const interfaceBusy = Boolean(
-		session &&
-		(session.status === "working" ||
-			session.status === "needs_input" ||
-			session.activity?.state === "active" ||
-			session.activity?.state === "waiting_input" ||
-			session.activity?.state === "blocked" ||
-			chatToTerminalNeedsPolicy),
-	);
-	const interfaceWaitingForInput = Boolean(
-		session &&
-		(session.status === "needs_input" ||
-			session.activity?.state === "waiting_input" ||
-			session.activity?.state === "blocked"),
-	);
-	const chatToTerminal = session?.mode === "chat" && interfaceTarget === "tui";
-	const beginInterfaceSwitch = useCallback(
-		async (
-			policy: "drain" | "interrupt",
-			targetMode: "chat" | "tui",
-			dialogScope?: InterfaceSwitchDialogScope,
-			historyPolicy: "strict" | "provider_history" = "strict",
-		) => {
-			const draftLeaveDecision = chatToTerminal && getChatDraftBoundaries(sessionId).length > 0
-				? await confirmUnsafeDraftLeave()
-				: ({ kind: "safe" } satisfies UnsafeDraftLeaveDecision);
-			if (draftLeaveDecision.kind === "cancelled") return;
-			const chatLeaveRequestId = chatToTerminal
-				? (chatLeaveRequestIdRef.current += 1)
-				: undefined;
-			if (chatLeaveRequestId !== undefined) {
-				setChatLeaveLock({
-					sessionId,
-					requestId: chatLeaveRequestId,
-					previousTransitionId: interfaceSwitch.transition?.id,
-					targetMode: "tui",
-					policy,
-					pendingAttachments:
-						draftLeaveDecision.kind === "confirmed"
-							? draftLeaveDecision.pendingAttachments
-							: undefined,
-				});
-			}
-			try {
-				const response = await interfaceSwitch.start({ targetMode, policy, historyPolicy });
-				if (chatLeaveRequestId !== undefined) {
-					setChatLeaveLock((current) =>
-						current?.requestId === chatLeaveRequestId && response?.transition?.id
-							? {
-									...current,
-									transitionId: response.transition.id,
-									needsReconciliation: false,
-								}
-							: current?.requestId === chatLeaveRequestId
-								? { ...current, needsReconciliation: true }
-								: current,
-					);
-				}
-				if (dialogScope) {
-					setInterfaceSwitchDialogScope((current) =>
-						current === dialogScope ? undefined : current,
-					);
-				}
-			} catch {
-				if (chatLeaveRequestId !== undefined) {
-					setChatLeaveLock((current) =>
-						current?.requestId === chatLeaveRequestId
-							? { ...current, needsReconciliation: true }
-							: current,
-					);
-				}
-				// The mutation owns the typed error. A policy dialog that was already
-				// open stays open; a direct switch shows its error in the session notice.
-			}
-		},
-		[
-			chatToTerminal,
-			confirmUnsafeDraftLeave,
-			interfaceSwitch,
-			sessionId,
-		],
-	);
-	const requestInterfaceSwitch = useCallback(() => {
-		interfaceSwitch.resetStartError();
-		if (!interfaceBusy) {
-			void beginInterfaceSwitch("drain", interfaceTarget);
-			return;
-		}
-		if (!session) return;
-		setInterfaceSwitchDialogScope({ sessionId: session.id, targetMode: interfaceTarget });
-	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch, interfaceTarget, session]);
-	const chooseInterfaceSwitchPolicy = useCallback(
-		(policy: "drain" | "interrupt") => {
-			if (
-				!session ||
-				!interfaceSwitchDialogScope ||
-				interfaceSwitchDialogScope.sessionId !== session.id ||
-				interfaceSwitchDialogScope.targetMode !== interfaceTarget
-			) {
-				setInterfaceSwitchDialogScope(undefined);
-				return;
-			}
-			void beginInterfaceSwitch(
-				policy,
-				interfaceSwitchDialogScope.targetMode,
-				interfaceSwitchDialogScope,
-				interfaceSwitchDialogScope.historyPolicy,
-			);
-		},
-		[beginInterfaceSwitch, interfaceSwitchDialogScope, interfaceTarget, session],
-	);
-	const requestFailedInterfaceSwitch = useCallback(
-		(historyPolicy: "strict" | "provider_history") => {
-			const failed = interfaceSwitch.transition;
-			if (!session || !failed || failed.sessionId !== session.id || failed.targetMode !== interfaceTarget) return;
-			interfaceSwitch.resetStartError();
-			// A failed attempt's interrupt policy is stale consent. Re-evaluate the
-			// current Terminal state and either choose the safe drain default or ask
-			// again before cancelling newly started work.
-			if (!interfaceBusy) {
-				void beginInterfaceSwitch("drain", failed.targetMode, undefined, historyPolicy);
-				return;
-			}
-			setInterfaceSwitchDialogScope({ sessionId: session.id, targetMode: failed.targetMode, historyPolicy });
-		},
-		[beginInterfaceSwitch, interfaceBusy, interfaceSwitch, interfaceTarget, session],
-	);
-	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
-	// the switch entirely rather than showing a permanently disabled control.
-	// The daemon's Chat harness list knows this before the session's status
-	// loads, and for terminated sessions, whose status only reports
-	// SESSION_TERMINATED. An empty list (settings still loading, or Chat off
-	// entirely) proves nothing, so the status decides then.
-	const { settings } = useSettings();
-	const chatHarnesses = settings?.chatHarnesses ?? [];
-	const interfaceSwitchUnsupported =
-		interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED" ||
-		(interfaceTarget === "chat" &&
-			session !== undefined &&
-			chatHarnesses.length > 0 &&
-			!chatHarnesses.includes(session.provider));
-	// Harnesses without a TUI/Chat handoff cannot convert a running terminal
-	// session. Say so plainly instead of showing the daemon's reason.
-	const interfaceSwitchBlockedReason =
-		interfaceSwitch.status?.reasonCode === "INTERFACE_HANDOFF_UNSUPPORTED"
-			? t("session.interfaceHandoffUnsupported", {
-					defaultValue:
-						"This agent can't switch a running terminal session to chat. Start a new chat session instead.",
-				})
-			: undefined;
-	const showInterfaceSwitchAction = Boolean(
-		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
-	);
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
 	const newShellTerminalAction = useMemo(() =>
 		session && !isOrchestrator ? (
@@ -1622,10 +1168,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// targets. A terminal pane (reviewer or shell) renders as a tab inside the
 	// chat surface, so opening one never costs the user the conversation.
 	const chatTargetKind = routedTerminalTarget.kind;
-	const renderedSessionMode =
-		interfaceSwitch.transition?.phase === "failed"
-			? interfaceSwitch.transition.sourceMode
-			: session?.mode;
+	const renderedSessionMode = interfaceUi.renderedMode;
 	const showChatSurface =
 		session !== undefined &&
 		renderedSessionMode === "chat" &&
@@ -1647,69 +1190,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		if (handoffSwitchError) setHandoffDialogOpen(true);
 	}, [handoffSwitchError]);
-	const interfaceSwitchInlineStatus = useMemo(() =>
-		session && showInterfaceSwitchAction && activeInterfaceTransition ? (
-			<SessionInterfaceSwitchButton
-				target={interfaceTarget}
-				supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
-				disabledReason={
-					interfaceSwitch.isLoading
-						? "Checking whether this agent can switch interfaces…"
-						: interfaceSwitchBlockedReason || interfaceSwitch.status?.reason || interfaceSwitch.statusError
-				}
-				pending={interfaceSwitch.starting || activeInterfaceTransition}
-				transition={interfaceSwitch.transition}
-				cancelling={interfaceSwitch.cancelling}
-				cancelError={interfaceSwitch.cancelError}
-				onClick={requestInterfaceSwitch}
-				onCancel={() => {
-					void interfaceSwitch.cancel().catch(() => {});
-				}}
-			/>
-		) : null,
-		[
-			activeInterfaceTransition,
-			interfaceSwitch.cancelError,
-			interfaceSwitch.cancelling,
-			interfaceSwitch.isLoading,
-			interfaceSwitch.starting,
-			interfaceSwitch.status,
-			interfaceSwitch.statusError,
-			interfaceSwitch.transition,
-			interfaceSwitchBlockedReason,
-			interfaceTarget,
-			requestInterfaceSwitch,
-			session,
-			showInterfaceSwitchAction,
-		],
-	);
-	const interfaceSwitchMenuItem = useMemo(() =>
-		session && showInterfaceSwitchAction && !activeInterfaceTransition ? (
-			<SessionInterfaceSwitchMenuItem
-				target={interfaceTarget}
-				supported={Boolean(interfaceSwitch.status?.supported) && !chatLeaveLocked}
-				disabledReason={
-					interfaceSwitch.isLoading
-						? "Checking whether this agent can switch interfaces…"
-						: interfaceSwitchBlockedReason || interfaceSwitch.status?.reason || interfaceSwitch.statusError
-				}
-				pending={interfaceSwitch.starting || chatLeaveLocked}
-				onClick={requestInterfaceSwitch}
-			/>
-		) : null,
-		[
-			activeInterfaceTransition,
-			interfaceSwitch.isLoading,
-			interfaceSwitch.starting,
-			interfaceSwitch.status,
-			interfaceSwitch.statusError,
-			interfaceSwitchBlockedReason,
-			interfaceTarget,
-			requestInterfaceSwitch,
-			session,
-			showInterfaceSwitchAction,
-		],
-	);
 	const handoffMenuItem = useMemo(() => session ? (
 		<TerminalSwitchAgentButton
 			key={session.id}
@@ -1725,12 +1205,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// The ⋮ only holds the Chat/Terminal switch and Switch agent, and agent
 	// switching is limited to Claude Code and Codex, which both have Chat. A
 	// harness without Chat therefore gets no ⋮ instead of an empty menu.
-	const sessionTabActions = useMemo(() => interfaceSwitchUnsupported ? null : (
-		<SessionActionsMenu inlineStatus={interfaceSwitchInlineStatus}>
-			{interfaceSwitchMenuItem}
+	const sessionTabActions = useMemo(() => interfaceUi.unsupported ? null : (
+		<SessionActionsMenu inlineStatus={interfaceUi.inlineStatus}>
+			{interfaceUi.menuItem}
 			{handoffMenuItem}
 		</SessionActionsMenu>
-	), [handoffMenuItem, interfaceSwitchInlineStatus, interfaceSwitchMenuItem, interfaceSwitchUnsupported]);
+	), [handoffMenuItem, interfaceUi.inlineStatus, interfaceUi.menuItem, interfaceUi.unsupported]);
 	// Spinner replaces the ⋮ at the same size, so the tab title does not need a
 	// wider action slot while switching.
 	const sessionTabActionWide = false;
@@ -2069,9 +1549,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									workspaceFileActive={Boolean(fileTabs.activePath)}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
-									controllerTransitioning={chatControllerTransitioning}
-									newWorkDisabled={chatNewWorkDisabled}
-									onConversationWorkChange={handleConversationWorkChange}
+									controllerTransitioning={interfaceUi.controllerTransitioning}
+									newWorkDisabled={interfaceUi.newWorkDisabled}
+									onConversationWorkChange={interfaceUi.onConversationWorkChange}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
 									shellError={
@@ -2089,9 +1569,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								</>
 							) : (
 								<CenterPane
-									agentInputDisabled={
-										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
-									}
+									agentInputDisabled={interfaceUi.agentInputDisabled}
 									daemonReady={daemonStatus.state === "ready"}
 									onCloseShellTerminal={closeShellTerminalByHandle}
 									onRenameShellTerminal={renameShellTerminalByHandle}
@@ -2152,40 +1630,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									)}
 								</div>
 							) : null}
-							{interfaceSwitch.startError && !interfaceSwitchDialogOpen && !historyRecoveryNotice && !restartRequiredNotice ? (
-								<div role="alert" className="absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-3 rounded-lg border border-destructive/40 bg-popover px-3 py-2.5 text-xs shadow-md">
-									<div className="min-w-0 flex-1">
-										<p className="font-medium">{t("session.interfaceSwitchFailed")}</p>
-										<p className="mt-1 break-words text-muted-foreground">{interfaceSwitch.startError}</p>
-									</div>
-									<button type="button" aria-label={t("session.dismissInterfaceSwitchError")} className="shrink-0 rounded px-1 text-muted-foreground hover:text-foreground" onClick={interfaceSwitch.resetStartError}>{t("session.dismissInterfaceSwitchNotice")}</button>
-								</div>
-							) : null}
-							{(!interfaceSwitch.startError || historyRecoveryNotice || restartRequiredNotice) && hasInterfaceNotice ? (
-								<SessionInterfaceTransitionNotice
-									transition={interfaceSwitch.transition}
-									dismissing={interfaceSwitch.acknowledgingNotice}
-									dismissError={interfaceSwitch.acknowledgeNoticeError}
-									onDismiss={() => {
-										const transitionID = interfaceSwitch.transition?.id;
-										if (transitionID) void interfaceSwitch.acknowledgeNotice(transitionID).catch(() => {});
-									}}
-									onSwitchWithInterrupt={() => {
-										interfaceSwitch.resetStartError();
-										const targetMode = interfaceSwitch.transition?.targetMode;
-										if (targetMode) void beginInterfaceSwitch("interrupt", targetMode);
-									}}
-									interrupting={interfaceSwitch.starting}
-									onRetry={() => {
-										requestFailedInterfaceSwitch("strict");
-									}}
-									onUseProviderHistory={() => {
-										requestFailedInterfaceSwitch("provider_history");
-									}}
-									recoveryError={interfaceSwitch.startError}
-									retrying={interfaceSwitch.starting}
-								/>
-							) : null}
+							{interfaceUi.notice}
 						</div>
 					</div>
 				</div>
@@ -2281,32 +1726,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{showLifecycleLoader
 				? <CloudSessionLifecycleLoader />
 				: null}
-			<SessionInterfaceSwitchDialog
-				open={interfaceSwitchDialogOpen}
-				target={interfaceSwitchDialogScope?.targetMode ?? interfaceTarget}
-				waitingForInput={interfaceWaitingForInput}
-				busy={interfaceSwitch.starting}
-				error={interfaceSwitch.startError}
-				onOpenChange={(open) => {
-					if (!open) setInterfaceSwitchDialogScope(undefined);
-				}}
-				onChoose={chooseInterfaceSwitchPolicy}
-			/>
-			<ConfirmDialog
-				open={unsafeDraftLeaveConfirmation?.sessionId === sessionId}
-				title={t("chat.draftDiscard.title")}
-				description={
-					<p className="whitespace-pre-line">
-						{chatDraftDiscardWarning(unsafeDraftLeaveConfirmation?.boundaries ?? [])}
-					</p>
-				}
-				confirmLabel={t("chat.draftDiscard.leave")}
-				destructive
-				onConfirm={() => settleUnsafeDraftLeave(true)}
-				onOpenChange={(open) => {
-					if (!open) settleUnsafeDraftLeave(false);
-				}}
-			/>
+			{interfaceUi.dialogs}
 			{/* Maximized files wear the maximized browser's chrome: a backdrop, the
           filter pinned in the titlebar band where the browser's address bar
           sits, and an inset frame for the explorer. The explorer mounts once

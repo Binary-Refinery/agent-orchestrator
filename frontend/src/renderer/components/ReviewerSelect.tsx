@@ -55,6 +55,7 @@ export function ReviewerSelect({
 	model = "",
 	mode = "",
 	projectId,
+	hostId,
 	triggerClassName,
 	ariaLabel,
 	defaultHarness,
@@ -63,6 +64,7 @@ export function ReviewerSelect({
 	disabled = false,
 	agents,
 	excludedHarness,
+	manageAgents = true,
 }: {
 	value: string;
 	onChange: (value: string) => void;
@@ -70,6 +72,7 @@ export function ReviewerSelect({
 	model?: string;
 	mode?: string;
 	projectId?: string;
+	hostId?: string;
 	triggerClassName?: string;
 	ariaLabel?: string;
 	defaultHarness: string;
@@ -78,6 +81,7 @@ export function ReviewerSelect({
 	disabled?: boolean;
 	agents?: components["schemas"]["AgentReadinessSnapshot"][];
 	excludedHarness?: string;
+	manageAgents?: boolean;
 }) {
 	const { t } = useTranslation();
 	const reviewerAriaLabel = ariaLabel ?? t("settings.project.defaultReviewer");
@@ -108,7 +112,7 @@ export function ReviewerSelect({
 	const needsSetup = agents !== undefined && Boolean(effectiveHarness && !options.some((agent) => agent.id === effectiveHarness && isReadyAgent(agent)));
 	const management = useAgentManagementMenu(needsSetup ? effectiveHarness : undefined);
 	const menuProjectID = projectId ?? "";
-	const triggerCatalog = useQuery(agentModelsQueryOptions(effectiveHarness, menuProjectID));
+	const triggerCatalog = useQuery(agentModelsQueryOptions(effectiveHarness, menuProjectID, hostId));
 
 	useEffect(() => {
 		if (!menuOpen) return;
@@ -119,9 +123,9 @@ export function ReviewerSelect({
 		}
 		for (const harness of harnesses) {
 			if (!harness) continue;
-			void queryClient.prefetchQuery(agentModelsQueryOptions(harness, menuProjectID));
+			void queryClient.prefetchQuery(agentModelsQueryOptions(harness, menuProjectID, hostId));
 		}
-	}, [defaultHarness, menuOpen, menuProjectID, queryClient, selectableOptions]);
+	}, [defaultHarness, hostId, menuOpen, menuProjectID, queryClient, selectableOptions]);
 	const selectedModelLabel = modelOrModeLabel(triggerCatalog.data, model, mode, t("settings.models.modelNotReported"));
 	const triggerLabel = [value ? agentLabel(value) : defaultHarnessLabel, harnessOnly ? null : selectedModelLabel]
 		.filter(Boolean)
@@ -157,6 +161,7 @@ export function ReviewerSelect({
 						onConfigChange?.(nextHarness, nextConfig);
 					}}
 					projectId={menuProjectID}
+					hostId={hostId}
 					harnessOnly={harnessOnly}
 					resolvedHarness={defaultHarness}
 					persistHarness=""
@@ -175,13 +180,14 @@ export function ReviewerSelect({
 							onConfigChange?.(nextHarness, nextConfig);
 						}}
 						projectId={menuProjectID}
+						hostId={hostId}
 						harnessOnly={harnessOnly}
 						resolvedHarness={agent.id}
 						persistHarness={agent.id}
 						closeMenu={() => setMenuOpen(false)}
 					/>
 				))}
-				<OptionMenuItem className="mt-1 border-t border-border" onSelect={management.requestManagement}>{t("agentSelector.manage")}</OptionMenuItem>
+				{manageAgents && <OptionMenuItem className="mt-1 border-t border-border" onSelect={management.requestManagement}>{t("agentSelector.manage")}</OptionMenuItem>}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -194,6 +200,7 @@ function ReviewerHarnessOption({
 	currentMode,
 	onSelect,
 	projectId,
+	hostId,
 	harnessOnly,
 	resolvedHarness,
 	persistHarness,
@@ -205,6 +212,7 @@ function ReviewerHarnessOption({
 	currentMode: string;
 	onSelect: (harness: string, config: ReviewerAgentConfig) => void;
 	projectId: string;
+	hostId?: string;
 	harnessOnly: boolean;
 	resolvedHarness: string;
 	persistHarness: string;
@@ -213,7 +221,7 @@ function ReviewerHarnessOption({
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const catalogQuery = useQuery({
-		...agentModelsQueryOptions(resolvedHarness, projectId),
+		...agentModelsQueryOptions(resolvedHarness, projectId, hostId),
 		enabled: false,
 	});
 	const catalog = catalogQuery.data;

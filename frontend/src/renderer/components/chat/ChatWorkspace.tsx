@@ -91,6 +91,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
 import { ShellTerminalTab } from "../ShellTerminalTab";
 import { TerminalPane } from "../TerminalPane";
+import { RemoteTerminalView } from "../RemoteTerminalView";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -1357,7 +1358,7 @@ function ChatWorkspaceContent({
 						role="tabpanel"
 					>
 						<div className="h-full min-h-0" data-testid="chat-reviewer-terminal">
-							<TerminalPane
+							{session.hostId && assetBaseUrl ? <RemoteTerminalView hostId={session.hostId} proxyBase={assetBaseUrl} terminalHandleId={reviewerTarget.handleId} /> : <TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
 								isFullscreen={isFullscreen}
@@ -1366,7 +1367,7 @@ function ChatWorkspaceContent({
 								session={session}
 								terminalTarget={reviewerTarget}
 								theme={theme ?? "dark"}
-							/>
+							/>}
 						</div>
 					</div>
 				) : null}
@@ -1379,7 +1380,7 @@ function ChatWorkspaceContent({
 						role="tabpanel"
 					>
 						<div className="h-full min-h-0" data-testid="chat-shell-terminal">
-							<TerminalPane
+							{session.hostId && assetBaseUrl ? <RemoteTerminalView hostId={session.hostId} proxyBase={assetBaseUrl} terminalHandleId={shellTarget.handleId} /> : <TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
 								focusRequested
@@ -1389,7 +1390,7 @@ function ChatWorkspaceContent({
 								session={session}
 								terminalTarget={shellTarget}
 								theme={theme ?? "dark"}
-							/>
+							/>}
 						</div>
 					</div>
 				) : null}

@@ -28,7 +28,9 @@ export default function CloneRepositoryDialog({
 	onClose,
 	onContinue,
 	onError,
+	onChooseRemoteDestination,
 	open,
+	remote = false,
 	shake: externalShake = false,
 	existingProjectPaths = [],
 	value,
@@ -40,7 +42,9 @@ export default function CloneRepositoryDialog({
 	onClose: () => void;
 	onContinue: (selection: CloneRepositorySelection) => void;
 	onError?: (message: string) => void;
+	onChooseRemoteDestination?: () => void;
 	open: boolean;
+	remote?: boolean;
 	shake?: boolean;
 	existingProjectPaths?: readonly string[];
 	existingProjectNames?: readonly string[];
@@ -148,6 +152,11 @@ export default function CloneRepositoryDialog({
 			setRepositoryCheck("idle");
 			return;
 		}
+		// The host, not this laptop, owns Git credentials and verifies access in clone/prepare.
+		if (remote) {
+			setRepositoryCheck("valid");
+			return;
+		}
 		setRepositoryCheck("checking");
 		const timer = window.setTimeout(() => {
 			void aoBridge.app.checkGitRepository(value.remoteUrl.trim()).then((exists) => {
@@ -159,9 +168,13 @@ export default function CloneRepositoryDialog({
 			});
 		}, 300);
 		return () => window.clearTimeout(timer);
-	}, [open, repositoryName, value.remoteUrl]);
+	}, [open, remote, repositoryName, value.remoteUrl]);
 
 	const chooseDestination = async () => {
+		if (remote) {
+			onChooseRemoteDestination?.();
+			return;
+		}
 		const requestId = ++destinationPickerRequest.current;
 		setDestinationPickerError(null);
 		setChoosingDestination(true);
@@ -201,10 +214,12 @@ export default function CloneRepositoryDialog({
 			}
 			return;
 		}
-		try {
-			window.localStorage.setItem(LAST_CLONE_DESTINATION_KEY, value.destinationParent.trim());
-		} catch {
-			// Remembering the folder is optional.
+		if (!remote) {
+			try {
+				window.localStorage.setItem(LAST_CLONE_DESTINATION_KEY, value.destinationParent.trim());
+			} catch {
+				// Remembering the folder is optional.
+			}
 		}
 		onContinue({
 			...value,

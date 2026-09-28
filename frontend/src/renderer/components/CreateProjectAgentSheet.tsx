@@ -47,6 +47,8 @@ const AGENT_MENU_WIDTH = "w-56! min-w-56! max-w-56!";
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	action?: "create" | "clone";
+	connected?: boolean;
+	hostId?: string;
 	isCreating: boolean;
 	isInitializing?: boolean;
 	kind: ProjectKind;
@@ -106,7 +108,9 @@ function projectSheetError(error: string, action: "create" | "clone"): SheetErro
 
 export function CreateProjectAgentSheet({
 	action = "create",
+	connected = true,
 	error,
+	hostId,
 	isCreating,
 	isInitializing = false,
 	kind,
@@ -130,42 +134,44 @@ export function CreateProjectAgentSheet({
 		displayedError.current = error;
 		displayedOnBack.current = onBack;
 	}
-	const agentsQuery = useAgentReadinessQuery(contentOpen);
-	useEnsureAgentReadiness({ enabled: contentOpen });
+	const agentsQuery = useAgentReadinessQuery(contentOpen && connected, hostId);
+	useEnsureAgentReadiness({ enabled: contentOpen && connected, hostId });
 	const agents = agentsQuery.data;
 	const agentOptions = useMemo(() => agents?.agents ?? [], [agents]);
+	const selectableAgents = useMemo(() => hostId ? agentOptions.filter((agent) => agent.effectiveReadiness === "ready") : agentOptions, [agentOptions, hostId]);
 	// "configured" belongs here even though it is not a verified credential.
 	// This picks the default preselection, not a gate — every agent stays
 	// selectable — and excluding it would silently stop preselecting an agent
 	// whose credentials AO simply cannot validate, which is most of them.
 	const authorizedAgents = useMemo(
 		() =>
-			agentOptions.filter((agent) =>
+			selectableAgents.filter((agent) =>
 				["authorized", "not_applicable", "configured"].includes(agent.authentication.state),
 			),
-		[agentOptions],
+		[selectableAgents],
 	);
-	// This sheet creates local projects only (cloud uses CloudProjectCard),
-	// so local session history is the inference signal.
-	const workspacesQuery = useQuery({ ...workspaceQueryOptions, enabled: open });
+	// Local history is an inference signal only for local projects. A remote
+	// project must never infer its agent from this laptop's sessions.
+	const workspacesQuery = useQuery({ ...workspaceQueryOptions, enabled: open && !hostId });
 	const sessionHistory = useMemo(
 		() => (workspacesQuery.data ?? []).flatMap((workspace) => workspace.sessions),
 		[workspacesQuery.data],
 	);
-	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;
-	const agentsError = agentsQuery.isError
+	const isLoadingAgents = connected && agents === undefined && agentsQuery.isFetching;
+	const agentsError = !connected ? t("remote.connectBeforeStart") : agentsQuery.isError
 		? agentsQuery.error instanceof Error
 			? agentsQuery.error.message
 			: t("createProject.couldNotLoadAgents")
 		: null;
-	const displayError = agentsError;
+	const displayError = agentsError ?? (hostId && agents && selectableAgents.length === 0 ? "No ready agents on this host." : null);
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	useEnsureAgentReadiness({
 		agentIds: [workerAgent, orchestratorAgent],
-		enabled: contentOpen && (workerAgent !== "" || orchestratorAgent !== ""),
+		enabled: contentOpen && connected && (workerAgent !== "" || orchestratorAgent !== ""),
+		hostId,
 	});
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
@@ -179,7 +185,9 @@ export function CreateProjectAgentSheet({
 		}) &&
 		!intakeIncomplete &&
 		!isBusy &&
-		!isLoadingAgents;
+		!isLoadingAgents && connected && (!hostId || (
+			agents !== undefined && selectableAgents.some((agent) => agent.id === workerAgent) && selectableAgents.some((agent) => agent.id === orchestratorAgent)
+		));
 	const sheetError = displayedError.current
 		? projectSheetError(displayedError.current, displayedAction.current)
 		: null;
@@ -259,11 +267,12 @@ export function CreateProjectAgentSheet({
 									label={t("createProject.workerAgent")}
 									placeholder={t("createProject.selectWorker")}
 									value={workerAgent}
-									agents={agentOptions}
+									agents={selectableAgents}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
 									triggerClassName="agents-sheet-control"
 									contentClassName="agents-sheet-menu"
+									manageAgents={!hostId}
 									onChange={(value) => {
 										setWorkerAgent(value);
 										setWorkerAgentTouched(true);
@@ -276,11 +285,12 @@ export function CreateProjectAgentSheet({
 									label={t("createProject.orchestratorAgent")}
 									placeholder={t("createProject.selectOrchestrator")}
 									value={orchestratorAgent}
-									agents={agentOptions}
+									agents={selectableAgents}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
 									triggerClassName="agents-sheet-control"
 									contentClassName="agents-sheet-menu"
+									manageAgents={!hostId}
 									onChange={(value) => {
 										setOrchestratorAgent(value);
 										setOrchestratorAgentTouched(true);

@@ -10,6 +10,11 @@ const {
 	subscribeApiBaseUrlMock,
 	unsubscribeBaseUrlMock,
 	setTransportHealthyMock,
+	connectedHostsMock,
+	baseUrlForHostMock,
+	subscribeConnectedHostsMock,
+	unsubscribeConnectedHostsMock,
+	remoteGetMock,
 } = vi.hoisted(() => ({
 	onStatusMock: vi.fn(),
 	removeStatusMock: vi.fn(),
@@ -18,6 +23,11 @@ const {
 	subscribeApiBaseUrlMock: vi.fn(),
 	unsubscribeBaseUrlMock: vi.fn(),
 	setTransportHealthyMock: vi.fn(),
+	connectedHostsMock: vi.fn(() => [] as string[]),
+	baseUrlForHostMock: vi.fn((_hostId: string): string | undefined => undefined),
+	subscribeConnectedHostsMock: vi.fn(),
+	unsubscribeConnectedHostsMock: vi.fn(),
+	remoteGetMock: vi.fn(),
 }));
 
 vi.mock("./bridge", () => ({
@@ -32,6 +42,12 @@ vi.mock("./api-client", () => ({
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 vi.mock("./agent-switch-visibility", () => ({ agentSwitchVisibility: { setTransportHealthy: setTransportHealthyMock } }));
+vi.mock("./host-clients", () => ({
+	connectedHosts: connectedHostsMock,
+	baseUrlForHost: baseUrlForHostMock,
+	subscribeConnectedHosts: subscribeConnectedHostsMock,
+	clientForSessionHost: () => ({ GET: remoteGetMock }),
+}));
 
 import { createEventTransport } from "./event-transport";
 import { getEventsConnectionState, setEventsConnectionState } from "./events-connection";
@@ -89,6 +105,14 @@ beforeEach(() => {
 	subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
 	unsubscribeBaseUrlMock.mockReset();
 	setTransportHealthyMock.mockReset();
+	connectedHostsMock.mockReset().mockReturnValue([]);
+	baseUrlForHostMock.mockReset().mockReturnValue(undefined);
+	subscribeConnectedHostsMock.mockReset().mockReturnValue(unsubscribeConnectedHostsMock);
+	unsubscribeConnectedHostsMock.mockReset();
+	remoteGetMock.mockReset().mockResolvedValue({ data: {
+		conversationId: "remote-conversation", sessionId: "same", mode: "chat", controller: "idle",
+		latestSequence: 0, messages: [], activities: [],
+	} });
 	setEventsConnectionState("idle");
 	(globalThis as unknown as { EventSource: unknown }).EventSource = EventSourceStub;
 });
@@ -98,6 +122,71 @@ afterEach(() => {
 });
 
 describe("createEventTransport", () => {
+	it("streams each connected remote host and refreshes only its live conversation page", async () => {
+		const client = fakeQueryClient();
+		connectedHostsMock.mockReturnValue(["box-a", "box-b"]);
+		baseUrlForHostMock.mockImplementation((hostId) => `http://127.0.0.1:4000/${hostId}`);
+		const disconnect = createEventTransport(client).connect();
+		const remoteA = EventSourceStub.instances.find((source) => source.url.includes("/box-a/"))!;
+		const remoteB = EventSourceStub.instances.find((source) => source.url.includes("/box-b/"))!;
+		expect(remoteA.url).toBe("http://127.0.0.1:4000/box-a/api/v1/events");
+		expect(remoteB.url).toBe("http://127.0.0.1:4000/box-b/api/v1/events");
+
+		remoteA.emit("session_updated", JSON.stringify({ sessionId: "same", payload: { conversationId: "remote-conversation" } }));
+		remoteA.emit("review_run_updated", JSON.stringify({ sessionId: "same", payload: { reviewId: "review-1", conversationId: "review-conversation" } }));
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["remote-workspaces", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["project-config", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage", "detail", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-reviews", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["reviewer-conversation", "box-a", "review-1"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["remote-session-agent-switches", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-interface-transition", "box-a"] }, { cancelRefetch: false });
+		await vi.waitFor(() => expect(remoteGetMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/conversation", {
+			params: { path: { sessionId: "same" }, query: { beforeSequence: undefined, limit: 200 } },
+		}));
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["remote-conversation", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["remote-workspaces", "box-b"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["project-config", "box-b"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["session-usage", "detail", "box-b"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["session-reviews", "box-b"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["reviewer-conversation", "box-b", "review-1"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["remote-session-agent-switches", "box-b"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["session-interface-transition", "box-b"] }, { cancelRefetch: false });
+		remoteA.onopen?.();
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["remote-conversation", "box-a"] }, { cancelRefetch: false });
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["reviewer-conversation", "box-a"] }, { cancelRefetch: false });
+
+		connectedHostsMock.mockReturnValue(["box-b"]);
+		const hostsChanged = subscribeConnectedHostsMock.mock.calls[0][0] as () => void;
+		hostsChanged();
+		expect(remoteA.closed).toBe(true);
+		expect(remoteB.closed).toBe(false);
+		disconnect();
+		expect(remoteB.closed).toBe(true);
+		expect(unsubscribeConnectedHostsMock).toHaveBeenCalledOnce();
+	});
+
+	it("rebinds a host stream when its reachable address changes", () => {
+		connectedHostsMock.mockReturnValue(["box-a"]);
+		baseUrlForHostMock.mockReturnValue("http://127.0.0.1:4000/old");
+		const client = fakeQueryClient();
+		const disconnect = createEventTransport(client).connect();
+		const oldSource = EventSourceStub.instances.find((source) => source.url.includes("/old/"))!;
+
+		baseUrlForHostMock.mockReturnValue("http://127.0.0.1:5000/new");
+		const hostsChanged = subscribeConnectedHostsMock.mock.calls[0][0] as () => void;
+		hostsChanged();
+		const newSource = EventSourceStub.instances.find((source) => source.url.includes("/new/"))!;
+		expect(oldSource.closed).toBe(true);
+		expect(newSource.url).toBe("http://127.0.0.1:5000/new/api/v1/events");
+
+		oldSource.emit("session_updated", "{}");
+		expect(client.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["remote-workspaces", "box-a"] }, { cancelRefetch: false });
+		newSource.emit("session_updated", "{}");
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["remote-workspaces", "box-a"] }, { cancelRefetch: false });
+		disconnect();
+	});
+
 	it("ignores every stream callback after disposal", async () => {
 		vi.useFakeTimers();
 		try {

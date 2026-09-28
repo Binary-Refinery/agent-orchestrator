@@ -306,7 +306,7 @@ function toRemoteWorkspaces(
 		path: "Not attached to a project",
 		sessions: standalone,
 	});
-	return projects;
+	return applyOptimisticSessionKills(projects) ?? projects;
 }
 
 async function fetchRemoteWorkspaces(hostId: string): Promise<WorkspaceSummary[]> {
@@ -476,7 +476,6 @@ export function useRemoteProjectQuery(hostId: string, projectId: string) {
 		select: (workspaces) => workspaces.find((workspace) => workspace.id === projectId),
 		enabled: Boolean(hostId && projectId),
 		retry: 1,
-		refetchInterval: 2_000,
 	});
 }
 
@@ -523,7 +522,6 @@ export function useWorkspaceSession(sessionId: string, hostId?: string) {
 		queryFn: () => fetchRemoteWorkspaces(hostId ?? ""),
 		select: selectRemoteSession,
 		enabled: Boolean(hostId && sessionId),
-		refetchInterval: 2_000,
 	});
 	const selectLocalSession = useMemo(
 		() => (workspaces: WorkspaceSummary[]) =>

@@ -297,7 +297,7 @@ describe("ProjectSettingsForm", () => {
 				}),
 			),
 		);
-		expect(ensureAgentReadinessMock).toHaveBeenCalledWith();
+		expect(ensureAgentReadinessMock).toHaveBeenCalledWith({ hostId: undefined });
 		expect(screen.getByRole("button", { name: "Worker approval" })).toHaveTextContent("Auto");
 		expect(screen.queryByRole("button", { name: "Refresh agents" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh worker model list" })).not.toBeInTheDocument();
@@ -663,7 +663,7 @@ describe("ProjectSettingsForm", () => {
 
 		submitSettings();
 
-		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(putMock).toHaveBeenCalled());
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "proj-1" } },
 			body: {

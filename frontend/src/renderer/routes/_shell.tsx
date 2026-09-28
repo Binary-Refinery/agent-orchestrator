@@ -59,7 +59,6 @@ import { CLOUD_PROJECT_KIND, hasConfiguredOrchestratorAgent, newestActiveOrchest
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 import { RemoteAddProjectDialog } from "../components/RemoteAddProjectDialog";
-import { RemoteProjectAgentsDialog } from "../components/RemoteProjectAgentsDialog";
 import { remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { clientForHost } from "../lib/host-clients";
 import { openRemoteOrchestrator } from "../lib/remote-orchestrator";
@@ -188,11 +187,12 @@ function ShellLayout() {
 	const { hosts: remoteHosts, refresh: refreshRemoteHosts } = useRemoteHosts();
 	const { data: remoteWorkspaces, failedHostIds: remoteFailedHostIds, loadedProjectHostIds } = useRemoteWorkspaces();
 	const [remoteAddProjectHostId, setRemoteAddProjectHostId] = useState<string | null>(null);
-	const [remoteProjectSettings, setRemoteProjectSettings] = useState<{ hostId: string; projectId: string } | null>(null);
 	// Global shortcut listeners need the latest workspace list, but recreating
 	// those subscriptions for every streamed activity update is avoidable.
 	const workspacesRef = useRef(workspaces);
 	workspacesRef.current = workspaces;
+	const remoteWorkspacesRef = useRef(remoteWorkspaces);
+	remoteWorkspacesRef.current = remoteWorkspaces;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
@@ -205,6 +205,7 @@ function ShellLayout() {
 	const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
@@ -373,10 +374,19 @@ function ShellLayout() {
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
-			if (routeParams.hostId || !scopedProjectId) return;
-			const sessions = (workspacesRef.current.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
-				sessionIsActive,
-			);
+			const hostId = routeParams.hostId;
+			const projectId = hostId
+				? routeParams.projectId ??
+					remoteWorkspacesRef.current.find(
+						(workspace) =>
+							workspace.hostId === hostId && workspace.sessions.some((session) => session.id === routeParams.sessionId),
+					)?.id
+				: scopedProjectId;
+			if (!projectId) return;
+			const workspace = hostId
+				? remoteWorkspacesRef.current.find((item) => item.hostId === hostId && item.id === projectId)
+				: workspacesRef.current.find((item) => item.id === projectId);
+			const sessions = (workspace?.sessions ?? []).filter(sessionIsActive);
 			if (sessions.length === 0) return;
 			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
 			const nextIndex =
@@ -387,16 +397,27 @@ function ShellLayout() {
 					: (currentIndex + direction + sessions.length) % sessions.length;
 			const session = sessions[nextIndex];
 			if (!session || session.id === routeParams.sessionId) return;
-			if (scopedProjectId === STANDALONE_WORKSPACE_ID) {
+			if (hostId) {
+				if (projectId === STANDALONE_WORKSPACE_ID) {
+					void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId, sessionId: session.id } });
+				} else {
+					void navigate({
+						to: "/host/$hostId/project/$projectId/session/$sessionId",
+						params: { hostId, projectId, sessionId: session.id },
+					});
+				}
+				return;
+			}
+			if (projectId === STANDALONE_WORKSPACE_ID) {
 				void navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } });
 				return;
 			}
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: scopedProjectId, sessionId: session.id },
+				params: { projectId, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.hostId, routeParams.sessionId, scopedProjectId],
+		[navigate, routeParams.hostId, routeParams.projectId, routeParams.sessionId, scopedProjectId],
 	);
 
 	const updateWorkspaces = useCallback(
@@ -749,7 +770,7 @@ function ShellLayout() {
 		const workspace = remoteWorkspaces.find((item) => item.hostId === hostId && item.id === projectId);
 		if (!workspace) return;
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
-			setRemoteProjectSettings({ hostId, projectId });
+			openProjectSettings(projectId, hostId);
 			return;
 		}
 		try {
@@ -759,7 +780,7 @@ function ShellLayout() {
 		} catch (cause) {
 			showGlobalToast(t("shell.couldNotSpawn"), cause instanceof Error ? cause.message : t("shell.couldNotSpawn"), "error");
 		}
-	}, [navigate, queryClient, remoteWorkspaces, showGlobalToast, t]);
+	}, [navigate, openProjectSettings, queryClient, remoteWorkspaces, showGlobalToast, t]);
 
 	const restartOrchestrator = useCallback(
 		async (projectId: string, mode?: "chat" | "tui", approvalMode?: "bypass-permissions") => {
@@ -1012,7 +1033,7 @@ function ShellLayout() {
 			cloneProject,
 			createProject,
 			initializeProjectRepository,
-			openRemoteProjectSettings: (hostId: string, projectId: string) => setRemoteProjectSettings({ hostId, projectId }),
+			openRemoteProjectSettings: (hostId: string, projectId: string) => openProjectSettings(projectId, hostId),
 			validateImport,
 		}),
 		[
@@ -1020,6 +1041,7 @@ function ShellLayout() {
 			createProject,
 			daemonStatus,
 			initializeProjectRepository,
+			openProjectSettings,
 			validateImport,
 			workspaceStartupState,
 		],
@@ -1061,20 +1083,11 @@ function ShellLayout() {
 					hostId={remoteAddProjectHostId}
 					hostLabel={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.label ?? remoteAddProjectHostId}
 					connected={remoteHosts.find((host) => host.hostId === remoteAddProjectHostId)?.status === "connected"}
-					onCreated={(projectId, ready) => {
+					onCreated={(projectId, orchestratorReady) => {
 						void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteAddProjectHostId) });
-						if (ready) void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId: remoteAddProjectHostId, projectId } });
+						if (!orchestratorReady) void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId: remoteAddProjectHostId, projectId } });
 					}}
 					onOpenChange={(open) => { if (!open) setRemoteAddProjectHostId(null); }}
-				/>}
-				{remoteProjectSettings && <RemoteProjectAgentsDialog
-					key={`${remoteProjectSettings.hostId}:${remoteProjectSettings.projectId}`}
-					hostId={remoteProjectSettings.hostId}
-					projectId={remoteProjectSettings.projectId}
-					hostLabel={remoteHosts.find((host) => host.hostId === remoteProjectSettings.hostId)?.label ?? remoteProjectSettings.hostId}
-					connected={remoteHosts.find((host) => host.hostId === remoteProjectSettings.hostId)?.status === "connected"}
-					onSaved={() => { void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteProjectSettings.hostId) }); }}
-					onOpenChange={(open) => { if (!open) setRemoteProjectSettings(null); }}
 				/>}
 				<GlobalToast />
 				<SettingsDialog />
@@ -1159,7 +1172,7 @@ function ShellLayout() {
 						onOpenRemoteProject={(hostId, projectId) => { void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId, projectId } }); }}
 						onNewRemoteTask={(hostId, projectId) => requestNewTask(projectId, hostId)}
 						onOpenRemoteOrchestrator={(hostId, projectId) => { void openRemoteProjectOrchestrator(hostId, projectId); }}
-						onConfigureRemoteProject={(hostId, projectId) => setRemoteProjectSettings({ hostId, projectId })}
+						onConfigureRemoteProject={(hostId, projectId) => openProjectSettings(projectId, hostId)}
 						onRemoveRemoteProject={removeRemoteProject}
 						onRetryRemoteHosts={() => {
 							void refreshRemoteHosts();

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { typeInLexicalEditor } from "../test/lexical";
+import { setChatDraftBoundary } from "../lib/chat-draft-boundary";
+import { sessionUiKey } from "../lib/hosts";
 
 const { localGet, localPost, remoteConnect } = vi.hoisted(() => ({ localGet: vi.fn(), localPost: vi.fn(), remoteConnect: vi.fn() }));
 vi.mock("../lib/api-client", async (importOriginal) => ({
@@ -15,25 +17,182 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 	return { ...actual, aoBridge: { ...actual.aoBridge, remotes: { connect: remoteConnect, disconnect: vi.fn() } } };
 });
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
-vi.mock("../lib/agent-switch-visibility", () => ({ agentSwitchVisibility: { setQueryHealthy: vi.fn() } }));
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+	...await importOriginal<typeof import("@tanstack/react-router")>(),
+	useNavigate: () => vi.fn(),
+}));
 vi.mock("../hooks/useCloudCp", () => ({ useCloudCp: () => ({ ready: false, baseUrl: "", client: {} }) }));
 vi.mock("../hooks/useCloudOrg", () => ({ useCloudOrg: () => ({ org: undefined, ready: false }) }));
-vi.mock("./RemoteTerminalView", () => ({ RemoteTerminalView: ({ proxyBase }: { proxyBase: string }) => <div data-testid="remote-terminal-base">{proxyBase}</div> }));
+vi.mock("./RemoteTerminalView", () => ({ RemoteTerminalView: ({ hostId, proxyBase, terminalHandleId, inputDisabled }: { hostId: string; proxyBase: string; terminalHandleId?: string; inputDisabled?: boolean }) => <div data-testid="remote-terminal-base" data-host-id={hostId} data-terminal-handle={terminalHandleId ?? ""} data-input-disabled={inputDisabled ? "true" : "false"}>{proxyBase}</div> }));
 
 import { connectHost, disconnectHost } from "../lib/host-clients";
+import { conversationQueryKey } from "../hooks/useConversation";
+import { reviewerConversationQueryKey } from "../hooks/useReviewerConversation";
+import { remoteWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { shellTerminalsQueryKey, shellTerminalsQueryKeyForHost } from "../hooks/useShellTerminals";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { RemoteSessionView } from "./RemoteSessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { TooltipProvider } from "./ui/tooltip";
 
-function renderRemoteSession(queryClient: QueryClient) {
+function renderRemoteSession(queryClient: QueryClient, hostId = "box-a") {
 	return render(<QueryClientProvider client={queryClient}>
-		<TooltipProvider><SessionTopbarProvider><RemoteSessionView hostId="box-a" sessionId="session-1" /></SessionTopbarProvider></TooltipProvider>
+		<TooltipProvider><SessionTopbarProvider><RemoteSessionView hostId={hostId} sessionId="session-1" /></SessionTopbarProvider></TooltipProvider>
 	</QueryClientProvider>);
 }
 
+function conversationBody(body: Record<string, unknown> = {}) {
+	return { conversationId: "conversation-1", sessionId: "session-1", harness: "codex", mode: "chat", controller: "ready", latestSequence: 1, activeBranchId: "branch-root", messages: [], activities: [], ...body };
+}
+
 afterEach(async () => {
+	setChatDraftBoundary(sessionUiKey("session-1", "box-a"), "queued-edit", undefined);
 	await disconnectHost("box-a");
+	await disconnectHost("box-b");
 	vi.unstubAllGlobals();
+});
+
+it("keeps equal local, Box A, and Box B session IDs isolated through chat sends", async () => {
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockImplementation(async (url: string) => url.includes("box-b")
+		? { hostId: "box-b", label: "Box B", url, base: "http://127.0.0.1:4001" }
+		: { hostId: "box-a", label: "Box A", url, base: "http://127.0.0.1:4000" });
+	const posts: string[] = [];
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		const host = new URL(request.url).port === "4001" ? "Box B" : "Box A";
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: host, path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] });
+		if (path.endsWith("/conversation")) return Response.json(conversationBody({ messages: [{ id: "message-1", role: "assistant", text: `Reply from ${host}`, sequence: 1 }] }));
+		if (path.endsWith("/conversation/messages")) {
+			posts.push(request.url);
+			return Response.json({ state: "accepted", turnId: `turn-${host}` }, { status: 202 });
+		}
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	queryClient.setQueryData(conversationQueryKey("session-1"), "local-sentinel");
+	const boxA = renderRemoteSession(queryClient);
+	await screen.findByText("Reply from Box A");
+	await typeInLexicalEditor(screen.getByRole("combobox", { name: "Message the agent" }), "A only");
+	await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/conversation/messages"));
+	boxA.unmount();
+	const boxB = renderRemoteSession(queryClient, "box-b");
+	await screen.findByText("Reply from Box B");
+	expect(screen.queryByText("Reply from Box A")).not.toBeInTheDocument();
+	await typeInLexicalEditor(screen.getByRole("combobox", { name: "Message the agent" }), "B only");
+	await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4001/api/v1/sessions/session-1/conversation/messages"));
+	expect(queryClient.getQueryData(conversationQueryKey("session-1"))).toBe("local-sentinel");
+	expect(queryClient.getQueryData(conversationQueryKey("session-1", "box-a"))).toBeDefined();
+	expect(queryClient.getQueryData(conversationQueryKey("session-1", "box-b"))).toBeDefined();
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+	boxB.unmount();
+});
+
+it("removes remote chat actions when its host disconnects, without falling back to local", async () => {
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] });
+		if (path.endsWith("/conversation")) return Response.json(conversationBody());
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	renderRemoteSession(queryClient);
+	await screen.findByRole("combobox", { name: "Message the agent" });
+	await act(async () => { await disconnectHost("box-a"); });
+	expect(queryClient.getQueryData(conversationQueryKey("session-1", "box-a"))).toBeDefined();
+	expect(screen.queryByRole("combobox", { name: "Message the agent" })).not.toBeInTheDocument();
+	expect(screen.getByRole("alert")).toHaveTextContent("Could not load this remote session");
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("hides stale chat controls when the upstream daemon fails but its proxy remains connected", async () => {
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	let upstreamFailed = false;
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) {
+			return upstreamFailed
+				? Response.json({ code: "UPSTREAM_UNAVAILABLE", message: "Remote daemon is down" }, { status: 503 })
+				: Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] });
+		}
+		if (path.endsWith("/conversation")) return Response.json(conversationBody());
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	renderRemoteSession(queryClient);
+	await screen.findByRole("combobox", { name: "Message the agent" });
+	upstreamFailed = true;
+	await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey("box-a") }); });
+	expect(queryClient.getQueryData(remoteWorkspaceQueryKey("box-a"))).toBeDefined();
+	expect(screen.getByTestId("remote-session-view")).toBeInTheDocument();
+	expect(screen.getByRole("alert")).toHaveTextContent("Could not load this remote session");
+	expect(screen.queryByRole("combobox", { name: "Message the agent" })).not.toBeInTheDocument();
+	expect(screen.queryByRole("complementary", { name: "Session inspector" })).not.toBeInTheDocument();
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("resolves an approval and interrupts Box B despite equal IDs on Box A and local", async () => {
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockImplementation(async (url: string) => url.includes("box-b")
+		? { hostId: "box-b", label: "Box B", url, base: "http://127.0.0.1:4001" }
+		: { hostId: "box-a", label: "Box A", url, base: "http://127.0.0.1:4000" });
+	const posts: string[] = [];
+	let conversationReads = 0;
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] });
+		if (path.endsWith("/conversation")) {
+			conversationReads++;
+			return Response.json(conversationBody({ controller: "busy", turns: [{ id: "turn-1", state: "running", requestedAt: "2026-09-28T00:00:00Z" }], activities: conversationReads === 1 ? [{
+				id: "approval-1", turnId: "turn-1", sequence: 1, revision: 1, activityKind: "approval", status: "pending", summary: "Run command", requestId: "acp:host:1",
+				detail: { command: "npm test", decisions: [{ id: "allow-once", label: "Allow once", kind: "allow_once" }] }, createdAt: "2026-09-28T00:00:00Z",
+			}] : [] }));
+		}
+		if (request.method === "POST") {
+			posts.push(request.url);
+			return new Response(null, { status: 204 });
+		}
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	queryClient.setQueryData(conversationQueryKey("session-1"), "local-sentinel");
+	renderRemoteSession(queryClient, "box-b");
+	const approval = await screen.findByRole("group", { name: "Approval request acp:host:1" });
+	await userEvent.click(within(approval).getByRole("button", { name: /Allow once/ }));
+	await waitFor(() => expect(posts.some((url) => url.endsWith("/conversation/approvals/acp%3Ahost%3A1/resolve"))).toBe(true));
+	await waitFor(() => expect(screen.queryByRole("group", { name: "Approval request acp:host:1" })).not.toBeInTheDocument());
+	await userEvent.click(screen.getByRole("button", { name: "Stop turn" }));
+	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4001/api/v1/sessions/session-1/conversation/interrupt"));
+	expect(posts.every((url) => url.startsWith("http://127.0.0.1:4001/"))).toBe(true);
+	expect(queryClient.getQueryData(conversationQueryKey("session-1"))).toBe("local-sentinel");
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
 });
 
 it("reads and sends a remote Chat message through Box A, never the local daemon", async () => {
@@ -47,7 +206,7 @@ it("reads and sends a remote Chat message through Box A, never the local daemon"
 		let body: unknown;
 		if (request.url.endsWith("/projects")) body = { projects: [{ id: "project-1", name: "Remote", path: "/remote" }] };
 		else if (request.url.endsWith("/sessions")) body = { sessions: [{ id: "session-1", projectId: "project-1", displayName: "Fix login", harness: "codex", status: "working", mode: "chat", prs: [] }] };
-		else if (new URL(request.url).pathname.endsWith("/conversation")) body = { messages: [{ id: "msg-1", role: "assistant", text: "I am working on login", sequence: 1 }], activities: [] };
+		else if (new URL(request.url).pathname.endsWith("/conversation")) body = conversationBody({ messages: [{ id: "msg-1", role: "assistant", text: "I am working on login", sequence: 1 }] });
 		else body = { state: "accepted", turnId: "turn-2" };
 		return new Response(JSON.stringify(body), { status: request.method === "POST" ? 202 : 200, headers: { "content-type": "application/json" } });
 	}));
@@ -65,6 +224,7 @@ it("reads and sends a remote Chat message through Box A, never the local daemon"
 });
 
 it("shows a normal inspector and reads its changed files from the remote host only", async () => {
+	HTMLElement.prototype.scrollTo = vi.fn();
 	const requests: string[] = [];
 	localGet.mockReset();
 	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
@@ -74,8 +234,17 @@ it("shows a normal inspector and reads its changed files from the remote host on
 		requests.push(request.url);
 		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
 		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", displayName: "Fix login", harness: "codex", status: "working", mode: "chat", branch: "fix/login", prs: [{ url: "https://github.com/acme/app/pull/42", number: 42, state: "open", ci: "passing", review: "none", mergeability: "mergeable", reviewComments: false, updatedAt: "2026-09-28T00:00:00Z" }] }] });
-		if (path.endsWith("/conversation")) return Response.json({ messages: [], activities: [] });
-		if (path.endsWith("/workspace/files")) return Response.json({ files: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1 }] });
+		if (path.endsWith("/conversation")) return Response.json(conversationBody());
+		if (path.endsWith("/workspace/files")) return Response.json({
+			sessionId: "session-1", workspaceVersion: "version-1",
+			files: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1, size: 6, binary: false }],
+			sections: { committed: [], staged: [], unstaged: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1, size: 6, binary: false }], untracked: [] },
+			commits: [], summary: { additions: 1, deletions: 1, files: 1 }, truncated: false,
+		});
+		if (path.endsWith("/workspace/diffs")) return Response.json({
+			sessionId: "session-1", workspaceVersion: "version-1",
+			groups: [{ repository: "", patch: "diff --git a/app/page.tsx b/app/page.tsx\n--- a/app/page.tsx\n+++ b/app/page.tsx\n@@ -1 +1 @@\n-old\n+new\n", truncated: false, includedPaths: ["app/page.tsx"], deferred: [] }],
+		});
 		if (path.endsWith("/workspace/file")) return Response.json({ path: "app/page.tsx", diff: "@@ -1 +1 @@\n-old\n+new", content: "new", binary: false, contentTruncated: false, diffTruncated: false });
 		throw new Error(`Unexpected request ${request.url}`);
 	}));
@@ -83,19 +252,73 @@ it("shows a normal inspector and reads its changed files from the remote host on
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	renderRemoteSession(queryClient);
 	expect(await screen.findByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
-	expect(screen.getByText("Box A", { selector: "dd" })).toBeInTheDocument();
-	expect(screen.getByText("fix/login", { selector: "dd" })).toBeInTheDocument();
-	expect(screen.getByRole("link", { name: /PR #42/ })).toHaveAttribute("href", "https://github.com/acme/app/pull/42");
+	await screen.findByRole("combobox", { name: "Message the agent" });
+	expect(screen.getByText("Box A")).toBeInTheDocument();
+	expect(screen.getByRole("link", { name: "Open PR #42" })).toHaveAttribute("href", "https://github.com/acme/app/pull/42");
 	await userEvent.click(screen.getByRole("tab", { name: "Files" }));
-	await userEvent.click(await screen.findByRole("button", { name: /app\/page\.tsx/ }));
-	expect(await screen.findByText(/\+new/)).toBeInTheDocument();
+	expect(await screen.findByRole("region", { name: "Session files" })).toBeInTheDocument();
+	await userEvent.click(await screen.findByRole("button", { name: "Open full file" }));
+	expect(screen.getByRole("tab", { name: "page.tsx" })).toBeInTheDocument();
+	expect(screen.getByTestId("session-file-workspace")).toBeInTheDocument();
 	expect(requests).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/files");
-	expect(requests.some((url) => url.startsWith("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/file?path="))).toBe(true);
+	expect(requests).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/diffs");
+	await waitFor(() => expect(requests.some((url) => url.startsWith("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/file?path="))).toBe(true));
 	expect(localGet).not.toHaveBeenCalled();
 	await userEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
 	expect(screen.queryByRole("complementary", { name: "Session inspector" })).not.toBeInTheDocument();
 	await userEvent.click(screen.getByRole("button", { name: "Open inspector panel" }));
 	expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+});
+
+it("opens a TUI host file in a shared center tab and renames on that host", async () => {
+	const requests: Array<{ url: string; method: string }> = [];
+	let title = "Worker";
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		requests.push({ url: request.url, method: request.method });
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions") && request.method === "GET") return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", displayName: title, harness: "codex", status: "working", mode: "tui", terminalHandleId: "terminal-1", prs: [] }] });
+		if (path.endsWith("/sessions/session-1") && request.method === "PATCH") {
+			title = (await request.json() as { displayName: string }).displayName;
+			return Response.json({});
+		}
+		if (path.endsWith("/workspace/files")) return Response.json({ sessionId: "session-1", workspaceVersion: "version-1", files: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1, size: 6, binary: false }], sections: { committed: [], staged: [], unstaged: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1, size: 6, binary: false }], untracked: [] }, commits: [], summary: { additions: 1, deletions: 1, files: 1 }, truncated: false });
+		if (path.endsWith("/workspace/diffs")) return Response.json({ sessionId: "session-1", workspaceVersion: "version-1", groups: [{ repository: "", patch: "diff --git a/app/page.tsx b/app/page.tsx\n--- a/app/page.tsx\n+++ b/app/page.tsx\n@@ -1 +1 @@\n-old\n+new\n", truncated: false, includedPaths: ["app/page.tsx"], deferred: [] }] });
+		if (path.endsWith("/workspace/file")) return Response.json({ path: "app/page.tsx", diff: "@@ -1 +1 @@\n-old\n+new", content: "new", binary: false, contentTruncated: false, diffTruncated: false });
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	renderRemoteSession(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+	expect(await screen.findByTestId("remote-terminal-base")).toHaveTextContent("http://127.0.0.1:4000");
+	await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+	await userEvent.click(await screen.findByRole("button", { name: "Open full file" }));
+	expect(screen.getByRole("tab", { name: "page.tsx" })).toHaveAttribute("aria-selected", "true");
+	expect(screen.getByTestId("session-file-workspace")).toBeInTheDocument();
+	await userEvent.click(screen.getByRole("tab", { name: /Worker · Codex/ }));
+	expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+	expect(screen.getByTestId("remote-terminal-base")).toBeVisible();
+	await userEvent.dblClick(screen.getByRole("tab", { name: /Worker · Codex/ }));
+	const rename = screen.getByRole("textbox", { name: /Rename/ });
+	await userEvent.clear(rename);
+	await userEvent.type(rename, "Remote worker");
+	fireEvent.blur(rename);
+	await waitFor(() => expect(requests).toContainEqual({ url: "http://127.0.0.1:4000/api/v1/sessions/session-1", method: "PATCH" }));
+	expect(localGet).not.toHaveBeenCalled();
+});
+
+it("waits for the remote terminal handle during session startup", async () => {
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", displayName: "Starting", harness: "codex", status: "working", mode: "tui", prs: [] }] });
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	renderRemoteSession(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+	expect(await screen.findByTestId("remote-terminal-base")).toHaveAttribute("data-terminal-handle", "");
 });
 
 it("loads older remote history once while polling only the latest page", async () => {
@@ -112,15 +335,15 @@ it("loads older remote history once while polling only the latest page", async (
 		else if (url.pathname.endsWith("/conversation")) {
 			conversationReads.push(url);
 			if (url.searchParams.has("beforeSequence")) {
-				body = { sessionId: "session-1", controller: "running", latestSequence: 200, oldestSequence: 1, hasMoreBefore: false,
-					messages: [{ id: "older", role: "assistant", text: "Earlier work", sequence: 200 }], activities: [] };
+				body = conversationBody({ latestSequence: 200, oldestSequence: 1, hasMoreBefore: false,
+					messages: [{ id: "older", role: "assistant", text: "Earlier work", sequence: 200 }] });
 			} else {
 				latestReads++;
-				body = { sessionId: "session-1", controller: "running", latestSequence: 400 + latestReads, oldestSequence: 200 + latestReads, hasMoreBefore: true,
+				body = conversationBody({ latestSequence: 400 + latestReads, oldestSequence: 200 + latestReads, hasMoreBefore: true,
 					messages: [
 						...(latestReads === 1 ? [{ id: "edge", role: "assistant", text: "Sliding window edge", sequence: 201 }] : []),
 						{ id: "latest", role: "assistant", text: `Latest update ${latestReads}`, sequence: 400 + latestReads },
-					], activities: [] };
+					] });
 			}
 		} else throw new Error(`Unexpected request ${request.url}`);
 		return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -140,13 +363,11 @@ it("loads older remote history once while polling only the latest page", async (
 	expect(localGet).not.toHaveBeenCalled();
 });
 
-it("interrupts the turn and stops the session on Box A, not the local daemon", async () => {
+it("interrupts the turn on Box A, not the local daemon", async () => {
 	const posts: string[] = [];
 	localGet.mockReset();
 	localPost.mockReset();
 	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
-	const confirm = vi.fn(() => true);
-	vi.stubGlobal("confirm", confirm);
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
 		const request = input instanceof Request ? input : new Request(input);
 		const path = new URL(request.url).pathname;
@@ -158,7 +379,7 @@ it("interrupts the turn and stops the session on Box A, not the local daemon", a
 			? { projects: [{ id: "project-1", name: "Remote", path: "/remote" }] }
 			: path.endsWith("/sessions")
 				? { sessions: [{ id: "session-1", projectId: "project-1", displayName: "Worker", harness: "codex", status: "working", mode: "chat", prs: [] }] }
-				: { sessionId: "session-1", controller: "running", latestSequence: 1, turns: [{ id: "turn-1", state: "running", requestedAt: "2026-09-28T00:00:00Z" }], messages: [], activities: [] };
+				: conversationBody({ controller: "busy", turns: [{ id: "turn-1", state: "running", requestedAt: "2026-09-28T00:00:00Z" }] });
 		return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 	}));
 	await connectHost("http://box-a:3001");
@@ -166,9 +387,7 @@ it("interrupts the turn and stops the session on Box A, not the local daemon", a
 	renderRemoteSession(queryClient);
 	fireEvent.click(await screen.findByRole("button", { name: "Stop turn" }));
 	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/conversation/interrupt"));
-	fireEvent.click(screen.getByRole("button", { name: "Stop session" }));
-	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/kill"));
-	expect(confirm).toHaveBeenCalledWith("Stop Worker on box-a?");
+	expect(screen.queryByRole("button", { name: "Stop session" })).not.toBeInTheDocument();
 	expect(localGet).not.toHaveBeenCalled();
 	expect(localPost).not.toHaveBeenCalled();
 });
@@ -184,7 +403,7 @@ it("keeps accepted remote sends accepted when the follow-up read fails", async (
 		if (path.endsWith("/conversation")) {
 			conversationReads++;
 			return conversationReads === 1
-				? Response.json({ sessionId: "session-1", controller: "running", latestSequence: 1, messages: [{ id: "first", role: "assistant", text: "Still here", sequence: 1 }], activities: [] })
+				? Response.json(conversationBody({ messages: [{ id: "first", role: "assistant", text: "Still here", sequence: 1 }] }))
 				: Response.json({ code: "UNAVAILABLE", message: "Connection lost" }, { status: 503 });
 		}
 		if (path.endsWith("/conversation/messages")) return Response.json({ state: "accepted", turnId: "turn-2" }, { status: 202 });
@@ -229,7 +448,7 @@ it("reuses a Chat delivery ID when a lost response is retried", async () => {
 		let status = 200;
 		if (request.url.endsWith("/projects")) body = { projects: [{ id: "project-1", name: "Remote", path: "/remote" }] };
 		else if (request.url.endsWith("/sessions")) body = { sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] };
-		else if (new URL(request.url).pathname.endsWith("/conversation")) body = { messages: [], activities: [] };
+		else if (new URL(request.url).pathname.endsWith("/conversation")) body = conversationBody();
 		else {
 			deliveryIds.push((await request.json() as { clientMessageId: string }).clientMessageId);
 			status = deliveryIds.length === 1 ? 503 : 202;
@@ -262,12 +481,12 @@ it.each([204, 409])("answers a remote approval through its host and refreshes af
 		else if (request.url.endsWith("/sessions")) body = { sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] };
 		else if (new URL(request.url).pathname.endsWith("/conversation")) {
 			conversationReads++;
-			body = { controller: "running", latestSequence: 1, turns: [{ id: "turn-1", state: "running", requestedAt: "2026-09-28T00:00:00Z" }], messages: [], activities: conversationReads === 1 ? [{
+			body = conversationBody({ controller: "busy", turns: [{ id: "turn-1", state: "running", requestedAt: "2026-09-28T00:00:00Z" }], activities: conversationReads === 1 ? [{
 				kind: "activity", id: "approval-1", turnId: "turn-1", sequence: 1, revision: 1,
 				activityKind: "approval", status: "pending", summary: "Run command", requestId: "acp:host:1",
 				detail: { command: "npm test", decisions: [{ id: "allow-once", label: "Allow once", kind: "allow_once" }] },
 				createdAt: "2026-09-28T00:00:00Z",
-			}] : [] };
+			}] : [] });
 		} else if (request.url.endsWith("/resolve")) {
 			decisions.push({ url: request.url, decisionId: (await request.json() as { decisionId: string }).decisionId });
 			return status === 204
@@ -289,4 +508,220 @@ it.each([204, 409])("answers a remote approval through its host and refreshes af
 	await waitFor(() => expect(screen.queryByRole("group", { name: "Approval request acp:host:1" })).not.toBeInTheDocument());
 	expect(localPost).not.toHaveBeenCalled();
 	expect(localGet).not.toHaveBeenCalled();
+});
+
+it("opens the shared reviewer Chat tab and sends only to Box B with equal review IDs", async () => {
+	HTMLElement.prototype.scrollTo = vi.fn();
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockImplementation(async (url: string) => url.includes("box-b")
+		? { hostId: "box-b", label: "Box B", url, base: "http://127.0.0.1:4001" }
+		: { hostId: "box-a", label: "Box A", url, base: "http://127.0.0.1:4000" });
+	const posts: string[] = [];
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Todo", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [{ url: "https://github.com/acme/todo/pull/7", number: 7, state: "open", ci: "passing", review: "none", mergeability: "mergeable", reviewComments: false, updatedAt: "2026-09-28T00:00:00Z" }] }] });
+		if (path.endsWith("/sessions/session-1/reviews")) return Response.json({ reviewerHandleId: "", reviewerSurface: { mode: "chat", reviewId: "review-1", harness: "codex" }, reviews: [], runs: [] });
+		if (path.endsWith("/reviews/review-1/conversation")) return Response.json(conversationBody({ sessionId: "review-1", messages: [{ id: "msg-review", role: "assistant", text: `Review on port ${new URL(request.url).port}`, sequence: 1 }] }));
+		if (path.endsWith("/reviews/review-1/conversation/messages")) {
+			posts.push(request.url);
+			return Response.json({ state: "accepted", turnId: "review-turn" }, { status: 202 });
+		}
+		if (path.endsWith("/sessions/session-1/conversation")) return Response.json(conversationBody());
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	queryClient.setQueryData(reviewerConversationQueryKey("review-1"), "local-sentinel");
+	queryClient.setQueryData(reviewerConversationQueryKey("review-1", "box-a"), "box-a-sentinel");
+	renderRemoteSession(queryClient, "box-b");
+	await userEvent.click(await screen.findByRole("tab", { name: "Reviewer" }));
+	expect(await screen.findByText("Review on port 4001")).toBeInTheDocument();
+	await typeInLexicalEditor(screen.getByRole("combobox", { name: "Message the agent" }), "Review this change");
+	await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+	await waitFor(() => expect(posts).toContain("http://127.0.0.1:4001/api/v1/reviews/review-1/conversation/messages"));
+	expect(queryClient.getQueryData(reviewerConversationQueryKey("review-1"))).toBe("local-sentinel");
+	expect(queryClient.getQueryData(reviewerConversationQueryKey("review-1", "box-a"))).toBe("box-a-sentinel");
+	expect(queryClient.getQueryData(reviewerConversationQueryKey("review-1", "box-b"))).toBeDefined();
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("opens the returned reviewer Chat when a remote review is triggered", async () => {
+	HTMLElement.prototype.scrollTo = vi.fn();
+	remoteConnect.mockResolvedValue({ hostId: "box-b", label: "Box B", url: "http://box-b:3001", base: "http://127.0.0.1:4001" });
+	const prUrl = "https://github.com/acme/todo/pull/7";
+	let reviews = { reviewerHandleId: "", reviews: [{ prNumber: 7, prUrl, status: "needs_review", targetSha: "head", title: "PR 7" }], runs: [] } as Record<string, unknown>;
+	const mutations: string[] = [];
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Todo", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "opencode", status: "working", mode: "chat", prs: [{ url: prUrl, number: 7, state: "open", ci: "passing", review: "none", mergeability: "mergeable", reviewComments: false, updatedAt: "2026-09-28T00:00:00Z" }] }] });
+		if (path.endsWith("/sessions/session-1/reviews") && request.method === "GET") return Response.json(reviews);
+		if (path.endsWith("/sessions/session-1/reviews/trigger")) {
+			mutations.push(request.url);
+			reviews = {
+				reviewerHandleId: "", reviewerSurface: { mode: "chat", reviewId: "review-1", harness: "opencode" }, runs: [],
+				reviews: [{ prNumber: 7, prUrl, status: "running", targetSha: "head", title: "PR 7", latestRun: { id: "run-1", reviewId: "review-1", sessionId: "session-1", prUrl, targetSha: "head", harness: "opencode", status: "running", createdAt: "2026-09-28T00:00:00Z", triggerSource: "manual", autoInjectReview: true, githubReviewId: "", body: "", verdict: "" } }],
+			};
+			return Response.json(reviews, { status: 201 });
+		}
+		if (path.endsWith("/projects/project-1")) return Response.json({ project: { config: { reviewers: [{ harness: "opencode" }] } } });
+		if (path.endsWith("/agents/readiness") || path.endsWith("/agents/readiness/ensure")) return Response.json({ agents: [agentReadiness("opencode")] });
+		if (path.endsWith("/reviews/review-1/conversation")) return Response.json(conversationBody({ sessionId: "review-1", messages: [{ id: "review-msg", role: "assistant", text: "Reviewer is on Box B", sequence: 1 }] }));
+		if (path.endsWith("/sessions/session-1/conversation")) return Response.json(conversationBody());
+		return Response.json({});
+	}));
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+	renderRemoteSession(queryClient, "box-b");
+	await userEvent.click(await screen.findByRole("tab", { name: "Reviews" }));
+	await userEvent.click(await screen.findByRole("button", { name: "Review latest commit" }));
+	expect(await screen.findByText("Reviewer is on Box B")).toBeInTheDocument();
+	expect(mutations).toEqual(["http://127.0.0.1:4001/api/v1/sessions/session-1/reviews/trigger"]);
+	expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("opens a TUI reviewer terminal through Box B's mux handle", async () => {
+	remoteConnect.mockResolvedValue({ hostId: "box-b", label: "Box B", url: "http://box-b:3001", base: "http://127.0.0.1:4001" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Todo", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "tui", terminalHandleId: "worker-handle", prs: [{ url: "https://github.com/acme/todo/pull/7", number: 7, state: "open" }] }] });
+		if (path.endsWith("/sessions/session-1/reviews")) return Response.json({ reviewerHandleId: "reviewer-handle", reviewerHarness: "codex", reviews: [], runs: [] });
+		return Response.json({});
+	}));
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	renderRemoteSession(queryClient, "box-b");
+	await userEvent.click(await screen.findByRole("tab", { name: "Reviewer" }));
+	expect(screen.getByTestId("remote-reviewer-panel")).toContainElement(screen.getAllByTestId("remote-terminal-base").find((node) => node.getAttribute("data-terminal-handle") === "reviewer-handle") ?? null);
+	expect(screen.getByTestId("remote-reviewer-panel")).toHaveTextContent("http://127.0.0.1:4001");
+	await userEvent.click(screen.getByRole("tab", { name: /session-1/ }));
+	expect(screen.queryByTestId("remote-reviewer-panel")).not.toBeInTheDocument();
+});
+
+it("opens a shell tab on Box B without attaching a local or Box A terminal", async () => {
+	HTMLElement.prototype.scrollTo = vi.fn();
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-b", label: "Box B", url: "http://box-b:3001", base: "http://127.0.0.1:4001" });
+	const shellPosts: string[] = [];
+	const openedShell = { handleId: "shared-handle", projectId: "project-1", sessionId: "session-1", title: "Terminal 1", workingDir: "/remote", createdAt: "2026-09-28T00:00:00Z" };
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Todo", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "opencode", status: "working", mode: "chat", prs: [] }] });
+		if (path.endsWith("/sessions/session-1/conversation")) return Response.json(conversationBody({ harness: "opencode" }));
+		if (path.endsWith("/shell-terminals") && request.method === "GET") return Response.json({ shellTerminals: shellPosts.length ? [openedShell] : [] });
+		if (path.endsWith("/shell-terminals") && request.method === "POST") {
+			shellPosts.push(request.url);
+			return Response.json({ shellTerminal: openedShell }, { status: 201 });
+		}
+		return Response.json({});
+	}));
+	await connectHost("http://box-b:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+	queryClient.setQueryData(shellTerminalsQueryKey, "local-sentinel");
+	queryClient.setQueryData(shellTerminalsQueryKeyForHost("box-a"), "box-a-sentinel");
+	renderRemoteSession(queryClient, "box-b");
+	await userEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+	await waitFor(() => expect(shellPosts).toEqual(["http://127.0.0.1:4001/api/v1/shell-terminals"]));
+	const shellPane = await screen.findByTestId("chat-shell-terminal");
+	expect(within(shellPane).getByTestId("remote-terminal-base")).toHaveAttribute("data-host-id", "box-b");
+	expect(within(shellPane).getByTestId("remote-terminal-base")).toHaveAttribute("data-terminal-handle", "shared-handle");
+	expect(queryClient.getQueryData(shellTerminalsQueryKey)).toBe("local-sentinel");
+	expect(queryClient.getQueryData(shellTerminalsQueryKeyForHost("box-a"))).toBe("box-a-sentinel");
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("switches a remote Terminal session through its host and fences worker input while pending", async () => {
+	localGet.mockReset();
+	localPost.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	const posts: Array<{ url: string; body: unknown }> = [];
+	let transitionStatus: Record<string, unknown> = { supported: true, targetMode: "chat" };
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "idle", mode: "tui", terminalHandleId: "worker-terminal", prs: [] }] });
+		if (path.endsWith("/settings")) return Response.json({ chatHarnesses: ["codex"] });
+		if (path.endsWith("/interface-transition") && request.method === "GET") return Response.json(transitionStatus);
+		if (path.endsWith("/interface-transition") && request.method === "POST") {
+			posts.push({ url: request.url, body: await request.json() });
+			const transition = { id: "transition-a", sessionId: "session-1", sourceMode: "tui", targetMode: "chat", policy: "drain", historyPolicy: "strict", phase: "requested", createdAt: "2026-09-28T00:00:00Z", updatedAt: "2026-09-28T00:00:00Z" };
+			transitionStatus = { supported: true, targetMode: "chat", transition };
+			return Response.json({ transition }, { status: 202 });
+		}
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+	renderRemoteSession(queryClient);
+	const terminal = await screen.findByTestId("remote-terminal-base");
+	expect(terminal).toHaveAttribute("data-input-disabled", "false");
+	await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: "Switch to chat UI" }));
+	await waitFor(() => expect(posts).toEqual([{ url: "http://127.0.0.1:4000/api/v1/sessions/session-1/interface-transition", body: { targetMode: "chat", policy: "drain", historyPolicy: "strict" } }]));
+	await waitFor(() => expect(terminal).toHaveAttribute("data-input-disabled", "true"));
+	expect(localGet).not.toHaveBeenCalled();
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("requires remote Chat draft confirmation before posting an interface switch", async () => {
+	localPost.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	const posts: string[] = [];
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "codex", status: "working", mode: "chat", prs: [] }] });
+		if (path.endsWith("/settings")) return Response.json({ chatHarnesses: ["codex"] });
+		if (path.endsWith("/interface-transition") && request.method === "GET") return Response.json({ supported: true, targetMode: "tui" });
+		if (path.endsWith("/interface-transition") && request.method === "POST") {
+			posts.push(request.url);
+			return Response.json({ transition: { id: "transition-a", sessionId: "session-1", sourceMode: "chat", targetMode: "tui", policy: "drain", historyPolicy: "strict", phase: "requested", createdAt: "2026-09-28T00:00:00Z", updatedAt: "2026-09-28T00:00:00Z" } }, { status: 202 });
+		}
+		if (path.endsWith("/conversation")) return Response.json(conversationBody());
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	renderRemoteSession(new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }));
+	await screen.findByRole("combobox", { name: "Message the agent" });
+	act(() => setChatDraftBoundary(sessionUiKey("session-1", "box-a"), "queued-edit", "persistence-failed"));
+	await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: "Switch to terminal UI" }));
+	await userEvent.click(await screen.findByRole("button", { name: /^Finish work, then switch/ }));
+	const confirm = await screen.findByRole("dialog", { name: "Discard unsafe Chat draft state?" });
+	expect(posts).toEqual([]);
+	await userEvent.click(within(confirm).getByRole("button", { name: "Leave chat" }));
+	await waitFor(() => expect(posts).toEqual(["http://127.0.0.1:4000/api/v1/sessions/session-1/interface-transition"]));
+	expect(localPost).not.toHaveBeenCalled();
+});
+
+it("hides Chat switching for a remote harness outside that host's Chat list", async () => {
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", harness: "opencode", status: "idle", mode: "tui", prs: [] }] });
+		if (path.endsWith("/settings")) return Response.json({ chatHarnesses: ["claude-code", "codex"] });
+		if (path.endsWith("/interface-transition")) return Response.json({ supported: false, targetMode: "chat", reasonCode: "SESSION_TERMINATED" });
+		return Response.json({});
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	renderRemoteSession(queryClient);
+	await screen.findByTestId("remote-terminal-base");
+	await waitFor(() => expect(queryClient.getQueryData(["settings", "box-a"])).toMatchObject({ chatHarnesses: ["claude-code", "codex"] }));
+	expect(screen.queryByRole("button", { name: "Session actions" })).not.toBeInTheDocument();
 });

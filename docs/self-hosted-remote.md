@@ -15,9 +15,11 @@ or new global database. The existing AO Cloud path is separate.
    This command does not start AO's managed public Cloudflare tunnel, even if
    Connect Mobile previously started one.
 3. On each desktop client, enable **Settings → General → Remote hosts
-   (experimental)** and add the address/password. Repeat for as many remote
-   machines as needed. The sidebar lists each machine separately; **Start on
-   [machine]** creates the worker on that machine.
+   (experimental)**, then add the address/password in **Settings → Remote hosts**.
+   Repeat for as many remote machines as needed. Projects on each host appear
+   in the normal sidebar with a host badge. Use **Projects → +** or **Add project
+   on [machine]** to register code on a host, then use that project's **New
+   task** action to start a worker there.
 4. On mobile, pair the machine in **Settings → Machines**. Switch the selected
    machine there to view and continue its sessions. Pair the same machine on a
    second laptop to continue the same host-owned session.
@@ -31,10 +33,14 @@ against accidental address reassignment, not an active network attacker or a
 copied AO data directory. Desktop connection passwords live in
 `~/.ao/remotes.json` (or `AO_DATA_DIR/remotes.json`) with owner-only permissions.
 
-The first desktop remote surface supports starting workers, Chat messages,
-Chat approvals, terminal attach, and stopping sessions. Native editor, files,
-and browser are not exposed in that remote view yet. Push notifications
-carry the owning host ID; a tap for a different selected host opens the board
-instead of acting on a same-ID session there. Older pushes without a host ID
-also open the board. AO Cloud placement remains its existing separate flow;
-this slice does not unify all three placements into one picker.
+The desktop reuses the normal project creation, settings, board, Chat,
+inspector, and file surfaces, with requests routed to the owning host. The
+host badge indicates where the daemon runs; it does not change the project or
+session workflow. Host-local browser previews and native editor actions are
+not available until AO can map or proxy those resources to the client safely.
+Install and sign in to agent harnesses on the host itself; the desktop's
+global Harness settings still manage only the local machine.
+Push notifications carry the owning host ID; a tap for a different selected
+host opens the board instead of acting on a same-ID session there. Older pushes
+without a host ID also open the board. AO Cloud placement remains a separate
+flow; this slice does not unify all three placements into one picker.

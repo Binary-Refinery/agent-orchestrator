@@ -11,14 +11,15 @@ type Props = {
 	proxyBase: string;
 	terminalHandleId?: string;
 	terminalGeneration?: string;
+	inputDisabled?: boolean;
 };
 
 /** Mount identity includes the host, so an equal handle on another box never inherits its socket or screen. */
-export function RemoteTerminalView({ hostId, proxyBase, terminalHandleId, terminalGeneration }: Props) {
-	return <RemoteTerminalAttachment key={`${hostId}:${proxyBase}:${terminalHandleId ?? ""}:${terminalGeneration ?? ""}`} proxyBase={proxyBase} terminalHandleId={terminalHandleId} />;
+export function RemoteTerminalView({ hostId, proxyBase, terminalHandleId, terminalGeneration, inputDisabled }: Props) {
+	return <RemoteTerminalAttachment key={`${hostId}:${proxyBase}:${terminalHandleId ?? ""}:${terminalGeneration ?? ""}`} proxyBase={proxyBase} terminalHandleId={terminalHandleId} inputDisabled={inputDisabled} />;
 }
 
-function RemoteTerminalAttachment({ proxyBase, terminalHandleId }: Omit<Props, "hostId">) {
+function RemoteTerminalAttachment({ proxyBase, terminalHandleId, inputDisabled }: Omit<Props, "hostId">) {
 	const { t } = useTranslation();
 	const theme = useResolvedTheme();
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
@@ -29,6 +30,7 @@ function RemoteTerminalAttachment({ proxyBase, terminalHandleId }: Omit<Props, "
 	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(undefined, {
 		createMux,
 		daemonReady: true,
+		inputDisabled,
 		shellTerminalHandleId: terminalHandleId,
 	});
 	useEffect(() => {
