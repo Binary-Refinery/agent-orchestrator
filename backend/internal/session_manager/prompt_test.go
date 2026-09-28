@@ -156,6 +156,8 @@ func TestBuildSystemPrompt_WorkerDoesNotClaimReviewOnlyPR(t *testing.T) {
 		"Do not claim or attach the PR/MR for review-only work",
 		"claiming mutates AO ownership metadata",
 		"Never claim or attach a PR for a review-only task",
+		"Review-only still authorizes submitting the explicitly requested provider review",
+		"forbids code changes, other PR/MR mutations, and AO ownership changes",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing review-only claim guard %q:\n%s", want, got)
