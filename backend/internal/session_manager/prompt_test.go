@@ -140,6 +140,27 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 	}
 }
 
+func TestBuildSystemPrompt_WorkerDoesNotClaimReviewOnlyPR(t *testing.T) {
+	got := buildSystemPromptText(systemPromptConfig{
+		Role: sessionPromptRoleWorker,
+		Project: promptProject{
+			ID:   "mer",
+			Name: "Mercury",
+			Repo: "https://github.com/acme/mercury",
+		},
+	})
+	for _, want := range []string{
+		"A review-only task is not PR/MR continuation",
+		"Do not claim or attach the PR/MR for review-only work",
+		"claiming mutates AO ownership metadata",
+		"Never claim or attach a PR for a review-only task",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("worker prompt missing review-only claim guard %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role:                  sessionPromptRoleWorker,
