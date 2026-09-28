@@ -27,6 +27,7 @@ import {
 import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
 import {
+  boundPlainReleaseNotes,
   isNetErrorMessage,
   normalizeReleaseNotes,
   updateFailureOutcome,
@@ -910,10 +911,12 @@ let stagedPersistenceQueue: Promise<unknown> = Promise.resolve();
 /** Persist in event order without blocking updater events. */
 function persistStagedBuild(stateDir: string | undefined): void {
   if (stateDir === undefined || stagedVersion === undefined || stagedAtMs === undefined) return;
+  const releaseNotes = offeredReleaseNotes;
   const payload = `${JSON.stringify({
     version: stagedVersion,
     stagedAt: stagedAtMs,
     channel: stagedChannel,
+    ...(releaseNotes === undefined ? {} : { releaseNotes }),
   })}\n`;
   // mkdir first: this can be the earliest write into the state dir on a fresh
   // install, and writeUpdateSettings is not guaranteed to have run yet.
@@ -942,7 +945,12 @@ function restoreStagedBuild(stateDir: string): void {
   // Synchronous on purpose. Awaiting a real filesystem read here would push the
   // launch-time update check behind an I/O turn for a file that is a few dozen
   // bytes and read exactly once per process.
-  let raw: { version?: unknown; stagedAt?: unknown; channel?: unknown };
+  let raw: {
+    version?: unknown;
+    stagedAt?: unknown;
+    channel?: unknown;
+    releaseNotes?: unknown;
+  };
   try {
     raw = JSON.parse(readFileSync(stagedUpdateFile(stateDir), "utf8")) as typeof raw;
   } catch {
@@ -966,7 +974,29 @@ function restoreStagedBuild(stateDir: string): void {
   stagedVersion = raw.version;
   stagedAtMs = raw.stagedAt;
   stagedChannel = typeof raw.channel === "string" ? raw.channel : undefined;
+  offeredReleaseNotes = boundPlainReleaseNotes(
+    typeof raw.releaseNotes === "string" ? raw.releaseNotes : undefined,
+  );
   stagedEscalated = false;
+}
+
+/** Refresh notes only when they describe the build that is already staged. */
+function refreshStagedReleaseNotes(
+  version: string | undefined,
+  notes: Parameters<typeof normalizeReleaseNotes>[0],
+): void {
+  if (
+    version === undefined ||
+    stagedVersion === undefined ||
+    (version !== stagedVersion &&
+      (semver.valid(version) === null ||
+        semver.valid(stagedVersion) === null ||
+        !semver.eq(version, stagedVersion)))
+  ) return;
+  const releaseNotes = normalizeReleaseNotes(notes) ?? directFeedReleaseNotes;
+  if (releaseNotes === undefined || releaseNotes === offeredReleaseNotes) return;
+  offeredReleaseNotes = releaseNotes;
+  persistStagedBuild(escalationStateDir);
 }
 
 /** The feed channel a settings object resolves to. Mirrors configureFeed. */
@@ -1169,6 +1199,7 @@ async function checkForUpdatesWithDeadline(): Promise<UpdateCheckOutcome> {
  * Applied to both background and renderer-requested checks.
  */
 function settleCheckStatus(result: UpdateCheckOutcome): void {
+  refreshStagedReleaseNotes(result?.updateInfo?.version, result?.updateInfo?.releaseNotes);
   if (lastStatus.state !== "checking") return;
   const version = result?.updateInfo?.version;
   if (result?.isUpdateAvailable === true && version !== undefined) {
@@ -1189,6 +1220,7 @@ function settleCheckStatus(result: UpdateCheckOutcome): void {
 function broadcastDiscoveredAvailable(): void {
   const discovered = directFeedDiscoveredAvailable;
   if (discovered === undefined) return;
+  refreshStagedReleaseNotes(discovered.version, discovered.notes);
   if (
     lastStatus.state === "available" ||
     lastStatus.state === "downloading" ||
@@ -1770,6 +1802,7 @@ function wireUpdaterEvents(): void {
     // A manual re-check reports the already-staged build as merely "available"
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
+    refreshStagedReleaseNotes(info?.version, info?.releaseNotes);
     if (stagedAtMs !== undefined && info?.version === stagedVersion) {
       broadcastCompletedCheck(stagedDownloadedStatus());
       return;
@@ -2052,7 +2085,7 @@ export function getUpdateStatus(): UpdateStatus {
     ...stagedStamp(),
     ...(lastCheckError ? { checkError: lastCheckError } : {}),
     ...(offeredReleaseNotes !== undefined && lastStatus.releaseNotes === undefined &&
-      (lastStatus.state === "available" || lastStatus.state === "downloading" || lastStatus.state === "downloaded")
+      (hasStagedBuild() || lastStatus.state === "available" || lastStatus.state === "downloading" || lastStatus.state === "downloaded")
       ? { releaseNotes: offeredReleaseNotes }
       : {}),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
