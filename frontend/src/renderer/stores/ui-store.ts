@@ -25,6 +25,7 @@ export type GlobalSettingsSection =
 	| "harness"
 	| "agents"
 	| "cloud"
+	| "remoteHosts"
 	| "mobile"
 	| "shortcuts"
 	| "browserProfiles"

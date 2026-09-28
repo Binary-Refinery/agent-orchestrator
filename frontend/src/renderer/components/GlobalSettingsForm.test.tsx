@@ -219,6 +219,7 @@ describe("GlobalSettingsForm", () => {
 		renderForm("general");
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
 		expect(document.querySelector('[data-section="browserProfiles"]')).not.toBeInTheDocument();
+		expect(document.querySelector('[data-section="remoteHosts"]')).not.toBeInTheDocument();
 	});
 
 	it("keeps download history inside the Browser settings page", async () => {
@@ -253,15 +254,12 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
 	});
 
-	it("offers Remote hosts as a switch right below Developer Mode and persists it", async () => {
+	it("keeps Remote hosts in its own page and persists the enable switch", async () => {
 		const user = userEvent.setup();
-		renderForm();
-		const developerMode = await screen.findByRole("switch", { name: "Developer mode" });
-		const remoteHosts = screen.getByRole("switch", { name: "Remote hosts (experimental)" });
+		renderForm("remoteHosts");
+		const remoteHosts = await screen.findByRole("switch", { name: "Connect to remote hosts" });
 		expect(remoteHosts).toHaveAttribute("aria-checked", "false");
-		// "Underneath Developer Mode": the next switch in document order.
-		expect(developerMode.compareDocumentPosition(remoteHosts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(screen.getAllByRole("switch").indexOf(remoteHosts)).toBe(screen.getAllByRole("switch").indexOf(developerMode) + 1);
+		expect(screen.queryByRole("switch", { name: "Developer mode" })).not.toBeInTheDocument();
 
 		await user.click(remoteHosts);
 		expect(window.localStorage.getItem("ao.remoteHosts")).toBe("true");

@@ -972,7 +972,9 @@ export function Sidebar({
 						trailing={
 							<CreateProjectButton
 								existingProjectPaths={existingProjectPaths}
-								hideTrigger={workspaces.length === 0}
+								hideTrigger={workspaces.length === 0 && remoteHosts.length === 0}
+								remoteHosts={remoteHosts}
+								onStartRemoteHost={onStartRemoteHost}
 								onCloneProject={onCloneProject}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
@@ -3035,11 +3037,13 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 function CreateProjectButton({
 	existingProjectPaths,
 	hideTrigger = false,
+	remoteHosts,
+	onStartRemoteHost,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	onOpenExistingProject,
-}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & {
+}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject" | "remoteHosts" | "onStartRemoteHost"> & {
 	existingProjectPaths: readonly string[];
 	hideTrigger?: boolean;
 	onOpenExistingProject: (path: string) => void | Promise<void>;
@@ -3057,6 +3061,8 @@ function CreateProjectButton({
 			droppedPath={folderDropRequest}
 			existingProjectPaths={existingProjectPaths}
 			mode="choose"
+			remoteHosts={remoteHosts}
+			onStartRemoteHost={onStartRemoteHost}
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
 			onCreateStandaloneAgent={() => requestNewTask(STANDALONE_WORKSPACE_ID)}

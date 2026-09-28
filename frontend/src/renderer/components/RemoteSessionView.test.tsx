@@ -64,6 +64,40 @@ it("reads and sends a remote Chat message through Box A, never the local daemon"
 	expect(localPost).not.toHaveBeenCalled();
 });
 
+it("shows a normal inspector and reads its changed files from the remote host only", async () => {
+	const requests: string[] = [];
+	localGet.mockReset();
+	remoteConnect.mockResolvedValue({ hostId: "box-a", label: "Box A", url: "http://box-a:3001", base: "http://127.0.0.1:4000" });
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+		const request = input instanceof Request ? input : new Request(input);
+		const path = new URL(request.url).pathname;
+		requests.push(request.url);
+		if (path.endsWith("/projects")) return Response.json({ projects: [{ id: "project-1", name: "Remote", path: "/remote" }] });
+		if (path.endsWith("/sessions")) return Response.json({ sessions: [{ id: "session-1", projectId: "project-1", displayName: "Fix login", harness: "codex", status: "working", mode: "chat", branch: "fix/login", prs: [{ url: "https://github.com/acme/app/pull/42", number: 42, state: "open", ci: "passing", review: "none", mergeability: "mergeable", reviewComments: false, updatedAt: "2026-09-28T00:00:00Z" }] }] });
+		if (path.endsWith("/conversation")) return Response.json({ messages: [], activities: [] });
+		if (path.endsWith("/workspace/files")) return Response.json({ files: [{ path: "app/page.tsx", status: "modified", additions: 1, deletions: 1 }] });
+		if (path.endsWith("/workspace/file")) return Response.json({ path: "app/page.tsx", diff: "@@ -1 +1 @@\n-old\n+new", content: "new", binary: false, contentTruncated: false, diffTruncated: false });
+		throw new Error(`Unexpected request ${request.url}`);
+	}));
+	await connectHost("http://box-a:3001");
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	renderRemoteSession(queryClient);
+	expect(await screen.findByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+	expect(screen.getByText("Box A", { selector: "dd" })).toBeInTheDocument();
+	expect(screen.getByText("fix/login", { selector: "dd" })).toBeInTheDocument();
+	expect(screen.getByRole("link", { name: /PR #42/ })).toHaveAttribute("href", "https://github.com/acme/app/pull/42");
+	await userEvent.click(screen.getByRole("tab", { name: "Files" }));
+	await userEvent.click(await screen.findByRole("button", { name: /app\/page\.tsx/ }));
+	expect(await screen.findByText(/\+new/)).toBeInTheDocument();
+	expect(requests).toContain("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/files");
+	expect(requests.some((url) => url.startsWith("http://127.0.0.1:4000/api/v1/sessions/session-1/workspace/file?path="))).toBe(true);
+	expect(localGet).not.toHaveBeenCalled();
+	await userEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
+	expect(screen.queryByRole("complementary", { name: "Session inspector" })).not.toBeInTheDocument();
+	await userEvent.click(screen.getByRole("button", { name: "Open inspector panel" }));
+	expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+});
+
 it("loads older remote history once while polling only the latest page", async () => {
 	const conversationReads: URL[] = [];
 	let latestReads = 0;

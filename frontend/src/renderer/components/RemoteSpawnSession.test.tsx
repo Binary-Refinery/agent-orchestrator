@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
 const remoteConnect = vi.hoisted(() => vi.fn());
@@ -39,9 +40,14 @@ it("starts a worker on Box B, not the local daemon, even when the session ID ove
 	render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
 		<RemoteSpawnSession hostId="box-b" onCreated={onCreated} />
 	</QueryClientProvider>);
-	await screen.findByRole("option", { name: "Project on Box B" });
+	await waitFor(() => expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Codex"));
+	await userEvent.click(screen.getByRole("combobox", { name: "Agent" }));
 	expect(screen.queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
-	fireEvent.change(screen.getByRole("combobox", { name: "Project" }), { target: { value: "project-1" } });
+	await userEvent.keyboard("{Escape}");
+	await waitFor(() => expect(screen.getByRole("combobox", { name: "Project" })).toBeEnabled());
+	await userEvent.click(screen.getByRole("combobox", { name: "Project" }));
+	await userEvent.click(await screen.findByRole("option", { name: "Project on Box B" }));
+	expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Project on Box B");
 	fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Fix the login test" } });
 	fireEvent.click(screen.getByRole("button", { name: "Start on remote host" }));
 	await waitFor(() => expect(onCreated).toHaveBeenCalledWith("same-id"));
@@ -76,16 +82,18 @@ it("uses Terminal for a ready agent that cannot run Chat", async () => {
 	render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
 		<RemoteSpawnSession hostId="box-b" onCreated={onCreated} />
 	</QueryClientProvider>);
-	await screen.findByRole("option", { name: "Unreal Agent" });
-	expect(screen.getByRole("combobox", { name: "Interface" })).toHaveValue("tui");
-	expect(screen.getByRole("option", { name: "Chat" })).toBeDisabled();
+	await waitFor(() => expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Unreal Agent"));
+	expect(screen.getByRole("combobox", { name: "Interface" })).toHaveTextContent("Terminal");
+	await userEvent.click(screen.getByRole("combobox", { name: "Interface" }));
+	expect(screen.getByRole("option", { name: "Chat" })).toHaveAttribute("data-disabled");
+	await userEvent.keyboard("{Escape}");
 	fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Inspect logs" } });
 	fireEvent.click(screen.getByRole("button", { name: "Start on remote host" }));
 	await waitFor(() => expect(onCreated).toHaveBeenCalledWith("tui-session"));
 	expect(requests.find(({ url }) => url.endsWith("/sessions"))?.body).toMatchObject({ harness: "unreal-agent", mode: "tui" });
 });
 
-it("does not carry Box B's selected project into Box C when both have the same project ID", async () => {
+it("uses Box C's own project rather than carrying Box B's selection across hosts", async () => {
 	remoteConnect.mockImplementation(async (url: string) => url.includes("box-b")
 		? { hostId: "box-b", label: "Box B", url, base: "http://127.0.0.1:4400" }
 		: { hostId: "box-c", label: "Box C", url, base: "http://127.0.0.1:4500" });
@@ -104,13 +112,15 @@ it("does not carry Box B's selected project into Box C when both have the same p
 	const { rerender } = render(<QueryClientProvider client={queryClient}>
 		<RemoteSpawnSession hostId="box-b" onCreated={vi.fn()} />
 	</QueryClientProvider>);
-	await screen.findByRole("option", { name: "Box B project" });
-	fireEvent.change(screen.getByRole("combobox", { name: "Project" }), { target: { value: "project-1" } });
+	await waitFor(() => expect(screen.getByRole("combobox", { name: "Project" })).toBeEnabled());
+	await userEvent.click(screen.getByRole("combobox", { name: "Project" }));
+	await userEvent.click(await screen.findByRole("option", { name: "Box B project" }));
 	rerender(<QueryClientProvider client={queryClient}>
 		<RemoteSpawnSession hostId="box-c" onCreated={vi.fn()} />
 	</QueryClientProvider>);
-	await screen.findByRole("option", { name: "Box C project" });
-	expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("");
+	await waitFor(() => expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Standalone"));
+	await userEvent.click(screen.getByRole("combobox", { name: "Project" }));
+	expect(await screen.findByRole("option", { name: "Box C project" })).toBeInTheDocument();
 });
 
 it("does not create a session when the selected remote host is disconnected", () => {

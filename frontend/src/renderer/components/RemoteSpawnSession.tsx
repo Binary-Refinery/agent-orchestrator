@@ -1,15 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, useSyncExternalStore, type FormEvent } from "react";
+import { ArrowUp, Loader2 } from "lucide-react";
+import { useId, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { apiErrorMessage } from "../lib/api-client";
 import { clientForHost, connectedHosts, subscribeConnectedHosts } from "../lib/host-clients";
 import { LOCAL_HOST } from "../lib/hosts";
+import { STANDALONE_WORKSPACE_ID } from "../types/workspace";
+import { Button } from "./ui/button";
+import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 type SpawnRequest = components["schemas"]["SpawnSessionRequest"];
 
 export function RemoteSpawnSession({ hostId, onCreated }: { hostId: string; onCreated: (sessionId: string) => void }) {
 	const { t } = useTranslation();
+	const projectFieldId = useId();
+	const promptFieldId = useId();
 	const connected = useSyncExternalStore(subscribeConnectedHosts, connectedHosts).includes(hostId) && hostId !== LOCAL_HOST;
 	const [projectChoice, setProjectChoice] = useState<{ hostId: string; id: string }>();
 	const [agentChoice, setAgentChoice] = useState<{ hostId: string; id: string }>();
@@ -47,6 +54,7 @@ export function RemoteSpawnSession({ hostId, onCreated }: { hostId: string; onCr
 		},
 	});
 	const readyAgents = agents.data ?? [];
+	const availableProjects = projects.data?.filter((project) => !project.folderMissing) ?? [];
 	const projectId = projectChoice?.hostId === hostId ? projectChoice.id : "";
 	const selectedAgent = (agentChoice?.hostId === hostId ? agentChoice.id : "") || readyAgents[0]?.id || "";
 	const supportsChat = settings.data?.chatHarnesses?.includes(selectedAgent) ?? false;
@@ -80,31 +88,54 @@ export function RemoteSpawnSession({ hostId, onCreated }: { hostId: string; onCr
 		}
 	};
 
-	return <form aria-label={t("remote.startTaskAria")} className="flex flex-col gap-4" onSubmit={(event) => void submit(event)}>
+	return <form aria-label={t("remote.startTaskAria")} className="flex flex-col gap-3 px-4 pb-4" onSubmit={(event) => void submit(event)}>
+		<div className="flex flex-col gap-2">
+			<Label htmlFor={projectFieldId}>{t("createProject.project")}</Label>
+			<Select value={projectId || STANDALONE_WORKSPACE_ID} disabled={!connected || !projects.isSuccess || submitting} onValueChange={(id) => setProjectChoice({ hostId, id: id === STANDALONE_WORKSPACE_ID ? "" : id })}>
+				<SelectTrigger id={projectFieldId} size="sm" className="w-full" aria-label={t("createProject.project")}>
+					<SelectValue />
+				</SelectTrigger>
+				<SelectContent position="popper" align="start">
+					<SelectItem value={STANDALONE_WORKSPACE_ID}>{t("remote.standalone")}</SelectItem>
+					{availableProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
+				</SelectContent>
+			</Select>
+		</div>
 		{!connected && <p role="alert" className="text-sm text-destructive">{t("remote.connectBeforeStart")}</p>}
-		<label className="flex flex-col gap-1 text-sm">{t("createProject.project")}
-			<select className="rounded-md border bg-background px-3 py-2" value={projectId} disabled={!connected || !projects.isSuccess} onChange={(event) => setProjectChoice({ hostId, id: event.target.value })}>
-				<option value="">{t("remote.standalone")}</option>
-				{projects.data?.filter((project) => !project.folderMissing).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-			</select>
-		</label>
-		<label className="flex flex-col gap-1 text-sm">{t("newTask.agent")}
-			<select className="rounded-md border bg-background px-3 py-2" value={selectedAgent} disabled={!connected || !readyAgents.length} onChange={(event) => setAgentChoice({ hostId, id: event.target.value })}>
-				{readyAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.label}</option>)}
-			</select>
-		</label>
 		{agents.isSuccess && !readyAgents.length && <p role="alert" className="text-sm text-muted-foreground">{t("remote.noReadyAgent")}</p>}
-		<label className="flex flex-col gap-1 text-sm">{t("remote.interface")}
-			<select className="rounded-md border bg-background px-3 py-2" value={selectedMode} disabled={!settings.isSuccess} onChange={(event) => setMode(event.target.value as "chat" | "tui")}>
-				<option value="chat" disabled={!supportsChat}>{t("settings.sessionInterface.chat")}</option>
-				<option value="tui">{t("settings.sessionInterface.terminal")}</option>
-			</select>
-		</label>
-		<label className="flex flex-col gap-1 text-sm">{t("newTask.task")}
-			<textarea className="min-h-24 rounded-md border bg-background px-3 py-2" value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-		</label>
-		{(projects.isError || agents.isError || settings.isError) && <p role="alert" className="text-sm text-destructive">{t("remote.loadSpawnOptionsFailed")}</p>}
-		{submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
-		<button type="submit" className="self-start rounded-md border px-4 py-2 text-sm" disabled={!canSubmit}>{submitting ? t("remote.starting") : t("remote.startTitle")}</button>
+		<div className="composer-prompt-surface overflow-hidden rounded-lg border border-border bg-input/30">
+			<Label htmlFor={promptFieldId} className="sr-only">{t("newTask.task")}</Label>
+			<textarea id={promptFieldId} className="min-h-28 w-full resize-y bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50" placeholder={t("newTask.titlePlaceholder")} value={prompt} disabled={submitting} onChange={(event) => setPrompt(event.target.value)} />
+			{(projects.isError || agents.isError || settings.isError) && <p role="alert" className="px-4 pb-2 text-caption text-destructive">{t("remote.loadSpawnOptionsFailed")}</p>}
+			{submitError && <p role="alert" className="px-4 pb-2 text-caption text-destructive">{submitError}</p>}
+			<div className="composer-toolbar">
+				<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
+					<div className="composer-toolbar-slot">
+						<Select value={selectedAgent} disabled={!connected || !readyAgents.length || submitting} onValueChange={(id) => setAgentChoice({ hostId, id })}>
+							<SelectTrigger size="sm" className="composer-chip composer-toolbar-option w-full justify-between" aria-label={t("newTask.agent")}>
+								<SelectValue placeholder={t("newTask.selectAgent")} />
+							</SelectTrigger>
+							<SelectContent position="popper" align="start">
+								{readyAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.label}</SelectItem>)}
+							</SelectContent>
+						</Select>
+					</div>
+					<div className="composer-toolbar-slot">
+						<Select value={selectedMode} disabled={!settings.isSuccess || submitting} onValueChange={(value) => setMode(value as "chat" | "tui")}>
+							<SelectTrigger size="sm" className="composer-chip composer-toolbar-option w-full justify-between" aria-label={t("remote.interface")}>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent position="popper" align="start">
+								<SelectItem value="chat" disabled={!supportsChat}>{t("settings.sessionInterface.chat")}</SelectItem>
+								<SelectItem value="tui">{t("settings.sessionInterface.terminal")}</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				</div>
+				<Button type="submit" size="icon-sm" className="size-7 rounded-full bg-foreground text-background hover:bg-foreground/90" aria-label={submitting ? t("remote.starting") : t("remote.startTitle")} disabled={!canSubmit}>
+					{submitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <ArrowUp className="size-3.5" aria-hidden="true" />}
+				</Button>
+			</div>
+		</div>
 	</form>;
 }

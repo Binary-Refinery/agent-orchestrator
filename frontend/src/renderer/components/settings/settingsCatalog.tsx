@@ -1,4 +1,4 @@
-import { BadgeCheck, Bot, CircleHelp, Cloud, Globe2, Keyboard, RefreshCw, Settings2, Smartphone, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Bot, CircleHelp, Cloud, Globe2, Keyboard, RefreshCw, Server, Settings2, Smartphone, type LucideIcon } from "lucide-react";
 import { lazy, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import type { GlobalSettingsSection } from "../../stores/ui-store";
@@ -13,6 +13,7 @@ import { HarnessSettingsSection } from "./HarnessSettingsSection";
 import { KeyboardShortcutsContent } from "./KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./MobileDevicesSection";
 import { ReportProblemContent } from "./ReportProblemContent";
+import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { SettingsSection } from "./SettingsSection";
 
 const UpdatesSection = lazy(async () => {
@@ -80,6 +81,12 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 				<CloudCredentialsSection titleHidden={titleHidden} />
 			</>
 		),
+	},
+	{
+		id: "remoteHosts",
+		icon: Server,
+		label: (t) => t("settings.remoteHosts"),
+		render: (_t, titleHidden) => <RemoteHostsSettings titleHidden={titleHidden} />,
 	},
 	{
 		id: "mobile",

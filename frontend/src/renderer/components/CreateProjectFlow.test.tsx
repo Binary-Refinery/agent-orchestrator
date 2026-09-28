@@ -353,6 +353,25 @@ beforeEach(() => {
 });
 
 describe("CreateProjectFlow droppedPath", () => {
+	it("offers each configured host in the project chooser", async () => {
+		const onStartRemoteHost = vi.fn();
+		const user = userEvent.setup();
+		renderChooseFlow({
+			onStartRemoteHost,
+			remoteHosts: [
+				{ hostId: "box-a", label: "Host A", url: "http://box-a:3011", status: "connected" },
+				{ hostId: "box-b", label: "Host B", url: "http://box-b:3011", status: "offline" },
+			],
+		});
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Start on Host B" }));
+
+		expect(onStartRemoteHost).toHaveBeenCalledOnce();
+		expect(onStartRemoteHost).toHaveBeenCalledWith("box-b");
+		await waitFor(() => expect(screen.queryByRole("button", { name: "Start on Host B" })).not.toBeInTheDocument());
+	});
+
 	it("shows the standalone agent action when the host provides one", async () => {
 		const onCreateStandaloneAgent = vi.fn();
 		const user = userEvent.setup();

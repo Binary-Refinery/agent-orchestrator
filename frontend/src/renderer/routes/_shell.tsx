@@ -1024,12 +1024,12 @@ function ShellLayout() {
 				<GlobalNewTaskDialog />
 				<Dialog.Root open={remoteStartHostId !== null} onOpenChange={(open) => { if (!open) setRemoteStartHostId(null); }}>
 					<Dialog.Portal>
-						<Dialog.Overlay className="dialog-overlay" />
-						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl">
-							<Dialog.Title className="mb-2 text-lg font-semibold">{remoteStartHostId
+						<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+						<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+							<Dialog.Title className="settings-dialog-title px-4 pt-3">{remoteStartHostId
 								? t("remote.startOn", { label: remoteHosts.find((host) => host.hostId === remoteStartHostId)?.label ?? remoteStartHostId })
 								: t("remote.startTitle")}</Dialog.Title>
-							<Dialog.Description className="mb-4 text-sm text-muted-foreground">{t("remote.startDescription")}</Dialog.Description>
+							<Dialog.Description className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">{t("remote.startDescription")}</Dialog.Description>
 							{remoteStartHostId && <RemoteSpawnSession key={remoteStartHostId} hostId={remoteStartHostId} onCreated={(sessionId) => {
 								void queryClient.invalidateQueries({ queryKey: remoteWorkspaceQueryKey(remoteStartHostId) });
 								void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: remoteStartHostId, sessionId } });

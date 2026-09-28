@@ -2,6 +2,7 @@ import { type InfiniteData, useInfiniteQuery, useMutation, useQueryClient } from
 import { useBlocker } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { PanelRight } from "lucide-react";
 import { mergeConversationPages, toSnapshot } from "../hooks/useConversation";
 import { baseUrlForHost, clientForHost, labelForHost, subscribeConnectedHosts } from "../lib/host-clients";
 import { apiErrorCode } from "../lib/api-client";
@@ -14,6 +15,7 @@ import { SessionPaneTab } from "./CenterPane";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TopbarButton } from "./TopbarButton";
 import { RemoteTerminalView } from "./RemoteTerminalView";
+import { RemoteSessionInspector } from "./RemoteSessionInspector";
 import type { ConversationSnapshot } from "../types/conversation";
 
 const CONVERSATION_PAGE_SIZE = 200;
@@ -42,6 +44,7 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 	const hostLabel = useSyncExternalStore(subscribeConnectedHosts, () => labelForHost(hostId)) ?? hostId;
 	const sessionRefKey = refKey({ host: hostId, id: sessionId });
 	const [refreshErrorKey, setRefreshErrorKey] = useState<string | null>(null);
+	const [inspectorOpen, setInspectorOpen] = useState(true);
 	const conversationKey = ["remote-conversation", hostId, sessionId] as const;
 	const fetchConversationPage = useCallback(async (beforeSequence?: number) => {
 		const { data, error } = await clientForHost(hostId).GET("/api/v1/sessions/{sessionId}/conversation", {
@@ -150,9 +153,16 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 		<TopbarButton variant="kill" disabled={!session.data || session.data.isTerminated || stop.isPending || !proxyBase} onClick={() => {
 			if (window.confirm(t("remote.confirmStop", { title, hostId }))) stop.mutate();
 		}}>{t("remote.stopSession")}</TopbarButton>
+		<TopbarButton
+			aria-label={inspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+			aria-pressed={inspectorOpen}
+			onClick={() => setInspectorOpen((open) => !open)}
+			variant="icon"
+		><PanelRight aria-hidden="true" className="size-icon-md" /></TopbarButton>
 	</div>;
 
-	return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="remote-session-view" data-host-id={hostId}>
+	return <div className="relative flex h-full min-h-0 bg-background text-foreground" data-testid="remote-session-view" data-host-id={hostId}>
+		<div className="flex min-w-0 flex-1 flex-col">
 		{session.data?.mode === "chat" && <SessionTopbarHost className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden" data-testid="session-topbar-host" />}
 		{session.isError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.loadSessionFailed")}</p>}
 		{stop.isError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{t("remote.stopSessionFailed")}</p>}
@@ -187,5 +197,9 @@ export function RemoteSessionView({ hostId, sessionId }: { hostId: string; sessi
 				: proxyBase && !session.data && !session.isError ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{t("session.notFound")}</div>
 				: null}
 		</div>
+		</div>
+		{session.data && inspectorOpen ? <div className="w-[min(20rem,40%)] shrink-0 overflow-hidden border-l border-border-strong bg-background 2xl:w-[min(24rem,40%)]" data-testid="panel-inspector">
+			<RemoteSessionInspector key={sessionRefKey} connected={Boolean(proxyBase)} hostId={hostId} hostLabel={hostLabel} session={session.data} />
+		</div> : null}
 	</div>;
 }

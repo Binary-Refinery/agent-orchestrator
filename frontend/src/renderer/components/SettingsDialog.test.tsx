@@ -117,6 +117,15 @@ describe("SettingsDialog", () => {
 		));
 	});
 
+	it("shows Remote hosts even while the feature and Cloud are off", async () => {
+		useUiStore.setState({ remoteHosts: false });
+		useUiStore.getState().openGlobalSettings("remoteHosts");
+		renderSettingsDialog();
+
+		expect(await screen.findByTestId("global-settings-section")).toHaveTextContent("remoteHosts");
+		expect(screen.getByRole("button", { name: "Remote hosts" })).toHaveAttribute("aria-current", "page");
+	});
+
 	it("keeps the settings surface above its blurred backdrop", async () => {
 		useUiStore.getState().openGlobalSettings("mobile");
 		renderSettingsDialog();

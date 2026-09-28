@@ -495,6 +495,25 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("shows the Projects plus button with host choices when there are no local projects", async () => {
+		const onStartRemoteHost = vi.fn();
+		const user = userEvent.setup();
+		renderSidebar({
+			workspaces: [],
+			remoteHosts: [
+				{ hostId: "box-a", label: "Host A", url: "http://box-a:3011", status: "connected" },
+				{ hostId: "box-b", label: "Host B", url: "http://box-b:3011", status: "connected" },
+			],
+			onStartRemoteHost,
+		});
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		const chooser = await screen.findByRole("dialog");
+		expect(within(chooser).getByRole("button", { name: "Start on Host A" })).toBeInTheDocument();
+		await user.click(within(chooser).getByRole("button", { name: "Start on Host B" }));
+		expect(onStartRemoteHost).toHaveBeenCalledWith("box-b");
+	});
+
 	it("lists remote projects beside local and Cloud projects with host-qualified sessions", () => {
 		mockParams.hostId = "box-b";
 		mockParams.projectId = "proj-1";
