@@ -31,6 +31,7 @@ function renderDialog() {
 it("configures an existing project on its host and starts its orchestrator", async () => {
 	const user = userEvent.setup();
 	const { onOpenChange } = renderDialog();
+	expect(await screen.findByRole("dialog", { name: "Project settings · ai-learning-aid" })).toBeVisible();
 	await user.click(await screen.findByRole("button", { name: "Save changes" }));
 	await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
 	expect(host.put).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {

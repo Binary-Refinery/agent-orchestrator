@@ -1155,7 +1155,6 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 						remoteHosts={remoteHosts}
-						onStartRemoteHost={(hostId) => requestNewTask(STANDALONE_WORKSPACE_ID, hostId)}
 						onAddRemoteProject={setRemoteAddProjectHostId}
 						onOpenRemoteProject={(hostId, projectId) => { void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId, projectId } }); }}
 						onNewRemoteTask={(hostId, projectId) => requestNewTask(projectId, hostId)}

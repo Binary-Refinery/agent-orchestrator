@@ -435,7 +435,6 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	remoteHosts?: RemoteHost[];
-	onStartRemoteHost?: (hostId: string) => void;
 	onAddRemoteProject?: (hostId: string) => void;
 	onOpenRemoteProject?: (hostId: string, projectId: string) => void;
 	onNewRemoteTask?: (hostId: string, projectId: string) => void;
@@ -546,7 +545,6 @@ export function Sidebar({
 	workspaceError,
 	workspaces,
 	remoteHosts = [],
-	onStartRemoteHost = () => undefined,
 	onAddRemoteProject = () => undefined,
 	onOpenRemoteProject = () => undefined,
 	onNewRemoteTask = () => undefined,
@@ -1049,7 +1047,6 @@ export function Sidebar({
 											activeHostId={selection.activeRemoteHostId}
 											activeProjectId={selection.activeRemoteProjectId}
 											activeSessionId={selection.activeRemoteSessionId}
-											onStart={onStartRemoteHost}
 											onAddProject={onAddRemoteProject}
 											onOpenProject={onOpenRemoteProject}
 											onNewTask={onNewRemoteTask}

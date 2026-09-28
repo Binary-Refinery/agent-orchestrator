@@ -298,7 +298,6 @@ function renderSidebar({
 	workspaces = [workspace],
 	remoteHosts = [],
 	remoteWorkspaces = [],
-	onStartRemoteHost = vi.fn(),
 	onAddRemoteProject = vi.fn(),
 	onRemoveRemoteProject = vi.fn().mockResolvedValue(undefined),
 	initialOpen = true,
@@ -314,7 +313,6 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	remoteHosts?: RemoteHost[];
 	remoteWorkspaces?: WorkspaceSummary[];
-	onStartRemoteHost?: (hostId: string) => void;
 	onAddRemoteProject?: (hostId: string) => void;
 	onRemoveRemoteProject?: (hostId: string, projectId: string) => Promise<void>;
 	initialOpen?: boolean;
@@ -350,7 +348,6 @@ function renderSidebar({
 						workspaces={workspaces}
 						remoteHosts={remoteHosts}
 						remoteWorkspaces={remoteWorkspaces}
-						onStartRemoteHost={onStartRemoteHost}
 						onAddRemoteProject={onAddRemoteProject}
 						onRemoveRemoteProject={onRemoveRemoteProject}
 					/>

@@ -25,7 +25,6 @@ type Props = {
 	onNewTask: (hostId: string, projectId: string) => void;
 	onOrchestrator: (hostId: string, projectId: string) => void;
 	onConfigure: (hostId: string, projectId: string) => void;
-	onStart: (hostId: string) => void;
 	onAddProject: (hostId: string) => void;
 	onRemoveProject: (hostId: string, projectId: string) => Promise<void>;
 	onRetry: () => void;
@@ -126,7 +125,7 @@ function RemoteProjectRow({ host, workspace, activeProjectId, activeSessionId, o
 						</DropdownMenuItem>
 						<DropdownMenuItem disabled={isRemoving} onSelect={() => onConfigure(host.hostId, workspace.id)}>
 							<Settings aria-hidden="true" />
-							{t("settings.project.agents")}
+							{t("shell.projectSettings")}
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
@@ -176,7 +175,7 @@ function RemoteProjectRow({ host, workspace, activeProjectId, activeSessionId, o
 	</SidebarMenuItem>;
 }
 
-export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], loadedProjectHostIds = [], activeHostId, activeProjectId, activeSessionId, onOpenSession, onOpenProject, onNewTask, onOrchestrator, onConfigure, onStart, onAddProject, onRemoveProject, onRetry }: Props) {
+export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], loadedProjectHostIds = [], activeHostId, activeProjectId, activeSessionId, onOpenSession, onOpenProject, onNewTask, onOrchestrator, onConfigure, onAddProject, onRemoveProject, onRetry }: Props) {
 	const { t } = useTranslation();
 	if (hosts.length === 0) return null;
 	return <>
@@ -210,12 +209,6 @@ export function RemoteHostsSection({ hosts, workspaces, failedHostIds = [], load
 					onConfigure={onConfigure}
 					onRemoveProject={onRemoveProject}
 				/>)}
-				<SidebarMenuItem>
-					<SidebarMenuButton aria-label={t("remote.startOn", { label: host.label })} className="h-8 gap-2 rounded-lg px-2.5 text-sm text-muted-foreground hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md" onClick={() => onStart(host.hostId)}>
-						<Plus aria-hidden="true" />
-						<span className="truncate">{t("remote.startOn", { label: host.label })}</span>
-					</SidebarMenuButton>
-				</SidebarMenuItem>
 				<SidebarMenuItem>
 					<SidebarMenuButton
 						aria-label={t("remote.addProjectOnHost", { label: host.label, defaultValue: "Add project on {{label}}" })}

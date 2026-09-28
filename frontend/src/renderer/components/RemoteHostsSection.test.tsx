@@ -9,7 +9,6 @@ import { STANDALONE_WORKSPACE_ID } from "../types/workspace";
 it("keeps offline hosts visible and opens a same-ID session on the selected host", () => {
 	const open = vi.fn();
 	const retry = vi.fn();
-	const start = vi.fn();
 	const addProject = vi.fn();
 	render(<TooltipProvider><SidebarProvider><SidebarMenu><RemoteHostsSection
 		hosts={[
@@ -33,7 +32,6 @@ it("keeps offline hosts visible and opens a same-ID session on the selected host
 		onNewTask={vi.fn()}
 		onOrchestrator={vi.fn()}
 		onConfigure={vi.fn()}
-		onStart={start}
 		onAddProject={addProject}
 		onRemoveProject={vi.fn()}
 		onRetry={retry}
@@ -43,8 +41,7 @@ it("keeps offline hosts visible and opens a same-ID session on the selected host
 	expect(screen.queryByRole("button", { name: "Spawn Old project · Box A orchestrator" })).not.toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Retry Box A" }));
 	expect(retry).toHaveBeenCalledOnce();
-	fireEvent.click(screen.getByRole("button", { name: "Start on Box B" }));
-	expect(start).toHaveBeenCalledWith("box-b");
+	expect(screen.queryByRole("button", { name: "Start on Box B" })).not.toBeInTheDocument();
 	const add = screen.getByRole("button", { name: "Add project on Box B" });
 	expect(add).toHaveTextContent("1");
 	fireEvent.click(add);
@@ -74,7 +71,6 @@ it("routes project actions to the selected host when project IDs collide", async
 		onNewTask={newTask}
 		onOrchestrator={orchestrator}
 		onConfigure={configure}
-		onStart={vi.fn()}
 		onAddProject={vi.fn()}
 		onRemoveProject={vi.fn()}
 		onRetry={vi.fn()}
@@ -90,7 +86,7 @@ it("routes project actions to the selected host when project IDs collide", async
 	await user.click(await screen.findByRole("menuitem", { name: "New task" }));
 	expect(newTask).toHaveBeenCalledWith("box-b", "shared");
 	await user.click(screen.getByRole("button", { name: "Project actions for Shared on Box B" }));
-	await user.click(await screen.findByRole("menuitem", { name: "Agents" }));
+	await user.click(await screen.findByRole("menuitem", { name: "Project settings" }));
 	expect(configure).toHaveBeenCalledWith("box-b", "shared");
 });
 
@@ -106,7 +102,7 @@ it("highlights a standalone session on its host without a project route", () => 
 		activeHostId="box-b"
 		activeSessionId="session-1"
 		onOpenSession={vi.fn()} onOpenProject={vi.fn()} onNewTask={vi.fn()} onOrchestrator={vi.fn()}
-		onConfigure={vi.fn()} onStart={vi.fn()} onAddProject={vi.fn()} onRemoveProject={vi.fn()} onRetry={vi.fn()}
+		onConfigure={vi.fn()} onAddProject={vi.fn()} onRemoveProject={vi.fn()} onRetry={vi.fn()}
 	/></SidebarMenu></SidebarProvider></TooltipProvider>);
 	expect(screen.getByRole("button", { name: "Open Investigate" })).toHaveAttribute("aria-current", "page");
 });
@@ -123,7 +119,6 @@ it("shows a retry action when a connected host cannot load its sessions", () => 
 		onNewTask={vi.fn()}
 		onOrchestrator={vi.fn()}
 		onConfigure={vi.fn()}
-		onStart={vi.fn()}
 		onAddProject={vi.fn()}
 		onRemoveProject={vi.fn()}
 		onRetry={retry}
@@ -142,7 +137,6 @@ it("does not show a false zero before project loading succeeds", () => {
 		onNewTask={vi.fn()}
 		onOrchestrator={vi.fn()}
 		onConfigure={vi.fn()}
-		onStart={vi.fn()}
 		onAddProject={vi.fn()}
 		onRemoveProject={vi.fn()}
 		onRetry={vi.fn()}
@@ -168,7 +162,6 @@ it("confirms removal on the selected host and disables its action while pending"
 		onNewTask={vi.fn()}
 		onOrchestrator={vi.fn()}
 		onConfigure={vi.fn()}
-		onStart={vi.fn()}
 		onAddProject={vi.fn()}
 		onRemoveProject={removeProject}
 		onRetry={vi.fn()}
@@ -201,7 +194,6 @@ it("shows a failed removal beside the remote project", async () => {
 		onNewTask={vi.fn()}
 		onOrchestrator={vi.fn()}
 		onConfigure={vi.fn()}
-		onStart={vi.fn()}
 		onAddProject={vi.fn()}
 		onRemoveProject={vi.fn().mockRejectedValue(new Error("Host disconnected"))}
 		onRetry={vi.fn()}

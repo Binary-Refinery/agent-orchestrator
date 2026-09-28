@@ -96,7 +96,7 @@ export function RemoteProjectAgentsDialog({ hostId, projectId, hostLabel, connec
 		<Dialog.Portal>
 			<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
 			<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-				<Dialog.Title className="settings-dialog-title text-balance">{t("settings.project.agents")} · {project.data?.name ?? hostLabel}</Dialog.Title>
+				<Dialog.Title className="settings-dialog-title text-balance">{t("shell.projectSettings")} · {project.data?.name ?? hostLabel}</Dialog.Title>
 				<Dialog.Description className="mt-1 text-pretty text-sm text-muted-foreground">{t("remote.agentsOnHost", { label: hostLabel, defaultValue: "Agents run on {{label}}. Changing the orchestrator agent replaces its current session." })}</Dialog.Description>
 				<form className="mt-5 space-y-4" onSubmit={(event) => void save(event)}>
 					{project.isPending || agents.isPending ? <p role="status" className="text-sm text-muted-foreground">{t("settings.project.loading")}</p> : null}
