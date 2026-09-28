@@ -1726,6 +1726,7 @@ function automaticRecoveryPaused(now = Date.now()): boolean {
  */
 function forgetInstallRejections(): void {
   installRejections = undefined;
+  forgetPersistedInstallRejections(escalationStateDir);
 }
 
 /** Count this rejection and report how many times this build has now failed. */
@@ -1734,7 +1735,81 @@ function recordInstallRejection(version: string | undefined, now = Date.now()): 
     installRejections !== undefined && installRejections.version === version
       ? { version, count: installRejections.count + 1, lastAt: now }
       : { version, count: 1, lastAt: now };
+  persistInstallRejections(escalationStateDir);
   return installRejections.count;
+}
+
+const INSTALL_REJECTIONS_FILE_NAME = "install-rejections.json";
+
+function installRejectionsFile(stateDir: string): string {
+  return path.join(stateDir, INSTALL_REJECTIONS_FILE_NAME);
+}
+
+let rejectionPersistenceQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Carry the budget across restarts.
+ *
+ * Without this the bound is only ever "three attempts per PROCESS". A build that
+ * can never install exhausts its attempts, and then quitting and reopening AO
+ * hands it a fresh three, so a user who restarts the app a few times a day
+ * re-downloads the same bad archive indefinitely. The counter is keyed by
+ * version and still cleared by a newer build or an explicit manual check, so the
+ * intended rule, three automatic attempts for THIS build, is the one that
+ * actually holds.
+ *
+ * Kept in its own file rather than staged-update.json: the rejection handler
+ * calls discardStagedBuild(), which deletes that file, so the record of the
+ * failure would be erased by the very failure it is meant to remember.
+ */
+function persistInstallRejections(stateDir: string | undefined): void {
+  if (stateDir === undefined || installRejections === undefined) return;
+  const payload = `${JSON.stringify(installRejections)}\n`;
+  rejectionPersistenceQueue = rejectionPersistenceQueue
+    .then(() => mkdir(stateDir, { recursive: true, mode: 0o750 }))
+    .then(() => writeFile(installRejectionsFile(stateDir), payload, { mode: 0o600 }))
+    .catch(() => undefined);
+}
+
+function forgetPersistedInstallRejections(stateDir: string | undefined): void {
+  if (stateDir === undefined) return;
+  rejectionPersistenceQueue = rejectionPersistenceQueue
+    .then(() => unlink(installRejectionsFile(stateDir)))
+    .catch(() => undefined);
+}
+
+/**
+ * Reload the budget recorded by an earlier run.
+ *
+ * Discarded when it belongs to a version other than the one now on offer, or
+ * when it is unreadable: a wrong budget that blocks a good build is worse than
+ * no budget at all, so every doubtful case fails open to a fresh three attempts.
+ */
+function restoreInstallRejections(stateDir: string): void {
+  // Synchronous for the same reason as restoreStagedBuild: a few dozen bytes,
+  // read once, and the launch-time check should not wait an I/O turn for it.
+  let raw: { version?: unknown; count?: unknown; lastAt?: unknown };
+  try {
+    raw = JSON.parse(readFileSync(installRejectionsFile(stateDir), "utf8")) as typeof raw;
+  } catch {
+    return;
+  }
+  if (
+    typeof raw.count !== "number" ||
+    !Number.isFinite(raw.count) ||
+    raw.count <= 0 ||
+    typeof raw.lastAt !== "number" ||
+    !Number.isFinite(raw.lastAt) ||
+    (raw.version !== undefined && typeof raw.version !== "string")
+  ) {
+    forgetPersistedInstallRejections(stateDir);
+    return;
+  }
+  installRejections = {
+    version: raw.version as string | undefined,
+    count: raw.count,
+    lastAt: raw.lastAt,
+  };
 }
 
 /**
@@ -2386,6 +2461,9 @@ async function requestAutomaticUpdateCheck(
 export async function startAutoUpdates(stateDir: string): Promise<void> {
   escalationStateDir = stateDir;
   restoreStagedBuild(stateDir);
+  // Before the first automatic check, so a build that already used up its
+  // attempts in an earlier run is not handed a fresh three by the restart.
+  restoreInstallRejections(stateDir);
   startRetirementPollTimer(stateDir);
   const intervalMs = await requestAutomaticUpdateCheck(stateDir);
   if (intervalMs !== undefined)

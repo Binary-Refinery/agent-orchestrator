@@ -4709,3 +4709,41 @@ it("answers a manual check made after a stall instead of silently dropping it", 
     vi.useRealTimers();
   }
 });
+
+it("carries the retry budget across a restart instead of granting three more", async () => {
+  // The bound is "three automatic attempts for THIS build", not "three per
+  // process". Held only in memory, quitting and reopening AO handed a build that
+  // can never install a fresh three, so repeated restarts re-downloaded the same
+  // bad archive without limit.
+  const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const squirrelRejection = new Error(
+    "Code signature at URL file:///Users/x/Library/Caches/dev.agent-orchestrator.desktop.ShipIt/" +
+      "update.M9ZvE0X/Agent%20Orchestrator.app/ did not pass validation: " +
+      "code failed to satisfy specified code requirement(s)",
+  );
+  try {
+    const enabled = { enabled: true, channel: "latest" as const, nightlyAck: true, feature: null };
+    const first = await importAutoUpdater(enabled);
+    await first.module.startAutoUpdates(stateDir);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      first.updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      first.updaterEvents.get("error")?.(squirrelRejection);
+    }
+    // Wait for the write itself. A manual check would drain the queue too, but
+    // it also clears the budget by design, which is the thing under test.
+    const file = nodePath.join(stateDir, "install-rejections.json");
+    for (let i = 0; i < 100 && !existsSync(file); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ version: "2.1.0", count: 3 });
+
+    // A brand new process: fresh module registry, same state dir.
+    const second = await importAutoUpdater(enabled);
+    await second.module.startAutoUpdates(stateDir);
+
+    // The budget survived, so the restart does not re-arm the download.
+    expect(second.autoUpdater.autoDownload).toBe(false);
+  } finally {
+    consoleErrorSpy.mockRestore();
+  }
+});
