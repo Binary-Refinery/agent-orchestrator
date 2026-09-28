@@ -32,6 +32,7 @@ import claudeCodeLogo from "../assets/agents/claude-code.svg";
 import codexLogo from "../assets/agents/codex.svg";
 import cursorLogo from "../assets/agents/cursor.svg";
 import opencodeLogo from "../assets/agents/opencode.svg";
+import { GitHubMarkIcon } from "./icons";
 
 type Step = "welcome" | "feedback" | "github" | "cloud" | "project" | "agents" | "guide";
 
@@ -253,6 +254,7 @@ export function OnboardingPage() {
 	}, [navigate]);
 
 	const isProjectStep = step === "project";
+	const isGitHubStep = step === "github";
 	const isAgentStep = step === "agents";
 	const isGuideStep = step === "guide";
 	const isSetupStep = step === "github" || step === "cloud";
@@ -323,14 +325,25 @@ export function OnboardingPage() {
 						)}
 						aria-labelledby={`onboarding-title-${step}`}
 					>
-						<div className={cn("flex flex-col justify-end pb-7", (isAgentStep || isGuideStep) && "justify-center pb-5")}>
+						<div className={cn("flex flex-col justify-end", isGitHubStep ? "pb-3" : "pb-7", (isAgentStep || isGuideStep) && "justify-center pb-5")}>
 							{isFeatureStep ? (
 								<img src={aoLogo} alt="" aria-hidden="true" className="mb-5 h-30 w-35 object-contain" />
 							) : null}
-							<h1 id={`onboarding-title-${step}`} className={cn(isAgentStep || isGuideStep ? "max-w-[500px]" : "max-w-[410px]", "text-[clamp(2rem,3.2vw,3.15rem)] font-normal leading-[1.02] tracking-[-0.045em] text-balance", isListStep && "mx-auto", isProjectStep && "max-w-none whitespace-nowrap")}>
+							<h1 id={`onboarding-title-${step}`} className={cn(
+								isAgentStep || isGuideStep ? "max-w-[500px]" : "max-w-[410px]",
+								isGitHubStep ? "text-[19px] font-medium leading-6 tracking-normal" : "text-[clamp(2rem,3.2vw,3.15rem)] font-normal leading-[1.02] tracking-[-0.045em] text-balance",
+								isListStep && "mx-auto",
+								isProjectStep && "max-w-none whitespace-nowrap",
+							)}>
 								{t(details.title)}
 							</h1>
-							<p className={cn("mt-5 max-w-[350px] text-[15px] leading-6 text-muted-foreground text-pretty", (isAgentStep || isGuideStep) && "max-w-[430px]", isListStep && "mx-auto")}>{t(details.subtitle)}</p>
+							{isGitHubStep ? (
+								<div className="relative mx-auto mt-5 size-48">
+									<GitHubMarkIcon aria-hidden="true" className="absolute inset-0 size-48" />
+									<img src={aoLogo} alt="Agent Orchestrator" className="absolute -bottom-1 -left-10 size-12 object-contain" />
+								</div>
+							) : null}
+							<p className={cn(isGitHubStep ? "mt-12" : "mt-5", "max-w-[350px] text-[15px] leading-6 text-muted-foreground text-pretty", (isAgentStep || isGuideStep) && "max-w-[430px]", isListStep && "mx-auto")}>{t(details.subtitle)}</p>
 						</div>
 						<div className={cn("min-h-0 pt-2", isListStep && "flex justify-center")}>
 							{isAgentStep && (
