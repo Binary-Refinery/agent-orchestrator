@@ -56,6 +56,7 @@ export function BrowserImportDialog({
 	const [result, setResult] = useState<BrowserImportResult | null>(null);
 	const errorRef = useRef<HTMLParagraphElement>(null);
 	const selectedSourceIdRef = useRef("");
+	const sourcesRef = useRef<BrowserImportSource[]>([]);
 
 	const source = sources.find((candidate) => candidate.id === sourceId);
 	const selectedProfiles = source?.profiles.filter((profile) => selectedProfileIds.includes(profile.id)) ?? [];
@@ -69,9 +70,31 @@ export function BrowserImportDialog({
 		setLoadingSourceId(id);
 		try {
 			const discovery = await bridge.discoverImportSources({ sourceId: id });
-			setSafariAccessDenied(discovery.warnings?.includes("safari-access-denied") ?? false);
+			const accessDenied = discovery.warnings?.includes("safari-access-denied") ?? false;
+			setSafariAccessDenied(accessDenied);
 			const hydrated = discovery.sources.find((candidate) => candidate.id === id) ?? null;
-			if (hydrated) setSources((current) => current.map((candidate) => candidate.id === id ? hydrated : candidate));
+			if (hydrated) {
+				const nextSources = sourcesRef.current.map((candidate) => candidate.id === id ? hydrated : candidate);
+				sourcesRef.current = nextSources;
+				setSources(nextSources);
+			} else if (!accessDenied) {
+				const nextSources = sourcesRef.current.filter((candidate) => candidate.id !== id);
+				sourcesRef.current = nextSources;
+				setSources(nextSources);
+				if (selectedSourceIdRef.current === id) {
+					const fallback = nextSources.find((candidate) => !candidate.profilesDeferred) ?? nextSources[0];
+					if (fallback) {
+						selectedSourceIdRef.current = fallback.id;
+						applySourceDefaults(fallback, setSourceId, setSelectedProfileIds, setDestinationNames, setMergeName, setDestinationMode);
+					} else {
+						selectedSourceIdRef.current = "";
+						setSourceId("");
+						setSelectedProfileIds([]);
+						setDestinationNames({});
+						setMergeName("");
+					}
+				}
+			}
 			return hydrated;
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : t("settings.browserImport.discoveryFailed"));
@@ -85,6 +108,7 @@ export function BrowserImportDialog({
 		if (!open) return;
 		setView("form");
 		setSources([]);
+		sourcesRef.current = [];
 		setSafariAccessDenied(false);
 		setLoadingSourceId("");
 		setSourceId("");
@@ -105,6 +129,7 @@ export function BrowserImportDialog({
 		setLoading(true);
 		void bridge.discoverImportSources().then(
 			(discovery) => {
+				sourcesRef.current = discovery.sources;
 				setSources(discovery.sources);
 				setSafariAccessDenied(discovery.warnings?.includes("safari-access-denied") ?? false);
 				const first = discovery.sources.find((candidate) => !candidate.profilesDeferred) ?? discovery.sources[0];

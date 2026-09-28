@@ -522,6 +522,39 @@ describe("BrowserProfileImportService", () => {
 		expect(await readdir(path.join(stateDir, "browser-import-staging"))).toEqual([]);
 	});
 
+	it("retries when a Chromium SQLite backup rejects before succeeding", async () => {
+		const root = await fixtureRoot();
+		const { localAppData } = await createChromeFixture(root);
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		const backup = vi.spyOn(Database.prototype, "backup");
+		backup.mockRejectedValueOnce(new Error("SQLITE_BUSY: database is locked"));
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore: new BrowserHistoryStore({ stateDir }),
+			platform: "win32",
+			homeDir: root,
+			env: { LOCALAPPDATA: localAppData },
+			fromPartition: () => ({ cookies: { set: async () => undefined }, clearStorageData: async () => undefined, clearCache: async () => undefined }),
+		});
+		const source = (await service.discover()).sources[0]!;
+
+		const result = await service.import({
+			requestId: "21212121-2121-4121-8121-212121212121",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: false,
+			includeHistory: true,
+			destination: { mode: "merge", name: "Retried Busy Chrome" },
+		}, vi.fn());
+
+		expect(backup).toHaveBeenCalledTimes(2);
+		expect(result.entries[0]).toMatchObject({ importedHistoryEntries: 2 });
+		expect(await readdir(path.join(stateDir, "browser-import-staging"))).toEqual([]);
+	});
+
 	it("returns an actionable Chromium snapshot error when retry cannot create the temporary database copy", async () => {
 		const root = await fixtureRoot();
 		const { localAppData } = await createChromeFixture(root);
@@ -548,6 +581,37 @@ describe("BrowserProfileImportService", () => {
 			includeHistory: true,
 			destination: { mode: "merge", name: "Broken Chrome Snapshot" },
 		}, vi.fn())).rejects.toThrow("AO couldn't create a temporary copy of Google Chrome's profile database");
+		expect(profileStore.profiles).toEqual([]);
+		expect(await readdir(path.join(stateDir, "browser-import-staging"))).toEqual([]);
+	});
+
+	it("returns an actionable Chromium snapshot error when backup rejects after retry", async () => {
+		const root = await fixtureRoot();
+		const { localAppData } = await createChromeFixture(root);
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		const backup = vi.spyOn(Database.prototype, "backup").mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore: new BrowserHistoryStore({ stateDir }),
+			platform: "win32",
+			homeDir: root,
+			env: { LOCALAPPDATA: localAppData },
+			fromPartition: () => ({ cookies: { set: async () => undefined }, clearStorageData: async () => undefined, clearCache: async () => undefined }),
+		});
+		const source = (await service.discover()).sources[0]!;
+
+		await expect(service.import({
+			requestId: "22222222-2222-4222-8222-222222222222",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: false,
+			includeHistory: true,
+			destination: { mode: "merge", name: "Busy Chrome Snapshot" },
+		}, vi.fn())).rejects.toThrow("AO couldn't create a temporary copy of Google Chrome's profile database");
+		expect(backup).toHaveBeenCalledTimes(2);
 		expect(profileStore.profiles).toEqual([]);
 		expect(await readdir(path.join(stateDir, "browser-import-staging"))).toEqual([]);
 	});

@@ -866,7 +866,7 @@ async function readProfileData(
 				? readSafariCookies(await readFile(await snapshotFile(cookieDatabase, profile.root, staging, budget)), now)
 				: source.descriptor.family === "chromium"
 					? readChromiumCookies(await snapshotSQLite(cookieDatabase, profile.root, staging, budget, source.public.name), decryptor, now)
-					: readFirefoxCookies(await snapshotSQLite(cookieDatabase, profile.root, staging, budget, source.public.name), now);
+					: readFirefoxCookies(await snapshotSQLite(cookieDatabase, profile.root, staging, budget), now);
 			if (!outcome) {
 				warnings.push({ code: "cookie-database-missing" });
 			} else {
@@ -883,7 +883,13 @@ async function readProfileData(
 		if (!historyDatabase) {
 			warnings.push({ code: "history-database-missing" });
 		} else {
-			const snapshot = await snapshotSQLite(historyDatabase, profile.root, staging, budget, source.public.name);
+			const snapshot = await snapshotSQLite(
+				historyDatabase,
+				profile.root,
+				staging,
+				budget,
+				source.descriptor.family === "chromium" ? source.public.name : undefined,
+			);
 			const outcome = source.descriptor.family === "chromium"
 				? readChromiumHistory(snapshot)
 				: source.descriptor.family === "firefox"
@@ -949,7 +955,7 @@ async function snapshotSQLite(
 	profileRoot: string,
 	staging: string,
 	budget: SourceBudget,
-	browserName = "the source browser",
+	browserName?: string,
 ): Promise<string> {
 	const destination = path.join(staging, `${randomUUID()}-${path.basename(database)}`);
 	const canonical = await preflightContainedFile(database, profileRoot, SOURCE_FILE_MAX_BYTES, budget);
@@ -964,18 +970,23 @@ async function snapshotSQLite(
 	const temporarySnapshots: string[] = [];
 	try {
 		source.pragma("query_only = ON");
-		let missingSnapshot = false;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			await mkdir(staging, { recursive: true, mode: 0o700 });
 			const temporary = path.join(staging, `${randomUUID()}-${path.basename(database)}.tmp`);
 			temporarySnapshots.push(temporary);
-			await source.backup(temporary);
+			try {
+				await source.backup(temporary);
+			} catch (error) {
+				await rm(temporary, { force: true }).catch(() => undefined);
+				if (attempt === 0) continue;
+				if (browserName) throw temporarySnapshotError(browserName);
+				throw error;
+			}
 			const output = await stat(temporary).catch((error) => {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 				throw error;
 			});
 			if (!output) {
-				missingSnapshot = true;
 				await rm(temporary, { force: true }).catch(() => undefined);
 				continue;
 			}
@@ -986,8 +997,8 @@ async function snapshotSQLite(
 			await rename(temporary, destination);
 			return destination;
 		}
-		if (missingSnapshot) throw temporarySnapshotError(browserName);
-		throw temporarySnapshotError(browserName);
+		if (browserName) throw temporarySnapshotError(browserName);
+		throw new Error("AO's temporary browser data snapshot disappeared before it could be read. Restart AO and retry the import.");
 	} catch (error) {
 		await rm(destination, { force: true }).catch(() => undefined);
 		throw error;

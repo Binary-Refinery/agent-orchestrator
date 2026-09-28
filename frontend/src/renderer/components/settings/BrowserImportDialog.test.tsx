@@ -137,6 +137,32 @@ describe("BrowserImportDialog", () => {
 		expect(await screen.findByRole("checkbox", { name: /Personal/ })).toBeChecked();
 	});
 
+	it("removes a deferred Safari source when targeted discovery finds no profiles", async () => {
+		const safariDeferred = { ...safariSource, profiles: [], profilesDeferred: true as const };
+		const discoverImportSources = vi.fn(async (input?: { sourceId?: string }) => (
+			input?.sourceId === safariSource.id
+				? { sources: [] }
+				: { sources: [source, safariDeferred] }
+		));
+		aoBridge.browserProfiles = {
+			...originalBridge,
+			discoverImportSources,
+			import: vi.fn(),
+			onImportProgress: vi.fn(() => () => undefined),
+		};
+
+		render(<BrowserImportDialog onImported={() => undefined} onOpenChange={() => undefined} open />);
+		const sourcePicker = await screen.findByRole("combobox", { name: "From" });
+		await userEvent.click(sourcePicker);
+		await userEvent.click(screen.getByRole("option", { name: /Safari/ }));
+
+		await waitFor(() => expect(discoverImportSources).toHaveBeenCalledWith({ sourceId: safariSource.id }));
+		await waitFor(() => expect(sourcePicker).toHaveTextContent("Google Chrome"));
+		expect(screen.queryByText(/Full Disk Access/)).not.toBeInTheDocument();
+		await userEvent.click(sourcePicker);
+		expect(screen.queryByRole("option", { name: /Safari/ })).not.toBeInTheDocument();
+	});
+
 	it("clears a failed import when choosing another browser", async () => {
 		const bridge: AoBridge["browserProfiles"] = {
 			list: vi.fn(async () => ({ profiles: [] })),
