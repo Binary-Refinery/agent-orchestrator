@@ -151,7 +151,7 @@ function RestartToUpdateDialogBody() {
 					{buildLabel && <DialogDescription>{buildLabel}</DialogDescription>}
 				</div>
 
-				<div className={cn(settingsDialogBodyClass, "gap-3")}>
+				<div className={cn(settingsDialogBodyClass, "gap-3 pt-4")}>
 					{(workspace.isError || !workspace.data) && <p role="status">{t("update.restart.unknownWorkers", { defaultValue: "Current worker state could not be confirmed. Installing restarts AO and may interrupt current tasks." })}</p>}
 					{atRisk.length > 0 && (
 						<div
