@@ -97,7 +97,10 @@ export function startSessionOpen(sessionId: string | undefined): void {
 }
 
 /** Begins at a validated submit, including readiness checks and attachment staging. */
-export function startTaskCreate(scope: Scope): number {
+export function startTaskCreate(scope: Scope, retryOf?: number): number {
+	if (pendingTask && pendingTask.attempt === retryOf && pendingTask.scope === scope && !pendingTask.sessionId) {
+		return pendingTask.attempt;
+	}
 	finishSession("cancelled");
 	finishTask("cancelled");
 	const attempt = ++nextTaskAttempt;
@@ -121,6 +124,11 @@ export function taskCreateReturned(attempt: number, sessionId: string): void {
 
 export function taskCreateFailed(attempt: number): void {
 	if (pendingTask?.attempt === attempt) finishTask("failed");
+}
+
+/** Abandon a task form without interrupting a created session's route timing. */
+export function taskCreateCancelled(attempt: number): void {
+	if (pendingTask?.attempt === attempt && !pendingTask.sessionId) finishTask("cancelled");
 }
 
 /** Called after the conversation or terminal replay is painted and visible. */

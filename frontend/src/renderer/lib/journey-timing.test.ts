@@ -41,6 +41,7 @@ it("keeps task timing open across the API response and route navigation", async 
 	const attempt = timing.startTaskCreate("local");
 	now.mockReturnValue(1_200);
 	timing.taskCreateReturned(attempt, "new-session");
+	timing.taskCreateCancelled(attempt); // Closing the dialog must not cancel a created session.
 	timing.startSessionOpen("new-session");
 	expect(capture).not.toHaveBeenCalled();
 	now.mockReturnValue(1_600);
@@ -49,6 +50,22 @@ it("keeps task timing open across the API response and route navigation", async 
 		duration_ms: 600,
 		outcome: "ready",
 		surface: "tui",
+		scope: "local",
+	});
+});
+
+it("keeps a recoverable fallback's original start time and cancels it on dismissal", async () => {
+	const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+	const timing = await import("./journey-timing");
+	const attempt = timing.startTaskCreate("local");
+	now.mockReturnValue(1_200);
+	expect(timing.startTaskCreate("local", attempt)).toBe(attempt);
+	expect(capture).not.toHaveBeenCalled();
+	now.mockReturnValue(1_350);
+	timing.taskCreateCancelled(attempt);
+	expect(capture).toHaveBeenCalledExactlyOnceWith("ao.renderer.task_create_timing", {
+		duration_ms: 350,
+		outcome: "cancelled",
 		scope: "local",
 	});
 });

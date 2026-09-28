@@ -14,7 +14,7 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import { startTaskCreate, taskCreateFailed, taskCreateReturned } from "../lib/journey-timing";
+import { startTaskCreate, taskCreateCancelled, taskCreateFailed, taskCreateReturned } from "../lib/journey-timing";
 import {
 	cacheAgentReadiness,
 	ensureAgentReadiness,
@@ -126,6 +126,10 @@ export function TaskComposer({
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
+	const timingAttemptRef = useRef<number | undefined>(undefined);
+	useEffect(() => () => {
+		if (timingAttemptRef.current !== undefined) taskCreateCancelled(timingAttemptRef.current);
+	}, []);
 	const {
 		attachments,
 		error: attachmentError,
@@ -508,9 +512,11 @@ export function TaskComposer({
 		brief: string,
 		interfaceMode?: "chat" | "tui",
 		approvalMode?: "bypass-permissions",
+		retryTimingAttempt?: number,
 	) => {
 		if (!projectId || !canSubmit || isSubmitting) return;
-		const timingAttempt = startTaskCreate(isStandalone ? "standalone" : isCloudProject ? "cloud" : "local");
+		const timingAttempt = startTaskCreate(isStandalone ? "standalone" : isCloudProject ? "cloud" : "local", retryTimingAttempt);
+		timingAttemptRef.current = timingAttempt;
 
 		const cleanModel = selectedModel.trim();
 		const cleanMode = selectedMode.trim();
@@ -558,21 +564,22 @@ export function TaskComposer({
 			taskCreateReturned(timingAttempt, sessionId);
 			onCreated(sessionId);
 		} catch (err) {
-			taskCreateFailed(timingAttempt);
 			const canBypassApprovals =
 				err instanceof TaskCreateError &&
 				err.code === "SESSION_MODE_UNSUPPORTED" &&
+				approvalMode !== "bypass-permissions" &&
 				hasErrorDetail(err.details, "missingCapabilities", "approvals") &&
 				hasErrorDetail(err.details, "allowedApprovalModes", "bypass-permissions");
-			setFallbackAction(
+			const nextFallbackAction =
 				canBypassApprovals
 					? "bypass-permissions"
 					: selectedAgent !== "unreal-agent" && interfaceMode !== "tui" &&
 							err instanceof TaskCreateError &&
 							Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code))
 						? "tui"
-						: undefined,
-			);
+						: undefined;
+			if (!nextFallbackAction) taskCreateFailed(timingAttempt);
+			setFallbackAction(nextFallbackAction);
 			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
 		} finally {
 			setIsSubmitting(false);
@@ -676,8 +683,8 @@ export function TaskComposer({
 				modelWarning,
 				onFallbackAction: (brief) =>
 					void (fallbackAction === "bypass-permissions"
-						? submitTask(brief, selectedAgent === "unreal-agent" ? "chat" : undefined, "bypass-permissions")
-						: submitTask(brief, "tui")),
+						? submitTask(brief, selectedAgent === "unreal-agent" ? "chat" : undefined, "bypass-permissions", timingAttemptRef.current)
+						: submitTask(brief, "tui", undefined, timingAttemptRef.current)),
 				onSubmit: (brief) => void submitTask(brief, selectedAgent === "unreal-agent" ? "chat" : requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} manageAgents={!isCloudProject} />}

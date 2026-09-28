@@ -69,7 +69,7 @@ durations by platform, app version, and release channel. Count `failed` and
 `timeout` outcomes alongside the percentile so a journey that never became
 usable cannot disappear from the result.
 
-All three timings use a 5% random sample per completed attempt to reduce event
+All three timings use a 5% random sample per completed journey to reduce event
 volume. Counts for these events are sampled counts. A shared budget permits at
 most 20 timing events per installation profile in each 24-hour period while
 local storage is retained, including across renderer restarts. If storage is
@@ -84,6 +84,10 @@ is a fleet-wide PostHog billing limit.
 | `ao.renderer.startup_timing` | Native window creation | Daemon and workspace data have resolved and the shell has painted |
 | `ao.renderer.session_open_timing` | Navigation to an existing session | Chat conversation has painted, or terminal attachment and replay have painted |
 | `ao.renderer.task_create_timing` | Valid task submission | The new session reaches the same chat or terminal point, including readiness checks and spawn time |
+
+Recoverable task-create errors keep the journey open while the user chooses an
+offered fallback. Dismissing the form records `cancelled`; an error with no
+offered fallback records `failed`.
 
 Startup and session navigation are timed out after two minutes; task creation after five
 minutes. Navigating away records `cancelled`. Startup begins after pre-window
