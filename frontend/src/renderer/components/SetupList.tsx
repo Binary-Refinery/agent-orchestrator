@@ -17,10 +17,12 @@ export function SetupRow({ icon, label, description, trailing, disabled, selecte
 	selected?: boolean;
 	onClick?: () => void;
 	/** `row` sits in a shared list with dividers and no surface of its own;
-	 *  `card` is the standalone rounded surface the project step uses. */
-	variant?: "row" | "card";
+	 *  `card` is a standalone rounded surface, and `ghost` keeps that shape
+	 *  while remaining transparent until interaction. */
+	variant?: "row" | "card" | "ghost";
 }) {
 	const isCard = variant === "card";
+	const isGhost = variant === "ghost";
 	return (
 		<button
 			type="button"
@@ -33,7 +35,9 @@ export function SetupRow({ icon, label, description, trailing, disabled, selecte
 				isCard
 					// The border is always there so selecting a row changes colour
 					// instead of nudging the text sideways.
-					? "gap-3 rounded-lg border border-transparent bg-card px-4 py-3 hover:bg-muted active:scale-[0.99]"
+					? "gap-3 rounded-xl border border-border/60 bg-card px-4 py-3 hover:bg-muted active:scale-[0.99]"
+					: isGhost
+						? "gap-3 rounded-xl border border-transparent bg-transparent px-4 py-3 hover:bg-muted active:scale-[0.99]"
 					: "gap-3.5 px-1 py-3.5 hover:bg-foreground/[0.04]",
 				!isCard && selected && "bg-foreground/[0.03]",
 				// The chosen row is marked by a bright edge rather than the accent
@@ -41,7 +45,7 @@ export function SetupRow({ icon, label, description, trailing, disabled, selecte
 				isCard && selected && "border-foreground/45 bg-accent-weak ring-1 ring-inset ring-foreground/20",
 			)}
 		>
-			<span className={cn("grid shrink-0 place-items-center text-muted-foreground", isCard ? "size-8 [&_svg]:size-4" : "size-6 [&_svg]:size-5")}>{icon}</span>
+			<span className={cn("grid shrink-0 place-items-center text-muted-foreground", isCard || isGhost ? "size-8 [&_svg]:size-4" : "size-6 [&_svg]:size-5")}>{icon}</span>
 			<span className="min-w-0 flex-1">
 				<span className="block text-sm font-medium leading-5 text-foreground">{label}</span>
 				{description ? <span className="mt-0.5 block text-caption leading-snug text-muted-foreground">{description}</span> : null}

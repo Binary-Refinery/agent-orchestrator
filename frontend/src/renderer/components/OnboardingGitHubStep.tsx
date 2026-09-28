@@ -57,6 +57,7 @@ export function OnboardingGitHubStep({ setup }: { setup: ReturnType<typeof useGi
 					icon={<GitHubMarkIcon aria-hidden="true" />}
 					label={setup.loginEnded ? t("startup.githubLoginTryAgain") : t("startup.githubLogin")}
 					description={t("onboarding.githubSignInDetail")}
+					variant="ghost"
 					disabled={setup.signInPending || setup.loginRunning}
 					onClick={setup.signIn}
 					trailing={setup.signInPending || setup.loginRunning ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" /> : undefined}
