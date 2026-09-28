@@ -943,8 +943,8 @@ function forgetPersistedStagedBuild(stateDir: string | undefined): void {
  */
 function restoreStagedBuild(stateDir: string): void {
   // Synchronous on purpose. Awaiting a real filesystem read here would push the
-  // launch-time update check behind an I/O turn for a file that is a few dozen
-  // bytes and read exactly once per process.
+  // launch-time update check behind an I/O turn for a small file read exactly
+  // once per process.
   let raw: {
     version?: unknown;
     stagedAt?: unknown;
