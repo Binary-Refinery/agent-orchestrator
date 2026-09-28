@@ -86,8 +86,8 @@ const ShellProjectsProjectIdSessionsSessionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
-  '/automations': typeof ShellAutomationsRoute
   '/onboarding': typeof OnboardingRoute
+  '/automations': typeof ShellAutomationsRoute
   '/sessions': typeof ShellSessionsRouteWithChildren
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
@@ -98,8 +98,8 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
-  '/automations': typeof ShellAutomationsRoute
   '/onboarding': typeof OnboardingRoute
+  '/automations': typeof ShellAutomationsRoute
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
   '/': typeof ShellIndexRoute
@@ -112,8 +112,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
-  '/_shell/automations': typeof ShellAutomationsRoute
   '/onboarding': typeof OnboardingRoute
+  '/_shell/automations': typeof ShellAutomationsRoute
   '/_shell/sessions': typeof ShellSessionsRouteWithChildren
   '/_shell/settings': typeof ShellSettingsRoute
   '/_shell/terminals': typeof ShellTerminalsRoute
@@ -128,8 +128,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/automations'
     | '/onboarding'
+    | '/automations'
     | '/sessions'
     | '/settings'
     | '/terminals'
@@ -140,8 +140,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/automations'
     | '/onboarding'
+    | '/automations'
     | '/settings'
     | '/terminals'
     | '/'
@@ -153,8 +153,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_shell'
-    | '/_shell/automations'
     | '/onboarding'
+    | '/_shell/automations'
     | '/_shell/sessions'
     | '/_shell/settings'
     | '/_shell/terminals'
