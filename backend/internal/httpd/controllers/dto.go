@@ -2877,3 +2877,21 @@ type MuteDeviceRequest struct {
 type InstallIDParam struct {
 	InstallID string `path:"installId" description:"The device's stable install id."`
 }
+
+// NativeHistoryRequest narrows restore/resume: no saved-prompt or fresh fallback.
+type NativeHistoryRequest struct {
+	RequireNativeHistory bool `json:"requireNativeHistory,omitempty"`
+}
+
+// GovernanceCapabilitiesResponse describes the pinned compatibility patch.
+// It is not a host-isolation attestation or an approval grant.
+type GovernanceCapabilitiesResponse struct {
+	Schema                   string `json:"schema"`
+	UpstreamCommit           string `json:"upstreamCommit"`
+	PatchID                  string `json:"patchId"`
+	ManagedProjectMode       bool   `json:"managedProjectMode"`
+	NativeInjectionsDisabled bool   `json:"nativeInjectionsDisabled"`
+	SafeSpawnDefaults        bool   `json:"safeSpawnDefaults"`
+	ProtectedManagedSettings bool   `json:"protectedManagedSettings"`
+	RequireNativeHistory     bool   `json:"requireNativeHistory"`
+}

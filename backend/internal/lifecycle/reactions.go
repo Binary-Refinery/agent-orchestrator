@@ -1005,6 +1005,16 @@ const (
 )
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int, urgent bool) (sendOnceOutcome, error) {
+	// All native review/CI/conflict/tracker nudges converge here. Do not queue
+	// or stamp an externally managed task as delivered by this native lane.
+	rec, found, err := m.store.GetSession(ctx, id)
+	if err != nil || !found {
+		return sendOnceSuppressed, err
+	}
+	project, found, err := m.store.GetProject(ctx, string(rec.ProjectID))
+	if err != nil || !found || project.Config.GovernanceManaged {
+		return sendOnceSuppressed, err
+	}
 	if m.guard == nil {
 		return sendOnceAccounted, nil
 	}

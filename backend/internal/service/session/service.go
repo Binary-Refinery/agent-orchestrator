@@ -855,6 +855,13 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 // SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy
 // and returns the refreshed read model.
 func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	// Managed sessions reserve lifecycle control for the external controller,
+	// so AO must not arm autonomous termination on PR merge for them.
+	if terminate {
+		if err := s.allowNativeAutomation(ctx, id); err != nil {
+			return domain.Session{}, err
+		}
+	}
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
@@ -867,6 +874,11 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 
 // SetAutoInjectReview persists whether new SCM and AO review feedback should be sent to the session.
 func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	if autoInject {
+		if err := s.allowNativeAutomation(ctx, id); err != nil {
+			return domain.Session{}, err
+		}
+	}
 	updated, err := s.store.SetSessionAutoInjectReview(ctx, id, autoInject, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto-inject review %s: %w", id, err)
@@ -880,6 +892,11 @@ func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, 
 // SetAutoInjectCI persists the default automatic CI-failure injection policy
 // for PRs created after this update. Existing PRs keep their captured policy.
 func (s *Service) SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	if autoInject {
+		if err := s.allowNativeAutomation(ctx, id); err != nil {
+			return domain.Session{}, err
+		}
+	}
 	updated, err := s.store.SetSessionAutoInjectCI(ctx, id, autoInject, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto-inject CI %s: %w", id, err)
@@ -937,6 +954,11 @@ func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, h
 
 // SetAutoReview enables or disables daemon-side review automation for a session.
 func (s *Service) SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	if enabled {
+		if err := s.allowNativeAutomation(ctx, id); err != nil {
+			return domain.Session{}, err
+		}
+	}
 	updated, err := s.store.SetSessionAutoReview(ctx, id, enabled, s.now())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto review %s: %w", id, err)
@@ -1427,4 +1449,27 @@ func (s *Service) harnessSignals(h domain.AgentHarness) bool {
 		return false
 	}
 	return s.signalCapable(h)
+}
+
+// allowNativeAutomation checks the project at the service write boundary so a
+// direct API caller cannot re-enable a native lane for a managed task.
+func (s *Service) allowNativeAutomation(ctx context.Context, id domain.SessionID) error {
+	rec, found, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	project, found, err := s.store.GetProject(ctx, string(rec.ProjectID))
+	if err != nil {
+		return err
+	}
+	if !found {
+		return apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if project.Config.GovernanceManaged {
+		return apierr.Conflict("EXTERNAL_GOVERNANCE_REQUIRED", "Native automation is disabled for this project", nil)
+	}
+	return nil
 }

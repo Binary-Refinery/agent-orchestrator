@@ -119,6 +119,7 @@ type projectConfig struct {
 	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
 	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
 	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
+	GovernanceManaged bool                 `json:"governanceManaged,omitempty"`
 	Worker            roleOverride         `json:"worker,omitempty"`
 	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
 	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
@@ -312,6 +313,16 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 			config, err := buildProjectConfig(opts)
 			if err != nil {
 				return err
+			}
+			// Preserve managed mode for flag-built updates: the daemon locks
+			// GovernanceManaged changes (MANAGED_MODE_LOCKED), and there is no
+			// flag to set it, so carry the current value over instead of
+			// silently clearing it on unrelated updates.
+			if !opts.clear && opts.configJSON == "" && !config.GovernanceManaged {
+				var cur projectGetResult
+				if gerr := ctx.getJSON(cmd.Context(), "projects/"+url.PathEscape(id), &cur); gerr == nil && cur.Project.Config != nil && cur.Project.Config.GovernanceManaged {
+					config.GovernanceManaged = true
+				}
 			}
 			req := setConfigRequest{Config: config}
 			var res projectResult

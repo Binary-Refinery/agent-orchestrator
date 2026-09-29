@@ -262,6 +262,8 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	} else if ok && existing.Config.GovernanceManaged {
+		return Project{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed project identity cannot be re-registered", nil)
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
 		if in.ProjectID != nil {
 			return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
@@ -727,6 +729,11 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
+	// Managed mode is chosen at registration, before any session can launch.
+	// Existing registrations cannot be converted while workers may be live.
+	if row.Config.GovernanceManaged != in.Config.GovernanceManaged {
+		return Project{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed mode cannot change; register a fresh project", nil)
+	}
 	updated, err := m.store.UpdateProjectSettings(ctx, string(id), inDisplayName, in.Config)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
@@ -769,6 +776,11 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	}
 	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	// Managed mode is chosen at registration, before any session can launch.
+	// Existing registrations cannot be converted while workers may be live.
+	if row.Config.GovernanceManaged != in.Config.GovernanceManaged {
+		return Project{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed mode cannot change; register a fresh project", nil)
 	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
@@ -831,6 +843,9 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if row.Config.GovernanceManaged {
+		return RemoveResult{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed project removal requires a quiescent offline rollback", nil)
 	}
 	if m.sessions != nil {
 		if err := m.sessions.TeardownProject(ctx, id); err != nil {

@@ -655,6 +655,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/governance/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect pinned external-governance compatibility */
+        get: operations["governanceCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/identity": {
         parameters: {
             query?: never;
@@ -3862,6 +3879,16 @@ export interface components {
             remoteUrl?: string;
             repoPath: string;
         };
+        GovernanceCapabilitiesResponse: {
+            managedProjectMode: boolean;
+            nativeInjectionsDisabled: boolean;
+            patchId: string;
+            protectedManagedSettings: boolean;
+            requireNativeHistory: boolean;
+            safeSpawnDefaults: boolean;
+            schema: string;
+            upstreamCommit: string;
+        };
         IdentityResponse: {
             apiVersion: number;
             hostId: string;
@@ -4125,6 +4152,9 @@ export interface components {
             /** @description True to stop sending push notifications to this device. */
             muted: boolean;
         };
+        NativeHistoryRequest: {
+            requireNativeHistory?: boolean;
+        };
         NotificationEnvelope: {
             notification: components["schemas"]["NotificationResponse"];
         };
@@ -4232,6 +4262,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            governanceManaged?: boolean;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
             postCreate?: string[];
@@ -7311,6 +7342,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    governanceCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GovernanceCapabilitiesResponse"];
                 };
             };
         };
@@ -10397,6 +10448,15 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Internal Server Error */
             500: {
                 headers: {
@@ -10444,6 +10504,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10507,6 +10576,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12468,6 +12546,15 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
             /** @description Internal Server Error */
             500: {
                 headers: {
@@ -13372,7 +13459,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NativeHistoryRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -13422,7 +13513,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NativeHistoryRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
