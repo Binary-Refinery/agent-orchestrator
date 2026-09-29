@@ -6536,7 +6536,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/NativeHistoryRequest'
-        required: true
       responses:
         "200":
           content:
@@ -6581,7 +6580,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/NativeHistoryRequest'
-        required: true
       responses:
         "200":
           content:

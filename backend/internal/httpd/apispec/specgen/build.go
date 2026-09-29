@@ -2468,6 +2468,9 @@ func sessionOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/restore", id: "restoreSession", tag: "sessions",
 			summary:    "Restore a terminated session",
 			reqBody:    controllers.NativeHistoryRequest{},
+			// Optional: the handler tolerates a missing body (io.EOF) and
+			// existing callers send none. Matches handler behavior.
+			optionalReqBody: true,
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RestoreSessionResponse{}},
@@ -2492,6 +2495,9 @@ func sessionOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/resume-agent", id: "resumeAgent", tag: "sessions",
 			summary:    "Resume an exited agent in its existing session",
 			reqBody:    controllers.NativeHistoryRequest{},
+			// Optional: the handler tolerates a missing body (io.EOF) and
+			// existing callers send none. Matches handler behavior.
+			optionalReqBody: true,
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResumeAgentResponse{}},
