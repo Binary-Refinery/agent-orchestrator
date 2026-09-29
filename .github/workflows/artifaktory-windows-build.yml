@@ -1,0 +1,100 @@
+# .github/workflows/artifaktory-windows-build.yml
+name: Artifaktory Windows build
+
+# ARTIFAKTORY product build (model A): Windows-only NSIS installer,
+# per-user, unsigned. Dispatchable for releases; also runs on pushes to
+# this workflow's own branch as a self-test.
+#
+# Differences to upstream build-artifacts.yml:
+# - Windows only (fast iteration, no 4-platform matrix).
+# - Unsigned by design (no signing credentials in this fork).
+# - Requires the repo variable VITE_WORKOS_CLIENT_ID (same default as
+#   upstream code; without it the frontend build has no cloud client id).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref or SHA to build"
+        type: string
+        required: true
+        default: "main"
+      version:
+        description: "Version string to stamp into the app"
+        type: string
+        required: true
+        default: "0.13.0-artifaktory.1"
+  push:
+    branches: ["ci/artifaktory-windows-build"]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "packages/product-ui/**"
+      - ".github/workflows/artifaktory-windows-build.yml"
+
+permissions:
+  contents: read
+
+env:
+  VITE_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
+  # Bake the update feed's owner/repo from the repo this build runs in,
+  # so installed clients never point their updater at the old owner.
+  AO_RELEASE_REPO: ${{ github.repository }}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            packages/product-ui/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Require WorkOS client id
+        shell: bash
+        run: |
+          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
+            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required." >&2
+            exit 1
+          fi
+      - run: npm ci
+      - name: Install product UI dependencies
+        run: npm ci
+        working-directory: packages/product-ui
+      - name: Stamp version
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ inputs.version || '0.13.0-artifaktory.0' }}
+        run: |
+          node -e "const v=process.env.BUILD_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
+      - name: Build installer (unsigned, no publish)
+        shell: bash
+        run: npm run make
+      - name: Collect installer and compute digest
+        shell: bash
+        run: |
+          mkdir -p dist-artifact
+          src="$(find out/make -maxdepth 1 -name '*Setup*.exe' | head -n1)"
+          if [ -z "$src" ]; then echo "no installer found" >&2; exit 1; fi
+          cp "$src" dist-artifact/
+          (cd dist-artifact && sha256sum *.exe > sha256sums.txt)
+          cat dist-artifact/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: frontend/dist-artifact/
+          retention-days: 7
+          if-no-files-found: error
