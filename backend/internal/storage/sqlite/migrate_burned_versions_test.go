@@ -1,8 +1,6 @@
 package sqlite
 
 import (
-	"database/sql"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -144,6 +142,31 @@ var shippedMigrations = map[int64]string{
 	137: "0137_conversation_edit_delivery.sql",
 	138: "0138_conversation_edit_dispatch_boundary.sql",
 	139: "0139_conversation_steer_delivery.sql",
+	140: "0140_standalone_sessions.sql",
+	141: "0141_conversation_checkpoint_provenance.sql",
+	142: "0142_conversation_checkpoint_unsettled.sql",
+	143: "0143_conversation_checkpoint_turn.sql",
+	144: "0144_session_revision.sql",
+	145: "0145_native_checkpoint_evidence.sql",
+	146: "0146_codex_account_management_simplification.sql",
+	147: "0147_native_history_provenance.sql",
+	148: "0148_notification_dismissal.sql",
+	149: "0149_reviewer_chat_conversations.sql",
+	150: "0150_agent_model_catalog_cache_state.sql",
+	151: "0151_global_agent_model_catalog_cdc.sql",
+	152: "0152_session_effort.sql",
+	153: "0153_reports.sql",
+	154: "0154_report_delivery.sql",
+	155: "0155_allow_unreal_agent_harness.sql",
+	156: "0156_session_provisioning.sql",
+	157: "0157_task_preparations.sql",
+	158: "0158_prepared_worktree_creation_sha.sql",
+	159: "0159_pr_discussion_comment_count.sql",
+	160: "0160_pr_discussion_commenters.sql",
+	161: "0161_automations.sql",
+	162: "0162_drop_pr_discussion_columns.sql",
+	163: "0163_allow_fx_harness.sql",
+	164: "0164_allow_gemini_harness.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -221,13 +244,7 @@ func TestMigrationVersionLedger(t *testing.T) {
 // records a version they never shipped. goose runs with WithAllowMissing, which
 // is what makes the resulting gap harmless.
 func TestMigrationsApplyOverAForeignInterleavedVersion(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 103)
+	db := openMigratedDatabaseCopy(t, 103)
 
 	// Stand in for the other branch's migration: applied here, absent from this
 	// tree, and numbered below everything this branch adds.
@@ -264,13 +281,7 @@ SELECT COUNT(*) FROM (
 // columns. Startup schema reconciliation must repair the physical schema so
 // the session list works instead of returning 500 INTERNAL_ERROR.
 func TestSessionListSucceedsOnBurnedMigrationHistory(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	upTo(t, db, 39) // the real 0040 has not run; diff-base columns are absent
+	db := openMigratedDatabaseCopy(t, 39) // the real 0040 has not run; diff-base columns are absent
 	for v := 40; v <= 51; v++ {
 		if _, err := db.Exec(
 			`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, v,

@@ -329,6 +329,20 @@ describe("send keys", () => {
 		expect(field.textContent).toBe("do not lose this task");
 	});
 
+	it("clears a plain-text draft as soon as the local send acknowledgement starts", async () => {
+		const pending = deferred<void>();
+		const onSend = vi.fn().mockReturnValue(pending.promise);
+		render(<ChatComposer onSend={onSend} />);
+		const field = screen.getByLabelText("Message the agent") as HTMLElement;
+
+		await typeInComposer(field, "show this immediately");
+		await userEvent.keyboard("{Enter}");
+
+		expect(onSend).toHaveBeenCalledWith("show this immediately");
+		expect(field).toHaveTextContent("");
+		pending.resolve();
+	});
+
 	it.each([false, true])("keeps the composer editable after a successful live send (queued: %s)", async (willQueue) => {
 		const sessionId = `composer-live-send-acceptance-${willQueue}`;
 		const pending = deferred<void>();
@@ -1519,6 +1533,22 @@ describe("attachments", () => {
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
 			{ mimeType: "image/png", data: expect.any(String) },
 		]);
+	});
+
+	it("sends an image above the native limit by workspace path", async () => {
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/large.png"]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
+		const largeImage = png("large.png");
+		Object.defineProperty(largeImage, "size", { value: 11 * 1024 * 1024 });
+
+		fireEvent.paste(field, { clipboardData: clipboardData([largeImage]) });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+		await typeInComposer(field, "inspect this");
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/large.png");
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
 	});
 
 	it("stages non-images by path without sending them as native image blocks", async () => {

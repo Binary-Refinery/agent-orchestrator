@@ -9,6 +9,8 @@ import type {
 } from "./session-models";
 
 export type SessionPresentationMessageKey =
+	| "session.statusChecking"
+	| "session.statusUnavailable"
 	| `activity.${SessionActivityState}`
 	| `status.${SessionStatus}`
 	| `zone.${AttentionZone}`
@@ -22,6 +24,8 @@ export type ProductUITranslator = (
 ) => string;
 
 const englishLabels: Record<SessionPresentationMessageKey, string> = {
+	"session.statusChecking": "Checking…",
+	"session.statusUnavailable": "Unable to verify",
 	"activity.active": "Working",
 	"activity.idle": "Idle",
 	"activity.waiting_input": "Input Needed",
@@ -74,6 +78,7 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"displayStatus.needsReview": "Needs review",
 	"displayStatus.reviewScheduled": "Review scheduled",
 	"displayStatus.reviewing": "Reviewing",
+	"displayStatus.reviewFailed": "Review failed",
 	"displayStatus.reviewPending": "Review pending",
 	"displayStatus.draft": "Draft",
 	"displayStatus.ciFailing": "CI failing",
@@ -103,6 +108,7 @@ export const displayStatusLabelKeys: Record<DisplayStatus, `displayStatus.${stri
 	"Needs review": "displayStatus.needsReview",
 	"Review scheduled": "displayStatus.reviewScheduled",
 	Reviewing: "displayStatus.reviewing",
+	"Review failed": "displayStatus.reviewFailed",
 	"Review pending": "displayStatus.reviewPending",
 	Draft: "displayStatus.draft",
 	"CI failing": "displayStatus.ciFailing",

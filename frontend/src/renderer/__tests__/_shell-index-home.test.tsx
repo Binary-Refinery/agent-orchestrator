@@ -1,11 +1,17 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSummary } from "../types/workspace";
+import {
+	STANDALONE_PROJECT_KIND,
+	STANDALONE_WORKSPACE_ID,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+} from "../types/workspace";
 
 const routeMocks = vi.hoisted(() => ({
 	createProjectFlowProps: null as null | {
 		existingProjectPaths?: readonly string[];
 		onOpenExistingProject?: (path: string) => void | Promise<void>;
+		sourceSignal?: { source: string; nonce: number } | null;
 	},
 	navigate: vi.fn(),
 	workspaces: [] as WorkspaceSummary[],
@@ -55,11 +61,20 @@ vi.mock("../components/CreateProjectFlow", () => ({
 	},
 }));
 
-vi.mock("../components/BoardEmptyStates", () => ({
-	BoardWelcome: () => <div data-testid="board-welcome" />,
-}));
-
 import { HomePage } from "../components/HomePage";
+
+const standaloneSession = (overrides: Partial<WorkspaceSession>): WorkspaceSession => ({
+	id: "standalone-1",
+	workspaceId: STANDALONE_WORKSPACE_ID,
+	workspaceName: "Scratchpad",
+	title: "Ad hoc task",
+	provider: "codex",
+	kind: "worker",
+	status: "idle",
+	updatedAt: "2026-06-15T00:00:00Z",
+	prs: [],
+	...overrides,
+});
 
 beforeEach(() => {
 	routeMocks.navigate.mockReset();
@@ -73,12 +88,24 @@ beforeEach(() => {
 });
 
 describe("shell index route", () => {
-	it("restores first-run onboarding when no projects exist", async () => {
+	it("shows the home actions when no projects exist", () => {
 		render(<HomePage />);
 
-		expect(screen.getByTestId("board-welcome")).toBeInTheDocument();
+		expect(screen.getByText("Get started")).toBeInTheDocument();
 		expect(screen.queryByText("Jump back right in")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New standalone agent" })).toBeInTheDocument();
+		expect(screen.queryByText("Recent projects")).not.toBeInTheDocument();
 		expect(routeMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("opens the clone flow from the empty home page", () => {
+		render(<HomePage />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Clone from Git" }));
+		expect(routeMocks.createProjectFlowProps?.sourceSignal?.source).toBe("clone");
 	});
 
 	it("renders the home page instead of redirecting to a scratch board when projects exist", async () => {
@@ -95,6 +122,8 @@ describe("shell index route", () => {
 		render(<HomePage />);
 
 		expect(screen.getByText("Jump back right in")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New standalone agent" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Connect mobile" })).not.toBeInTheDocument();
 		expect(routeMocks.navigate).not.toHaveBeenCalled();
 	});
 
@@ -130,6 +159,46 @@ describe("shell index route", () => {
 		expect(routeMocks.navigate).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
 			params: { projectId: "proj-1" },
+		});
+	});
+
+	it("opens the most recent active ad hoc session from the recent-project list", async () => {
+		routeMocks.workspaces = [
+			{
+				id: STANDALONE_WORKSPACE_ID,
+				name: "Scratchpad",
+				kind: STANDALONE_PROJECT_KIND,
+				path: "Scratchpad",
+				sessions: [
+					standaloneSession({
+						id: "standalone-oldest",
+						createdAt: "2026-06-13T00:00:00Z",
+						updatedAt: "2026-06-13T01:00:00Z",
+					}),
+					standaloneSession({
+						id: "standalone-terminated",
+						status: "terminated",
+						isTerminated: true,
+						createdAt: "2026-06-15T00:00:00Z",
+						updatedAt: "2026-06-15T03:00:00Z",
+						lastUserMessageAt: "2026-06-15T04:00:00Z",
+					}),
+					standaloneSession({
+						id: "standalone-newest-active",
+						createdAt: "2026-06-14T00:00:00Z",
+						updatedAt: "2026-06-14T01:00:00Z",
+						lastUserMessageAt: "2026-06-14T02:00:00Z",
+					}),
+				],
+			},
+		];
+
+		render(<HomePage />);
+
+		fireEvent.click(screen.getByRole("button", { name: /Scratchpad/ }));
+		expect(routeMocks.navigate).toHaveBeenCalledWith({
+			to: "/sessions/$sessionId",
+			params: { sessionId: "standalone-newest-active" },
 		});
 	});
 

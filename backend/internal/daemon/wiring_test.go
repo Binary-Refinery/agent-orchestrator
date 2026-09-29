@@ -21,7 +21,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
@@ -50,6 +49,7 @@ func TestReviewerAgentAuthUsesLaunchReadinessAndPreservesStrictStates(t *testing
 		want  ports.AgentAuthStatus
 	}{
 		{name: "authorized", state: domain.AgentAuthenticationAuthorized, want: ports.AgentAuthStatusAuthorized},
+		{name: "configured", state: domain.AgentAuthenticationConfigured, want: ports.AgentAuthStatusConfigured},
 		{name: "not applicable", state: domain.AgentAuthenticationNotApplicable, want: ports.AgentAuthStatusAuthorized},
 		{name: "unauthorized", state: domain.AgentAuthenticationUnauthorized, want: ports.AgentAuthStatusUnauthorized},
 		{name: "unknown", state: domain.AgentAuthenticationUnknown, want: ports.AgentAuthStatusUnknown},
@@ -187,6 +187,8 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessPi, "pi"},
 		{domain.HarnessPrimeAgent, "prime-agent"},
 		{domain.HarnessAutohand, "autohand"},
+		{domain.HarnessFX, "fx"},
+		{domain.HarnessUnreal, "unreal-agent"},
 	} {
 		agent, ok := resolver.Agent(tc.harness)
 		if !ok {
@@ -446,32 +448,6 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	_, _, _, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})
 }
 
-func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlitetest.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	cfg := config.Config{DataDir: t.TempDir(), Agent: string(domain.HarnessCodex)}
-	projects := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
-	if err := seedScratchProjectOnBoot(ctx, cfg, projects); err != nil {
-		t.Fatalf("seedScratchProjectOnBoot: %v", err)
-	}
-
-	got, ok, err := store.GetProject(ctx, "scratch")
-	if err != nil || !ok {
-		t.Fatalf("GetProject(scratch): ok=%v err=%v", ok, err)
-	}
-	if got.Kind != domain.ProjectKindScratch {
-		t.Fatalf("kind = %q, want scratch", got.Kind)
-	}
-	if want := filepath.Join(cfg.DataDir, "scratch", "default"); got.Path != want {
-		t.Fatalf("path = %q, want %q", got.Path, want)
-	}
-}
-
 // TestStartTrackerIntake_RunsEvenWithoutEnabledProjects is a regression test:
 // startTrackerIntake used to scan projects once at call time and skip starting
 // the observer loop entirely when none had intake enabled yet. Poll() itself
@@ -699,7 +675,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
+	stack := startLifecycle(ctx, t.TempDir(), store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -771,7 +747,7 @@ func TestWiring_MergeConflictNudgeReArmsAfterConflictClears(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
+	stack := startLifecycle(ctx, t.TempDir(), store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -948,6 +924,7 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 }
 
 func (*fakeSessionLifecycle) WaitAgentSwitchWorkers(context.Context) error { return nil }
+func (*fakeSessionLifecycle) WaitBackgroundWorkers(context.Context) error  { return nil }
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 func (f *fakeSessionLifecycle) SetTerminalInputGate(sessionmanager.TerminalInputGate)     {}
@@ -969,6 +946,9 @@ func (f *fakeSessionLifecycle) GetActiveCodexAccountSwitch(context.Context) (dom
 	return domain.CodexAccountSwitch{}, false, nil
 }
 func (f *fakeSessionLifecycle) SetCodexAccountSwitchObserver(func()) {}
+func (f *fakeSessionLifecycle) PersistChatModel(_ context.Context, _ domain.SessionID, _ string) error {
+	return nil
+}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

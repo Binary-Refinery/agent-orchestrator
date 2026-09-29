@@ -1,6 +1,7 @@
 # ao spawn
 
-Spawn a worker agent session in a registered project. The session runs the chosen agent in a fresh git worktree. Register the project first with `ao project add`.
+Spawn a worker agent session in a registered project, or a standalone workspace session that is not tied to a project.
+Standalone sessions run in an AO-managed directory. Register a project first with `ao project add` for project-scoped sessions.
 
 ## Syntax
 
@@ -16,14 +17,17 @@ ao spawn [flags]
 | `--claim-pr string` | Immediately claim an existing PR for the spawned session | - |
 | `--harness string` | Agent harness to use (see list below) | Project `worker.agent`; required if the project has none |
 | `--issue string` | Issue id to associate with the session | - |
-| `--name string` | Display name shown in the sidebar (max 20 characters) | Required |
+| `--name string` | Display name shown in the sidebar (max 100 characters) | Required |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
-| `--project string` | Project id to spawn the session in | Required |
+| `--project string` | Project id to spawn the session in | Optional when `--standalone` is used; defaults to `AO_PROJECT_ID` or the current repo's registered project |
+| `--standalone` | Spawn a projectless worker session in an AO-managed directory | Disabled when `--project` is set |
 | `--prompt string` | Initial prompt for the agent | - |
 
 `--agent` is an alias for `--harness`.
 
-Available harnesses: `claude-code`, `codex`, `aider`, `opencode`, `grok`, `droid`, `amp`, `agy`, `crush`, `cursor`, `qwen`, `copilot`, `goose`, `auggie`, `continue`, `devin`, `cline`, `kimi`, `kiro`, `kilocode`, `vibe`, `pi`, `autohand`.
+Available harnesses: `claude-code`, `codex`, `aider`, `opencode`, `grok`, `droid`, `amp`, `agy`, `crush`, `cursor`, `qwen`, `copilot`, `goose`, `auggie`, `continue`, `devin`, `cline`, `kimi`, `muse`, `kiro`, `kilocode`, `vibe`, `pi`, `kimchi`, `prime-agent`, `autohand`, `omp`, `fx`.
+
+`fx` is experimental and Terminal UI only: spawn it with `--agent fx --mode tui`.
 
 ## Examples
 

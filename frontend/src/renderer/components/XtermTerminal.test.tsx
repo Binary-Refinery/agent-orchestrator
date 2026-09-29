@@ -19,14 +19,38 @@ const state = vi.hoisted(() => ({
 		findPrevious: ReturnType<typeof vi.fn>;
 		resultListeners: Set<(results: { resultCount: number; resultIndex: number }) => void>;
 	},
+	mouseMoveListener: vi.fn(),
 	lastTerminal: null as null | {
 		write(data: Uint8Array, done?: () => void): void;
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
 		options: Record<string, unknown>;
+		cols: number;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { baseY: number; type: string; viewportY: number } };
+		buffer: {
+			active: {
+				baseY: number;
+				type: string;
+				viewportY: number;
+				getLine: (
+					row: number,
+				) =>
+					| {
+							translateToString: (trimRight: boolean, startColumn?: number, endColumn?: number) => string;
+							isWrapped: boolean;
+					  }
+					| undefined;
+			};
+		};
+		bufferLines: Array<{
+			translateToString: (trimRight: boolean, startColumn?: number, endColumn?: number) => string;
+			isWrapped: boolean;
+		}>;
+		selectionRange?: { start: { x: number; y: number }; end: { x: number; y: number } };
+		getSelectionPosition():
+			| { start: { x: number; y: number }; end: { x: number; y: number } }
+			| undefined;
 		scrollLines: ReturnType<typeof vi.fn>;
 		scrollToBottom: ReturnType<typeof vi.fn>;
 		scrollToLine: ReturnType<typeof vi.fn>;
@@ -44,11 +68,16 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		scrollListeners: Set<() => void>;
 		_core: {
-			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			element: {
+				classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
+				getBoundingClientRect: () => DOMRect;
+			};
 			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
+				_mouseMoveListener?: EventListener;
+				_dragScrollAmount?: number;
 			};
 		};
 	},
@@ -63,7 +92,22 @@ vi.mock("@xterm/xterm", () => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { baseY: 0, type: "normal", viewportY: 0 } };
+		bufferLines: Array<{
+			translateToString: (trimRight: boolean, startColumn?: number, endColumn?: number) => string;
+			isWrapped: boolean;
+		}> = [];
+		buffer = {
+			active: {
+				baseY: 0,
+				type: "normal",
+				viewportY: 0,
+				getLine: (row: number) => this.bufferLines[row],
+			},
+		};
+		selectionRange?: { start: { x: number; y: number }; end: { x: number; y: number } };
+		getSelectionPosition() {
+			return this.selectionRange;
+		}
 		scrollLines = vi.fn();
 		scrollToBottom = vi.fn();
 		scrollToLine = vi.fn();
@@ -95,11 +139,16 @@ vi.mock("@xterm/xterm", () => ({
 		scrollListeners = new Set<() => void>();
 		writeBuffer = "";
 		_core = {
-			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			element: {
+				classList: { add: vi.fn(), remove: vi.fn() },
+				getBoundingClientRect: () => ({ left: 0, right: 800 }) as DOMRect,
+			},
 			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
+				_mouseMoveListener: state.mouseMoveListener,
+				_dragScrollAmount: 0,
 			},
 		};
 
@@ -233,6 +282,7 @@ describe("XtermTerminal", () => {
 		state.linkHandler = null;
 		state.queueViewportSyncOnOpen = false;
 		state.searchAddon = null;
+		state.mouseMoveListener.mockClear();
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -240,9 +290,14 @@ describe("XtermTerminal", () => {
 		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
 	});
 
-	it("fits on each observed frame while an ancestor requests live terminal resizing", () => {
+	it("coalesces live terminal resize observer deliveries into the next frame", () => {
 		const callbacks: ResizeObserverCallback[] = [];
+		const frames: FrameRequestCallback[] = [];
 		const originalResizeObserver = window.ResizeObserver;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
 		class CapturingResizeObserver implements ResizeObserver {
 			constructor(callback: ResizeObserverCallback) {
 				callbacks.push(callback);
@@ -263,11 +318,17 @@ describe("XtermTerminal", () => {
 				</div>,
 			);
 			state.fit.mockClear();
+			frames.length = 0;
 
 			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
+			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
 
+			expect(state.fit).not.toHaveBeenCalled();
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
 			expect(state.fit).toHaveBeenCalledTimes(1);
 		} finally {
+			requestAnimationFrameSpy.mockRestore();
 			Object.defineProperty(window, "ResizeObserver", {
 				configurable: true,
 				writable: true,
@@ -335,6 +396,22 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
 	});
 
+	it("defers an already-permitted focus outside the discrete render update", () => {
+		vi.useFakeTimers();
+		try {
+			const { rerender } = render(<XtermTerminal theme="dark" />);
+			state.lastTerminal!.focus.mockClear();
+
+			rerender(<XtermTerminal focusRequested theme="dark" />);
+			expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+
+			act(() => vi.runOnlyPendingTimers());
+			expect(state.lastTerminal!.focus).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("does not steal focus from an open dialog or another control", () => {
 		const { rerender } = render(<XtermTerminal theme="dark" />);
 		const dialog = document.createElement("div");
@@ -374,6 +451,20 @@ describe("XtermTerminal", () => {
 
 		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
 		sessionButton.remove();
+	});
+
+	it("allows a PTY-launching button to hand focus to the opened terminal", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const loginButton = document.createElement("button");
+		loginButton.dataset.terminalFocusHandoff = "true";
+		document.body.appendChild(loginButton);
+		loginButton.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+		loginButton.remove();
 	});
 
 	it("allows an in-pane terminal tab to hand focus to the destination TUI", async () => {
@@ -697,6 +788,24 @@ describe("XtermTerminal", () => {
 	it("searches incrementally, reports matches, and navigates in both directions", async () => {
 		setNavigatorPlatform("MacIntel");
 		render(<XtermTerminal theme="dark" />);
+		const frames = new Map<number, FrameRequestCallback>();
+		let nextFrame = 0;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			const id = ++nextFrame;
+			frames.set(id, callback);
+			return id;
+		});
+		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+			frames.delete(id);
+		});
+		const flushSearchFrame = () => {
+			const frame = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+			expect(frame).toBeDefined();
+			if (!frame) return;
+			frames.delete(frame[0]);
+			act(() => frame[1](performance.now()));
+		};
+		try {
 		const shortcut = {
 			altKey: false,
 			ctrlKey: false,
@@ -712,20 +821,18 @@ describe("XtermTerminal", () => {
 		state.searchAddon!.findNext.mockClear();
 
 		fireEvent.change(input, { target: { value: "needle" } });
-		await waitFor(() =>
-			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
-				"needle",
-				expect.objectContaining({ incremental: true, caseSensitive: false, regex: false }),
-			),
+		flushSearchFrame();
+		expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: true, caseSensitive: false, regex: false }),
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Match case" }));
 		fireEvent.click(screen.getByRole("button", { name: "Use regular expression" }));
-		await waitFor(() =>
-			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
-				"needle",
-				expect.objectContaining({ incremental: true, caseSensitive: true, regex: true }),
-			),
+		flushSearchFrame();
+		expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: true, caseSensitive: true, regex: true }),
 		);
 
 		act(() =>
@@ -757,6 +864,58 @@ describe("XtermTerminal", () => {
 		state.searchAddon!.findPrevious.mockClear();
 		fireEvent.keyDown(input, { key: "g", metaKey: true, shiftKey: true });
 		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith("needle", expect.anything());
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			cancelAnimationFrameSpy.mockRestore();
+		}
+	});
+
+	it("coalesces rapid terminal-search input into the latest per-frame xterm scan", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		const frames = new Map<number, FrameRequestCallback>();
+		let nextFrame = 0;
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			const id = ++nextFrame;
+			frames.set(id, callback);
+			return id;
+		});
+		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+			frames.delete(id);
+		});
+		try {
+		act(() =>
+			state.lastTerminal!.keyHandler!({
+				altKey: false,
+				ctrlKey: false,
+				key: "f",
+				metaKey: true,
+				preventDefault: vi.fn(),
+				shiftKey: false,
+				stopPropagation: vi.fn(),
+				type: "keydown",
+			} as unknown as KeyboardEvent),
+		);
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		state.searchAddon!.findNext.mockClear();
+
+		fireEvent.change(input, { target: { value: "n" } });
+		fireEvent.change(input, { target: { value: "ne" } });
+		fireEvent.change(input, { target: { value: "needle" } });
+
+		expect(frames.size).toBe(1);
+		const frame = frames.entries().next().value as [number, FrameRequestCallback];
+		frames.delete(frame[0]);
+		act(() => frame[1](performance.now()));
+		expect(state.searchAddon!.findNext).toHaveBeenCalledTimes(1);
+		expect(state.searchAddon!.findNext).toHaveBeenCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: true }),
+		);
+		} finally {
+			requestAnimationFrameSpy.mockRestore();
+			cancelAnimationFrameSpy.mockRestore();
+		}
 	});
 
 	it("marks an invalid regular expression without calling xterm search", async () => {
@@ -978,6 +1137,232 @@ describe("XtermTerminal", () => {
 
 		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("copies the selection to the clipboard when the mouse button is released", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.querySelector(".terminal-xterm-host")!;
+		state.lastTerminal!.selection = "released selection";
+
+		fireEvent.pointerDown(host, { button: 0 });
+		fireEvent.pointerUp(document, { button: 0 });
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("released selection"));
+		expect(await screen.findByRole("status")).toHaveTextContent("Copied to clipboard");
+	});
+
+	it("does not copy on release when the copy-on-select setting is off", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "keep out of the clipboard";
+		act(() => useUiStore.getState().setTerminalCopyOnSelect(false));
+
+		try {
+			fireEvent.pointerDown(container.querySelector(".terminal-xterm-host")!, { button: 0 });
+			fireEvent.pointerUp(document, { button: 0 });
+			await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+			expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+			expect(screen.queryByRole("status")).not.toBeInTheDocument();
+		} finally {
+			act(() => useUiStore.getState().setTerminalCopyOnSelect(true));
+		}
+	});
+
+	it("ignores releases that did not follow a left-button press inside the terminal", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "should stay out";
+		const host = container.querySelector(".terminal-xterm-host")!;
+
+		fireEvent.pointerUp(document, { button: 0 });
+		fireEvent.pointerDown(host, { button: 2 });
+		fireEvent.pointerUp(document, { button: 2 });
+		fireEvent.pointerDown(host, { button: 2 });
+		fireEvent.pointerUp(document, { button: 0 });
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+	});
+
+	it("copies on the left release even when a right-button release happened mid-drag", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.querySelector(".terminal-xterm-host")!;
+		state.lastTerminal!.selection = "kept armed";
+
+		fireEvent.pointerDown(host, { button: 0 });
+		fireEvent.pointerUp(document, { button: 2 });
+		fireEvent.pointerUp(document, { button: 0 });
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("kept armed"));
+	});
+
+	it.each([
+		["pointercancel", () => fireEvent.pointerCancel(document)],
+		["window blur", () => window.dispatchEvent(new Event("blur"))],
+	])("disarms the pending selection on %s so a later release does not copy", async (_name, cancel) => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "stale selection";
+
+		fireEvent.pointerDown(container.querySelector(".terminal-xterm-host")!, { button: 0 });
+		cancel();
+		fireEvent.pointerUp(document, { button: 0 });
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("joins selected TUI rows that fill the whole grid width when copying", () => {
+		render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		terminal.cols = 5;
+		terminal.bufferLines = [
+			{ isWrapped: false, translateToString: (t) => (t ? "hello" : "hello") },
+			{ isWrapped: false, translateToString: (t) => (t ? "wo" : "wo   ") },
+			{ isWrapped: false, translateToString: (t) => (t ? "next" : "next") },
+		];
+		terminal.selectionRange = { start: { x: 0, y: 0 }, end: { x: 3, y: 2 } };
+		terminal.selection = "hello\nwo\nnext";
+
+		terminal.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("hellowo\nnext");
+	});
+
+	it.each([
+		["joins a visibly full row despite stale backing padding", "hello   ", "hello\nwo", "hellowo"],
+		["keeps a visibly short row separate despite stale backing text", "hi   stale", "hi\nwo", "hi\nwo"],
+	])("%s after a terminal resize", (_name, backingText, selection, expected) => {
+		render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		terminal.cols = 5;
+		terminal.bufferLines = [
+			{
+				isWrapped: false,
+				translateToString: (trimRight, startColumn = 0, endColumn = backingText.length) => {
+					const text = backingText.slice(startColumn, endColumn);
+					return trimRight ? text.trimEnd() : text;
+				},
+			},
+			{ isWrapped: false, translateToString: (trimRight) => (trimRight ? "wo" : "wo   ") },
+		];
+		terminal.selectionRange = { start: { x: 0, y: 0 }, end: { x: 2, y: 1 } };
+		terminal.selection = selection;
+
+		terminal.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith(expected);
+	});
+
+	it("joins Windows CRLF rows without changing preserved row breaks", () => {
+		setNavigatorPlatform("Win32");
+		render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		terminal.cols = 5;
+		terminal.bufferLines = [
+			{ isWrapped: false, translateToString: (t) => (t ? "hello" : "hello") },
+			{ isWrapped: false, translateToString: (t) => (t ? "wo" : "wo   ") },
+			{ isWrapped: false, translateToString: (t) => (t ? "next" : "next") },
+		];
+		terminal.selectionRange = { start: { x: 0, y: 0 }, end: { x: 3, y: 2 } };
+		terminal.selection = "hello\r\nwo\r\nnext";
+
+		terminal.keyHandler!({
+			key: "c",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("hellowo\r\nnext");
+	});
+
+	it.each([
+		["Linux x86_64", "bc\nhi"],
+		["Win32", "bc\r\nhi"],
+	])("preserves one row per buffer line for Alt-drag column selections on %s", async (platform, selection) => {
+		setNavigatorPlatform(platform);
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		terminal.cols = 5;
+		terminal.bufferLines = [
+			{ isWrapped: false, translateToString: (t) => (t ? "hello" : "hello") },
+			{ isWrapped: false, translateToString: (t) => (t ? "thing" : "thing") },
+		];
+		terminal.selectionRange = { start: { x: 1, y: 0 }, end: { x: 3, y: 1 } };
+		terminal.selection = selection;
+
+		const host = container.querySelector(".terminal-xterm-host")!;
+		fireEvent.pointerDown(host, { altKey: true, button: 0 });
+		fireEvent.pointerUp(document, { altKey: true, button: 0 });
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith(selection));
+	});
+
+	it("joins full-width rows of wide characters by cell coverage, not string length", () => {
+		render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		// "你好你" occupies all 6 grid cells (3 wide chars) but is only 3 UTF-16
+		// code units long — fullness must not compare string length to cols.
+		terminal.cols = 6;
+		terminal.bufferLines = [
+			{ isWrapped: false, translateToString: (t) => (t ? "你好你" : "你好你") },
+			{ isWrapped: false, translateToString: (t) => (t ? "ab" : "ab    ") },
+		];
+		terminal.selectionRange = { start: { x: 0, y: 0 }, end: { x: 0, y: 1 } };
+		terminal.selection = "你好你\nab";
+
+		terminal.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("你好你ab");
+	});
+
+	it("keeps xterm-wrapped rows merged instead of re-splitting them", () => {
+		render(<XtermTerminal theme="dark" />);
+		const terminal = state.lastTerminal!;
+		terminal.cols = 5;
+		terminal.bufferLines = [
+			{ isWrapped: false, translateToString: () => "hello" },
+			{ isWrapped: true, translateToString: () => "world" },
+			{ isWrapped: false, translateToString: () => "tail" },
+		];
+		terminal.selectionRange = { start: { x: 0, y: 0 }, end: { x: 4, y: 2 } };
+		terminal.selection = "helloworld\ntail";
+
+		terminal.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("helloworldtail");
 	});
 
 	it("shows a copied toast after an explicit copy", async () => {
@@ -2046,5 +2431,21 @@ describe("XtermTerminal", () => {
 		window.removeEventListener("drop", bubbled);
 		expect(bubbled).toHaveBeenCalledTimes(1);
 		expect(saveDroppedFile).not.toHaveBeenCalled();
+	});
+
+	it("does not extend a drag selection into a neighboring pane or keep auto-scrolling", () => {
+		render(<XtermTerminal theme="dark" />);
+		const selectionService = state.lastTerminal!._core._selectionService;
+		const listener = selectionService._mouseMoveListener!;
+
+		// Simulate xterm's timer having been armed by a previous drag below the
+		// terminal before the pointer crosses horizontally into the sidebar.
+		selectionService._dragScrollAmount = 1;
+		listener(new MouseEvent("mousemove", { clientX: 801 }));
+		expect(state.mouseMoveListener).not.toHaveBeenCalled();
+		expect(selectionService._dragScrollAmount).toBe(0);
+
+		listener(new MouseEvent("mousemove", { clientX: 800 }));
+		expect(state.mouseMoveListener).toHaveBeenCalledTimes(1);
 	});
 });

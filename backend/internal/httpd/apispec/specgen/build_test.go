@@ -40,14 +40,25 @@ func TestBuild_CodexSwitchContractIsRedactedAndOnlyMountedRoutesAreDocumented(t 
 
 	phase := doc.Components.Schemas["CodexAccountSwitchResponse"].Properties["phase"]
 	want := []string{
-		"requested", "stopping_sessions", "sessions_stopped", "checkpointing_source", "activating_target",
-		"verifying_target", "restarting_sessions", "rollback_required", "recovery_required", "completed", "failed",
+		"requested", "checkpointing_source", "activating_target",
+		"recovery_required", "completed", "failed",
 	}
 	if !slices.Equal(phase.Enum, want) {
 		t.Fatalf("CodexAccountSwitchResponse.phase enum = %v, want %v", phase.Enum, want)
 	}
-	if _, ok := doc.Paths["/api/v1/agents/codex/account-switches/{switchId}"]; ok {
-		t.Fatal("stale switch GET path remains in generated contract")
+	for _, obsolete := range []string{"sessions"} {
+		if _, ok := doc.Components.Schemas["CodexAccountSwitchResponse"].Properties[obsolete]; ok {
+			t.Fatalf("obsolete %q remains in CodexAccountSwitchResponse", obsolete)
+		}
+		if _, ok := doc.Components.Schemas["StartCodexAccountSwitchRequest"].Properties[obsolete]; ok {
+			t.Fatalf("obsolete %q remains in StartCodexAccountSwitchRequest", obsolete)
+		}
+	}
+	if _, ok := doc.Components.Schemas["CodexAccountSwitchSessionResponse"]; ok {
+		t.Fatal("obsolete CodexAccountSwitchSessionResponse schema remains")
+	}
+	if _, ok := doc.Paths["/api/v1/agents/codex/account-switches/{switchId}"]; !ok {
+		t.Fatal("durable switch GET path is missing from generated contract")
 	}
 	if _, ok := doc.Paths["/api/v1/agents/codex/account-switches/{switchId}/cancel"]; ok {
 		t.Fatal("stale switch cancel path remains in generated contract")
@@ -234,6 +245,17 @@ func TestBuild_OMPIsPubliclySpawnable(t *testing.T) {
 	harnesses := doc.Components.Schemas["SpawnSessionRequest"].Properties["harness"].Enum
 	if !slices.Contains(harnesses, "omp") {
 		t.Fatalf("SpawnSessionRequest harness enum = %v, want omp", harnesses)
+	}
+}
+
+func TestBuild_FXPublicHarnessContracts(t *testing.T) {
+	doc := buildSchemas(t)
+	for schema, field := range map[string]string{
+		"SpawnSessionRequest": "harness", "DelegateTaskRequest": "agent", "InstallJob": "target",
+	} {
+		if values := doc.Components.Schemas[schema].Properties[field].Enum; !slices.Contains(values, "fx") {
+			t.Errorf("%s.%s enum = %v, want fx", schema, field, values)
+		}
 	}
 }
 

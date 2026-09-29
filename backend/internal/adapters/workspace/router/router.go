@@ -41,6 +41,7 @@ var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
 var _ ports.WorkspaceObserver = (*Workspace)(nil)
 var _ ports.WorkspaceReclaimer = (*Workspace)(nil)
+var _ ports.WorkspacePreparationBranchCleaner = (*Workspace)(nil)
 
 // New returns a router over git and scratch workspace implementations.
 func New(deps Deps) *Workspace {
@@ -104,6 +105,18 @@ func (w *Workspace) DestroyReclaim(ctx context.Context, info ports.WorkspaceInfo
 		return reclaimer.DestroyReclaim(ctx, info)
 	}
 	return ports.WorkspaceReclaimRemoved, adapter.Destroy(ctx, info)
+}
+
+// DeletePreparedBranch delegates safe speculative-branch cleanup to Git workspaces.
+func (w *Workspace) DeletePreparedBranch(ctx context.Context, info ports.WorkspaceInfo) error {
+	adapter, err := w.adapterForProject(ctx, info.ProjectID)
+	if err != nil {
+		return err
+	}
+	if cleaner, ok := adapter.(ports.WorkspacePreparationBranchCleaner); ok {
+		return cleaner.DeletePreparedBranch(ctx, info)
+	}
+	return nil
 }
 
 // ForceDestroy delegates forced session workspace cleanup to the
@@ -184,6 +197,14 @@ func (w *Workspace) DestroyWorkspaceProject(ctx context.Context, info ports.Work
 func (w *Workspace) adapterForProject(ctx context.Context, projectID domain.ProjectID) (ports.Workspace, error) {
 	if w == nil {
 		return nil, errors.New("workspace router: nil router")
+	}
+	// Projectless sessions use AO-managed plain directories. They deliberately
+	// have no Git worktree, branch, tracker, or project row behind them.
+	if projectID == "" {
+		if w.scratch == nil {
+			return nil, errors.New("workspace router: standalone workspace is not configured")
+		}
+		return w.scratch, nil
 	}
 	if w.projects != nil && projectID != "" {
 		project, ok, err := w.projects.GetProject(ctx, string(projectID))
