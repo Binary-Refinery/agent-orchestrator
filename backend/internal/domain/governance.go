@@ -10,6 +10,8 @@ func WithNativeHistoryRequired(ctx context.Context) context.Context {
 	return context.WithValue(ctx, nativeHistoryRequirementKey{}, true)
 }
 
+// NativeHistoryRequired reports whether the context carries a native-history
+// narrowing request (see WithNativeHistoryRequired).
 func NativeHistoryRequired(ctx context.Context) bool {
 	required, _ := ctx.Value(nativeHistoryRequirementKey{}).(bool)
 	return required
