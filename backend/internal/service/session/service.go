@@ -855,6 +855,13 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 // SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy
 // and returns the refreshed read model.
 func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	// Managed sessions reserve lifecycle control for the external controller,
+	// so AO must not arm autonomous termination on PR merge for them.
+	if terminate {
+		if err := s.allowNativeAutomation(ctx, id); err != nil {
+			return domain.Session{}, err
+		}
+	}
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
