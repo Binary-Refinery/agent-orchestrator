@@ -35,7 +35,7 @@ func (p AutomationPolicy) EffectiveReviewerBudget() int {
 	return p.ReviewerBudgetMax
 }
 
-var spawnNamePattern = regexp.MustCompile(`^\[[^\[\]]+\] #\d+ .+`)
+var spawnNamePattern = regexp.MustCompile(`^\[[^\[\]]+\] #\d+ .+$`)
 
 // ValidateSpawnGate enforces B): when the gate is off it accepts everything.
 // When on, the name must match "[bereich] #NNN Text" and issueID must be
@@ -94,9 +94,13 @@ func (p AutomationPolicy) ShouldArchiveReviewer(isReviewer, idle, hasReport, tri
 	return ArchiveDecision{Audit: audit("archive.skipped", "conditions not met session="+sessionID), Reason: "conditions not met"}
 }
 
-// DraftReport enforces D): reports/closeouts are always DRAFT chat drafts and
-// are never auto-posted. Returns the chat payload and autoPosted=false.
+// DraftReport enforces D): when DraftOnlyReports is on, reports/closeouts
+// are always DRAFT chat drafts and are never auto-posted. When the switch
+// is off no draft is produced. Returns the chat payload and autoPosted=false.
 func (p AutomationPolicy) DraftReport(kind, body string) (chatDraft string, autoPosted bool) {
+	if !p.DraftOnlyReports {
+		return "", false
+	}
 	return "DRAFT [" + kind + "] " + strings.TrimSpace(body), false
 }
 

@@ -182,19 +182,20 @@ func (s *Service) dispatch(ctx context.Context, store schedulerStore, run domain
 
 // spawnChecked enforces the opt-in spawn gate (B) for automation-scheduler
 // dispatches only; interactive spawns never pass through here by design.
-// A rejection releases the claim (run stays pending with an audit message)
-// instead of failing it, so enabling the gate never poisons existing
-// automations without an issue link. Fail-closed applies only to the
-// dispatch attempt itself: nothing launches until the naming/issue
+// The gate reads the definition's own issue link, so only unlinked or
+// misnamed definitions are rejected. A rejection releases the claim (run
+// stays pending with an audit message) instead of failing it, so enabling
+// the gate never poisons existing automations. Fail-closed applies only to
+// the dispatch attempt itself: nothing launches until the naming/issue
 // conditions hold.
 func (s *Service) spawnChecked(ctx context.Context, store schedulerStore, definition domain.Automation, run domain.AutomationRun, now time.Time) (domain.Session, int, int, error) {
-	if rejection := s.policy.ValidateSpawnGate(definition.DisplayName, ""); rejection != nil {
+	if rejection := s.policy.ValidateSpawnGate(definition.DisplayName, string(definition.IssueID)); rejection != nil {
 		policyErr := apierr.Conflict(rejection.Code, rejection.Message, nil)
 		_, releaseErr := store.ReleaseAutomationRun(context.WithoutCancel(ctx), run.ID, rejection.Code+": "+runError(policyErr), now)
 		return domain.Session{}, 0, 0, errors.Join(policyErr, releaseErr)
 	}
 	return s.spawner.Spawn(ctx, ports.SpawnConfig{
-		ProjectID: definition.ProjectID, Kind: definition.Kind, Harness: definition.Harness,
+		ProjectID: definition.ProjectID, IssueID: definition.IssueID, Kind: definition.Kind, Harness: definition.Harness,
 		Prompt: definition.Prompt, DisplayName: definition.DisplayName, AutomationRunID: &run.ID,
 	})
 }

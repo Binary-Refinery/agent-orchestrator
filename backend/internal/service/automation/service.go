@@ -67,6 +67,7 @@ func New(deps Deps) *Service {
 // CreateInput is the validated user intent for one recurring definition.
 type CreateInput struct {
 	ProjectID   domain.ProjectID
+	IssueID     domain.IssueID
 	DisplayName string
 	Prompt      string
 	Kind        domain.SessionKind
@@ -81,6 +82,7 @@ type CreateInput struct {
 // Supplying either schedule source replaces the schedule atomically.
 type UpdateInput struct {
 	DisplayName *string
+	IssueID     *domain.IssueID
 	Prompt      *string
 	Kind        *domain.SessionKind
 	Harness     *domain.AgentHarness
@@ -130,6 +132,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Automat
 	rec := domain.Automation{
 		ID:          domain.AutomationID("automation-" + s.newID()),
 		ProjectID:   input.ProjectID,
+		IssueID:     input.IssueID,
 		DisplayName: displayName,
 		Prompt:      prompt,
 		Kind:        input.Kind,
@@ -209,6 +212,9 @@ func (s *Service) Update(ctx context.Context, id domain.AutomationID, input Upda
 			return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_NAME", "Automation name must be between 1 and 120 characters", nil)
 		}
 	}
+	if input.IssueID != nil {
+		rec.IssueID = *input.IssueID
+	}
 	if input.Prompt != nil {
 		rec.Prompt = strings.TrimSpace(*input.Prompt)
 		if rec.Prompt == "" || len(rec.Prompt) > maxPromptBytes {
@@ -287,7 +293,32 @@ func (s *Service) Delete(ctx context.Context, id domain.AutomationID) error {
 // Policy exposes the service's opt-in automation guardrails. The archive,
 // draft, and reviewer decisions live here as the productive call surface
 // (C/D/E); the spawn gate itself is enforced in scheduler dispatch.
+// Lifecycle wiring status: spawn gate ACTIVE in dispatch; reviewer-archive
+// evaluation, draft delivery, and reviewer-grant execution hooks are STAGED
+// (exposed here for callers, downstream session/chat integration pending).
 func (s *Service) Policy() domain.AutomationPolicy { return s.policy }
+
+// WiringStatus reports per-capability lifecycle wiring: "active" runs in a
+// daemon path today, "staged" is decided here but needs downstream
+// session/chat integration before it takes effect.
+func (s *Service) WiringStatus() map[string]string {
+	return map[string]string{
+		"spawnGate":       wiringState(s.policy.SpawnGate, true),
+		"reviewerArchive": wiringState(s.policy.ReviewerArchive, false),
+		"draftReports":    wiringState(s.policy.DraftOnlyReports, false),
+		"autoReviewer":    wiringState(s.policy.AutoReviewer, false),
+	}
+}
+
+func wiringState(enabled, downstreamWired bool) string {
+	if !enabled {
+		return "off"
+	}
+	if downstreamWired {
+		return "active"
+	}
+	return "staged"
+}
 
 // ArchiveReviewer evaluates the reviewer auto-archive rule (C).
 func (s *Service) ArchiveReviewer(isReviewer, idle, hasReport, triageAdopted bool, age time.Duration, sessionID string) domain.ArchiveDecision {

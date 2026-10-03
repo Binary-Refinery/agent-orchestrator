@@ -31,6 +31,12 @@ func TestSpawnGate(t *testing.T) {
 	if got := p.ValidateSpawnGate("[ci] #123 Fix flake", "  "); got == nil {
 		t.Fatal("blank issueId must be rejected")
 	}
+	if got := p.ValidateSpawnGate("[ci] #123 Fix flake\ninjected", "issue-1"); got == nil {
+		t.Fatal("trailing newline must not bypass the gate")
+	}
+	if got := p.ValidateSpawnGate("[ci] #123", "issue-1"); got == nil {
+		t.Fatal("name without text must be rejected ($-anchored)")
+	}
 }
 
 func TestArchiveReviewer(t *testing.T) {
@@ -60,6 +66,10 @@ func TestArchiveReviewer(t *testing.T) {
 
 func TestDraftOnlyReports(t *testing.T) {
 	p := DefaultAutomationPolicy()
+	if draft, posted := p.DraftReport("status", "hello"); draft != "" || posted {
+		t.Fatal("switch off must produce no draft and never post")
+	}
+	p.DraftOnlyReports = true
 	draft, posted := p.DraftReport("status", "hello")
 	if posted {
 		t.Fatal("must never auto-post")
