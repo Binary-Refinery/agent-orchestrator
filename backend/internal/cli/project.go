@@ -88,10 +88,19 @@ type roleOverride struct {
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Assignee string `json:"assignee,omitempty"`
+	Enabled      bool                `json:"enabled,omitempty"`
+	Provider     string              `json:"provider,omitempty"`
+	Repo         string              `json:"repo,omitempty"`
+	Assignee     string              `json:"assignee,omitempty"`
+	AutomationV2 *automationV2Config `json:"automationV2,omitempty"`
+}
+
+// automationV2Config mirrors domain.AutomationV2Config.
+type automationV2Config struct {
+	Enabled              bool   `json:"enabled,omitempty"`
+	Label                string `json:"label,omitempty"`
+	MaxParallel          int    `json:"maxParallel,omitempty"`
+	ReviewTimeoutSeconds int64  `json:"reviewTimeoutSeconds,omitempty"`
 }
 
 // reviewerConfig mirrors domain.ReviewerConfig.

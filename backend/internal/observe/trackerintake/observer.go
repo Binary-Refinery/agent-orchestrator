@@ -219,6 +219,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	if V2Enabled(cfg) && !V2IssueAdmitted(issue, cfg).Allow {
+		return false
+	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
