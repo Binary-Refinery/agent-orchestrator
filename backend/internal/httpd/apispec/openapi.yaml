@@ -9040,6 +9040,18 @@ components:
       - status
       - scheduledFor
       type: object
+    AutomationV2Config:
+      properties:
+        enabled:
+          type: boolean
+        label:
+          type: string
+        maxParallel:
+          type: integer
+        reviewTimeoutSeconds:
+          format: int64
+          type: integer
+      type: object
     BrowserCommandRequest:
       properties:
         action:
@@ -13983,6 +13995,8 @@ components:
       properties:
         assignee:
           type: string
+        automationV2:
+          $ref: '#/components/schemas/AutomationV2Config'
         enabled:
           type: boolean
         provider:

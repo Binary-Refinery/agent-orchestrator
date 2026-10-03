@@ -3076,6 +3076,13 @@ export interface components {
             /** @enum {string} */
             status: "pending" | "spawning" | "running" | "completed" | "failed";
         };
+        AutomationV2Config: {
+            enabled?: boolean;
+            label?: string;
+            maxParallel?: number;
+            /** Format: int64 */
+            reviewTimeoutSeconds?: number;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -4941,6 +4948,7 @@ export interface components {
         };
         TrackerIntakeConfig: {
             assignee?: string;
+            automationV2?: components["schemas"]["AutomationV2Config"];
             enabled?: boolean;
             /** @enum {string} */
             provider?: "github" | "gitlab";
