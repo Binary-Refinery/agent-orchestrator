@@ -10,6 +10,7 @@ import (
 // V2RejectReason is the typed, fail-closed reason every v2 refusal carries.
 type V2RejectReason string
 
+// V2 reject reasons are the typed, fail-closed refusals every v2 denial carries.
 const (
 	V2ReasonDisabled       V2RejectReason = "v2_disabled"
 	V2ReasonNoLabel        V2RejectReason = "v2_no_label"

@@ -136,7 +136,7 @@ type AutomationV2Config struct {
 // DefaultV2MaxParallel is the v2 WIP-gate default: strictly one active take.
 const DefaultV2MaxParallel = 1
 
-// DefaultV2ReviewTimeout is the v2 stall default for needs_review/CI-failing takes.
+// DefaultV2ReviewTimeoutSeconds is the v2 stall default for needs_review/CI-failing takes.
 const DefaultV2ReviewTimeoutSeconds = 24 * 60 * 60
 
 // ResolvedMaxParallel returns the effective WIP limit (default 1).
