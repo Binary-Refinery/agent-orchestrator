@@ -35,19 +35,35 @@ func (p AutomationPolicy) EffectiveReviewerBudget() int {
 	return p.ReviewerBudgetMax
 }
 
-var spawnNamePattern = regexp.MustCompile(`^\[[^\[\]]+\] #\d+ .+$`)
+var spawnNamePattern = regexp.MustCompile(`^\[[^\[\]\r\n]+\] #\d+ .+$`)
+
+var embeddedIssuePattern = regexp.MustCompile(`#(\d+)`)
+
+// IssueLinkForGate resolves the issue link the spawn gate enforces: an
+// explicit definition link wins, otherwise the "#NNN" segment mandated by
+// the gated naming format counts as the link. This keeps the gate passable
+// end-to-end (rename to "[bereich] #NNN Text") until the explicit link is
+// persisted and API-exposed (migration + controller DTOs, staged).
+func IssueLinkForGate(displayName, issueID string) string {
+	if strings.TrimSpace(issueID) != "" {
+		return strings.TrimSpace(issueID)
+	}
+	return embeddedIssuePattern.FindString(strings.TrimSpace(displayName))
+}
 
 // ValidateSpawnGate enforces B): when the gate is off it accepts everything.
-// When on, the name must match "[bereich] #NNN Text" and issueID must be
-// non-empty. Callers map the returned error to 409 AUTOMATION_POLICY_REJECTED.
+// When on, the name must match "[bereich] #NNN Text" (single-line) and an
+// issue link must resolve via IssueLinkForGate. Callers map the returned
+// error to 409 AUTOMATION_POLICY_REJECTED.
 func (p AutomationPolicy) ValidateSpawnGate(displayName, issueID string) *PolicyRejection {
 	if !p.SpawnGate {
 		return nil
 	}
-	if !spawnNamePattern.MatchString(strings.TrimSpace(displayName)) {
+	name := strings.TrimSpace(displayName)
+	if strings.ContainsAny(name, "\r\n") || !spawnNamePattern.MatchString(name) {
 		return &PolicyRejection{Code: "AUTOMATION_POLICY_REJECTED", Message: "display name must match [bereich] #NNN Text"}
 	}
-	if strings.TrimSpace(issueID) == "" {
+	if IssueLinkForGate(name, issueID) == "" {
 		return &PolicyRejection{Code: "AUTOMATION_POLICY_REJECTED", Message: "issueId is required"}
 	}
 	return nil

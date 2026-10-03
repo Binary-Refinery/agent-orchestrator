@@ -30,8 +30,9 @@ type Automation struct {
 	ID        AutomationID `json:"id"`
 	ProjectID ProjectID    `json:"projectId"`
 	// IssueID optionally links the definition to its tracker issue. The
-	// spawn gate requires it when enabled; SQLite persistence of this link
-	// is staged (needs a migration) and currently round-trips empty.
+	// spawn gate prefers it and falls back to the "#NNN" segment of a
+	// conforming display name; SQLite persistence and API exposure of this
+	// link are staged (needs a migration + controller DTOs).
 	IssueID     IssueID      `json:"issueId,omitempty"`
 	DisplayName string       `json:"displayName"`
 	Prompt      string       `json:"prompt"`

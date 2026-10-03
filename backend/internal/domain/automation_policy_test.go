@@ -25,11 +25,20 @@ func TestSpawnGate(t *testing.T) {
 	if got := p.ValidateSpawnGate("bad name", "issue-1"); got == nil || got.Code != "AUTOMATION_POLICY_REJECTED" {
 		t.Fatal("bad name must be 409 AUTOMATION_POLICY_REJECTED")
 	}
-	if got := p.ValidateSpawnGate("[ci] #123 Fix flake", ""); got == nil {
-		t.Fatal("missing issueId must be rejected")
+	if got := p.ValidateSpawnGate("[ci] #123 Fix flake", ""); got != nil {
+		t.Fatalf("embedded #NNN must count as issue link, got %v", got)
 	}
-	if got := p.ValidateSpawnGate("[ci] #123 Fix flake", "  "); got == nil {
-		t.Fatal("blank issueId must be rejected")
+	if got := p.ValidateSpawnGate("[ci] Fix flake", "  "); got == nil {
+		t.Fatal("unlinked definition must be rejected")
+	}
+	if got := IssueLinkForGate("[ci] #123 Fix flake", ""); got != "#123" {
+		t.Fatalf("fallback must extract embedded link, got %q", got)
+	}
+	if got := IssueLinkForGate("[ci] #123 Fix flake", "explicit"); got != "explicit" {
+		t.Fatalf("explicit link must win, got %q", got)
+	}
+	if got := p.ValidateSpawnGate("[ci\nx] #123 Fix", "issue-1"); got == nil {
+		t.Fatal("line break inside brackets must be rejected")
 	}
 	if got := p.ValidateSpawnGate("[ci] #123 Fix flake\ninjected", "issue-1"); got == nil {
 		t.Fatal("trailing newline must not bypass the gate")

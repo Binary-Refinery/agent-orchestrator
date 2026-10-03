@@ -9,10 +9,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// The spawn gate is automation-scheduler scoped: with the gate on, a legacy
-// definition (no naming convention, no issue link) must not spawn and must
-// not be poisoned as failed — the claim is released with an audit message.
-func TestPolicyGateReleasesInsteadOfFailing(t *testing.T) {
+// The spawn gate is automation-scheduler scoped: with the gate on, an
+// unlinked legacy definition must not spawn. The rejection fails only that
+// occurrence with an AUTOMATION_POLICY_REJECTED audit message, and the
+// failed run is never re-claimed, so rejected runs cannot starve later
+// valid automations.
+func TestPolicyGateFailsOccurrenceWithoutStarving(t *testing.T) {
 	now := time.Date(2026, time.August, 25, 14, 0, 0, 0, time.UTC)
 	store := newSchedulerStore()
 	store.automations["automation-legacy"] = domain.Automation{ID: "automation-legacy", ProjectID: "p", DisplayName: "Legacy name", Prompt: "Do work", Kind: domain.KindWorker, RRuleText: "DTSTART:20260825T140000Z\nRRULE:FREQ=HOURLY", Timezone: "UTC", Enabled: true, NextRunAt: now}
@@ -26,22 +28,23 @@ func TestPolicyGateReleasesInsteadOfFailing(t *testing.T) {
 	if len(spawner.calls) != 0 {
 		t.Fatal("rejected dispatch must not spawn")
 	}
-	run := store.runs["run-legacy"]
 	if len(store.runs) == 0 {
 		t.Fatal("expected materialized runs")
 	}
-	audited := false
 	for _, run := range store.runs {
-		if run.Status == domain.AutomationRunFailed {
-			t.Fatalf("rejected run must not fail, got %s failed", run.ID)
+		if run.Status != domain.AutomationRunFailed {
+			t.Fatalf("rejected occurrence must fail, got %s=%s", run.ID, run.Status)
 		}
-		if strings.Contains(run.ErrorMessage, "AUTOMATION_POLICY_REJECTED") {
-			audited = true
+		if !strings.Contains(run.ErrorMessage, "AUTOMATION_POLICY_REJECTED") {
+			t.Fatalf("failure must carry an AUTOMATION_POLICY_REJECTED audit message, got %q", run.ErrorMessage)
 		}
 	}
-	_ = run
-	if !audited {
-		t.Fatal("release must carry an AUTOMATION_POLICY_REJECTED audit message")
+	spawns := len(spawner.calls)
+	if err := svc.Tick(context.Background(), now.Add(time.Minute)); err != nil {
+		t.Fatalf("second tick must not re-claim failed runs, got %v", err)
+	}
+	if len(spawner.calls) != spawns {
+		t.Fatal("failed runs must never be re-claimed")
 	}
 }
 
