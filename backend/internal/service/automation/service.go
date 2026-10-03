@@ -37,6 +37,11 @@ type Deps struct {
 	Spawner SessionSpawner
 	Clock   func() time.Time
 	NewID   func() string
+	// Policy is opt-in (zero value = everything off). SpawnGate rejects
+	// automation dispatches whose display name violates
+	// "[bereich] #NNN Text" or that carry no issue ID with 409
+	// AUTOMATION_POLICY_REJECTED.
+	Policy domain.AutomationPolicy
 }
 
 // Service owns automation validation and scheduling behavior.
@@ -45,6 +50,7 @@ type Service struct {
 	spawner SessionSpawner
 	clock   func() time.Time
 	newID   func() string
+	policy  domain.AutomationPolicy
 }
 
 // New constructs the daemon-owned automation service.
@@ -55,7 +61,7 @@ func New(deps Deps) *Service {
 	if deps.NewID == nil {
 		deps.NewID = uuid.NewString
 	}
-	return &Service{store: deps.Store, spawner: deps.Spawner, clock: deps.Clock, newID: deps.NewID}
+	return &Service{store: deps.Store, spawner: deps.Spawner, clock: deps.Clock, newID: deps.NewID, policy: deps.Policy}
 }
 
 // CreateInput is the validated user intent for one recurring definition.
@@ -276,6 +282,26 @@ func (s *Service) Delete(ctx context.Context, id domain.AutomationID) error {
 		return apierr.NotFound("AUTOMATION_NOT_FOUND", "Unknown automation")
 	}
 	return nil
+}
+
+// Policy exposes the service's opt-in automation guardrails. The archive,
+// draft, and reviewer decisions live here as the productive call surface
+// (C/D/E); the spawn gate itself is enforced in scheduler dispatch.
+func (s *Service) Policy() domain.AutomationPolicy { return s.policy }
+
+// ArchiveReviewer evaluates the reviewer auto-archive rule (C).
+func (s *Service) ArchiveReviewer(isReviewer, idle, hasReport, triageAdopted bool, age time.Duration, sessionID string) domain.ArchiveDecision {
+	return s.policy.ShouldArchiveReviewer(isReviewer, idle, hasReport, triageAdopted, age, s.clock().UTC(), sessionID)
+}
+
+// DraftReport renders a status/closeout draft into the chat (D, never posted).
+func (s *Service) DraftReport(kind, body string) (string, bool) {
+	return s.policy.DraftReport(kind, body)
+}
+
+// AssignAutoReviewer decides the single auto-reviewer grant (E).
+func (s *Service) AssignAutoReviewer(workerDone, optedOut bool, alreadyAssigned int) (bool, string) {
+	return s.policy.AssignAutoReviewer(workerDone, optedOut, alreadyAssigned)
 }
 
 // Runs returns one definition's newest-first durable run history.
