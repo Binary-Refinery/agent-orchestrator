@@ -27,8 +27,13 @@ const (
 // Automation is the durable user-authored recurring definition. RRuleText is
 // canonical; Timezone preserves the wall-clock intent used to advance it.
 type Automation struct {
-	ID          AutomationID `json:"id"`
-	ProjectID   ProjectID    `json:"projectId"`
+	ID        AutomationID `json:"id"`
+	ProjectID ProjectID    `json:"projectId"`
+	// IssueID optionally links the definition to its tracker issue. The
+	// spawn gate prefers it and falls back to the "#NNN" segment of a
+	// conforming display name; SQLite persistence and API exposure of this
+	// link are staged (needs a migration + controller DTOs).
+	IssueID     IssueID      `json:"issueId,omitempty"`
 	DisplayName string       `json:"displayName"`
 	Prompt      string       `json:"prompt"`
 	Kind        SessionKind  `json:"kind"`

@@ -144,12 +144,14 @@ func (s *Service) dispatch(ctx context.Context, store schedulerStore, run domain
 		_, releaseErr := store.ReleaseAutomationRun(context.WithoutCancel(ctx), run.ID, runError(err), now)
 		return errors.Join(err, releaseErr)
 	}
-	session, _, _, spawnErr := s.spawner.Spawn(ctx, ports.SpawnConfig{
-		ProjectID: definition.ProjectID, Kind: definition.Kind, Harness: definition.Harness,
-		Prompt: definition.Prompt, DisplayName: definition.DisplayName, AutomationRunID: &run.ID,
-	})
+	session, _, _, spawnErr := s.spawnChecked(ctx, store, definition, run, now)
 	if spawnErr != nil {
 		var apiError *apierr.Error
+		// Policy rejections already recorded the occurrence as failed with an
+		// audit message; do not overwrite it with a second release or fail.
+		if errors.As(spawnErr, &apiError) && apiError.Kind == apierr.KindConflict && apiError.Code == "AUTOMATION_POLICY_REJECTED" {
+			return spawnErr
+		}
 		if session, ok, lookupErr := store.GetSessionByAutomationRunID(context.WithoutCancel(ctx), run.ID); lookupErr != nil {
 			return errors.Join(spawnErr, lookupErr)
 		} else if ok {
@@ -176,6 +178,27 @@ func (s *Service) dispatch(ctx context.Context, store schedulerStore, run domain
 	}
 	_, err = store.MarkAutomationRunRunning(context.WithoutCancel(ctx), run.ID, session.ID, now)
 	return err
+}
+
+// spawnChecked enforces the opt-in spawn gate (B) for automation-scheduler
+// dispatches only; interactive spawns never pass through here by design.
+// The gate reads the definition's explicit issue link, falling back to the
+// "#NNN" segment of a conforming display name, so only unlinked or misnamed
+// definitions are rejected. A rejection fails only that occurrence with an
+// AUTOMATION_POLICY_REJECTED audit message: failed runs are never
+// re-claimed, so rejected runs cannot monopolize the claim batch and starve
+// valid automations. The definition itself survives and future occurrences
+// dispatch normally once the naming/link conditions hold.
+func (s *Service) spawnChecked(ctx context.Context, store schedulerStore, definition domain.Automation, run domain.AutomationRun, now time.Time) (domain.Session, int, int, error) {
+	if rejection := s.policy.ValidateSpawnGate(definition.DisplayName, string(definition.IssueID)); rejection != nil {
+		policyErr := apierr.Conflict(rejection.Code, rejection.Message, nil)
+		_, markErr := store.FailAutomationRun(context.WithoutCancel(ctx), run.ID, rejection.Code+": "+runError(policyErr), now)
+		return domain.Session{}, 0, 0, errors.Join(policyErr, markErr)
+	}
+	return s.spawner.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: definition.ProjectID, IssueID: definition.IssueID, Kind: definition.Kind, Harness: definition.Harness,
+		Prompt: definition.Prompt, DisplayName: definition.DisplayName, AutomationRunID: &run.ID,
+	})
 }
 
 // Reconcile repairs crash-interrupted claims, projects durable completion, and
