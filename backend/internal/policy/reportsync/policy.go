@@ -17,6 +17,7 @@ import (
 // RejectReason is the typed reason every refusal carries (fail-closed).
 type RejectReason string
 
+// Typed fail-closed refusal reasons for the validator and the sync planner.
 const (
 	ReasonDisabled      RejectReason = "reportsync_disabled"
 	ReasonIncomplete    RejectReason = "report_incomplete"
@@ -136,7 +137,7 @@ func parseSections(draft string) (bodies map[string]string, dups map[string]bool
 
 // headingOf reports whether a line is a section heading and, for the
 // "HEADING: body" form, the same-line body.
-func headingOf(line string) (sec string, rest string) {
+func headingOf(line string) (sec, rest string) {
 	t := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
 	t = strings.TrimSpace(t)
 	u := strings.ToUpper(t)
@@ -186,6 +187,7 @@ func hasLetterOrDigit(s string) bool {
 // Phase is a reportable lifecycle event. Only these produce postings.
 type Phase string
 
+// Closed vocabulary of reportable lifecycle phases.
 const (
 	PhaseStarted   Phase = "gestartet"
 	PhaseCommitted Phase = "committed"
