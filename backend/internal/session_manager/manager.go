@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/policy/opencodeeffort"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
@@ -1013,6 +1014,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	systemPromptBytes := len(systemPrompt)
 	asyncChat := cfg.Async && mode == domain.SessionModeChat && cfg.Kind == domain.KindWorker && m.chat != nil
 
+	// Opt-in opencode effort floor (default off): at the spawn boundary,
+	// covering interactive spawns (AutomationRunID == nil) and automation
+	// dispatch alike, a missing or below-maximum effort for the opencode
+	// harnesses is raised to maximum. Unknown variants fail closed.
+	var floorAudit *opencodeeffort.AuditEntry
+	if floorEnabled := opencodeeffort.Enabled(); floorEnabled {
+		automation := cfg.AutomationRunID != nil
+		if raised, out, audit, err := opencodeeffort.Apply(true, cfg.Harness, string(cfg.ParentSessionID), cfg.AgentConfig.Effort, automation); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		} else if raised {
+			cfg.AgentConfig.Effort = out
+			agentConfig.Effort = out
+			floorAudit = audit
+		}
+	}
+
 	var prep *taskPreparation
 	if cfg.AutomationRunID == nil && cfg.Branch == "" {
 		prep = m.claimTaskPreparation(cfg.TaskPreparation, cfg.ProjectID)
@@ -1043,6 +1060,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 	}
 	id := rec.ID
+	if floorAudit != nil {
+		floorAudit.Session = string(id)
+		opencodeeffort.Log(m.logger, floorAudit)
+	}
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
 		if prep != nil {
