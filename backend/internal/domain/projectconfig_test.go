@@ -20,6 +20,18 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
+		{"good planner override", ProjectConfig{Planner: RoleOverride{Harness: HarnessCodex, AgentConfig: AgentConfig{Permissions: PermissionModeAcceptEdits}}}, false},
+		{"good plan reviewer override", ProjectConfig{PlanReviewer: RoleOverride{Harness: HarnessClaudeCode}}, false},
+		{"unknown planner harness", ProjectConfig{Planner: RoleOverride{Harness: "nope"}}, true},
+		{"unknown plan reviewer harness", ProjectConfig{PlanReviewer: RoleOverride{Harness: "nope"}}, true},
+		{"bad planner agent config", ProjectConfig{Planner: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
+		{"planner auto rejected", ProjectConfig{Planner: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeAuto}}}, true},
+		{"planner bypass rejected", ProjectConfig{Planner: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeBypassPermissions}}}, true},
+		{"plan reviewer auto rejected", ProjectConfig{PlanReviewer: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeAuto}}}, true},
+		{"plan reviewer bypass rejected", ProjectConfig{PlanReviewer: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeBypassPermissions}}}, true},
+		{"worker auto still allowed", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeAuto}}}, false},
+		{"orchestrator bypass still allowed", ProjectConfig{Orchestrator: RoleOverride{AgentConfig: AgentConfig{Permissions: PermissionModeBypassPermissions}}}, false},
+		{"good planner rules", ProjectConfig{PlannerRules: "Plans stay coordination-only: no pushes, no merges."}, false},
 		{"good symlinks", ProjectConfig{Symlinks: []string{".env", "configs/dev.toml"}}, false},
 		{"symlink absolute path", ProjectConfig{Symlinks: []string{"/etc/passwd"}}, true},
 		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
@@ -213,4 +225,89 @@ func TestProjectConfigIsZero(t *testing.T) {
 	if (ProjectConfig{AutoReview: true}).IsZero() {
 		t.Fatal("config with autoReview enabled should not be zero")
 	}
+	if (ProjectConfig{PlannerRules: "Plan first."}).IsZero() {
+		t.Fatal("config with plannerRules should not be zero")
+	}
+	if (ProjectConfig{Planner: RoleOverride{Harness: HarnessCodex}}).IsZero() {
+		t.Fatal("config with planner override should not be zero")
+	}
+	if (ProjectConfig{PlanReviewer: RoleOverride{Harness: HarnessClaudeCode}}).IsZero() {
+		t.Fatal("config with planReviewer override should not be zero")
+	}
+}
+
+func TestClampPlanRolePermissions(t *testing.T) {
+	tests := []struct {
+		name string
+		in   PermissionMode
+		want PermissionMode
+	}{
+		{"auto sharpens to accept-edits", PermissionModeAuto, PermissionModeAcceptEdits},
+		{"bypass sharpens to accept-edits", PermissionModeBypassPermissions, PermissionModeAcceptEdits},
+		{"accept-edits passes through", PermissionModeAcceptEdits, PermissionModeAcceptEdits},
+		{"default passes through", PermissionModeDefault, PermissionModeDefault},
+		{"empty passes through", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClampPlanRolePermissions(tt.in); got != tt.want {
+				t.Fatalf("ClampPlanRolePermissions(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			if want := tt.want.AllowedForPlanRoles(); !want {
+				t.Fatalf("clamped mode %q must be allowed for plan roles", tt.want)
+			}
+		})
+	}
+	if PermissionModeAuto.AllowedForPlanRoles() {
+		t.Fatal("auto must not be allowed for plan roles")
+	}
+	if PermissionModeBypassPermissions.AllowedForPlanRoles() {
+		t.Fatal("bypass-permissions must not be allowed for plan roles")
+	}
+}
+
+func TestPlanRoleAgentConfig(t *testing.T) {
+	t.Run("override wins and auto sharpens", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessCodex,
+			AgentConfig{Model: "base", Permissions: PermissionModeDefault},
+			RoleOverride{AgentConfig: AgentConfig{Model: "plan", Permissions: PermissionModeAuto}})
+		if got.Model != "plan" {
+			t.Fatalf("Model = %q, want plan", got.Model)
+		}
+		if got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("Permissions = %q, want accept-edits", got.Permissions)
+		}
+	})
+	t.Run("base auto sharpens with empty override", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessCodex,
+			AgentConfig{Permissions: PermissionModeAuto}, RoleOverride{})
+		if got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("Permissions = %q, want accept-edits", got.Permissions)
+		}
+	})
+	t.Run("base bypass sharpens with empty override", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessCodex,
+			AgentConfig{Permissions: PermissionModeBypassPermissions}, RoleOverride{})
+		if got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("Permissions = %q, want accept-edits", got.Permissions)
+		}
+	})
+	t.Run("base accept-edits survives empty override", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessCodex,
+			AgentConfig{Model: "base", Permissions: PermissionModeAcceptEdits}, RoleOverride{})
+		if got.Model != "base" || got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("got = %#v, want base model with accept-edits", got)
+		}
+	})
+	t.Run("harness mismatch drops model but still clamps", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessClaudeCode,
+			AgentConfig{Permissions: PermissionModeDefault},
+			RoleOverride{Harness: HarnessCodex, AgentConfig: AgentConfig{Model: "codex-only", Permissions: PermissionModeBypassPermissions}})
+		if got.Model != "" {
+			t.Fatalf("Model = %q, want empty on harness mismatch", got.Model)
+		}
+		if got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("Permissions = %q, want accept-edits", got.Permissions)
+		}
+	})
 }

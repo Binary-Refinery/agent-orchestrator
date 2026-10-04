@@ -14,9 +14,11 @@ import (
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, prompt rules, and the role overrides are consumed at
-// spawn; SessionPrefix feeds the display prefix. Settings whose consumers do not
-// yet exist (tracker/SCM per-project config) are intentionally absent and land in
-// focused follow-up PRs alongside the code that reads them.
+// spawn; SessionPrefix feeds the display prefix. The planner/planReviewer slots
+// and PlannerRules form the Stufe-1 plan-role contract: they are validated and
+// permission-clamped, but no spawn path consumes them yet. Settings whose
+// consumers do not yet exist (tracker/SCM per-project config) are intentionally
+// absent and land in focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// GovernanceManaged reserves lifecycle control for an externally enrolled
 	// controller. It does not authenticate callers or isolate worker processes.
@@ -46,12 +48,23 @@ type ProjectConfig struct {
 	// OrchestratorRules are project-specific standing instructions for
 	// orchestrator sessions.
 	OrchestratorRules string `json:"orchestratorRules,omitempty"`
+	// PlannerRules are project-specific standing instructions for plan-role
+	// sessions (planner/planReviewer). Inline text only; plan roles are
+	// coordination-only and never push, merge, or confirm findings.
+	PlannerRules string `json:"plannerRules,omitempty"`
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
 	// Worker and Orchestrator are role-specific harness/agent-config overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
+	// Planner and PlanReviewer are the Stufe-1 plan-role overrides. Both are
+	// opt-in: an unset slot means no plan-role default. Permissions in these
+	// slots are capped at accept-edits (see ClampPlanRolePermissions); auto
+	// and bypass-permissions are rejected by Validate and clamped at resolve
+	// time, so plan roles stay coordination-only by construction.
+	Planner      RoleOverride `json:"planner,omitempty"`
+	PlanReviewer RoleOverride `json:"planReviewer,omitempty"`
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
@@ -127,6 +140,35 @@ type RoleOverride struct {
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
 }
 
+// PlanRoleAgentConfig resolves the effective agent config for a plan role
+// (planner/planReviewer): the role override wins over the project base, then
+// permissions are clamped to the plan-role ceiling (never auto or bypass).
+// Model/Mode/Effort inherit only when the launch harness matches the role's
+// pinned harness, mirroring the worker/orchestrator resolution rule —
+// otherwise provider-specific values would leak onto the wrong harness. An
+// empty role harness means "not pinned" and always matches. Permissions is
+// harness-neutral and always merges before clamping.
+func PlanRoleAgentConfig(harness AgentHarness, base AgentConfig, role RoleOverride) AgentConfig {
+	merged := base
+	override := role.AgentConfig
+	if harnessMatches := role.Harness == "" || role.Harness == harness; harnessMatches {
+		if override.Model != "" {
+			merged.Model = override.Model
+		}
+		if override.Effort != "" {
+			merged.Effort = override.Effort
+		}
+		if override.Mode != "" {
+			merged.Mode = override.Mode
+		}
+	}
+	if override.Permissions != "" {
+		merged.Permissions = override.Permissions
+	}
+	merged.Permissions = ClampPlanRolePermissions(merged.Permissions)
+	return merged
+}
+
 const (
 	// DefaultBranchAuto tells callers to infer the Git default branch for each
 	// repository instead of naming one branch for the whole project.
@@ -190,12 +232,25 @@ func (c ProjectConfig) Validate() error {
 	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
 		return err
 	}
-	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator} {
+	for role, ro := range map[string]RoleOverride{
+		"worker":       c.Worker,
+		"orchestrator": c.Orchestrator,
+		"planner":      c.Planner,
+		"planReviewer": c.PlanReviewer,
+	} {
 		if ro.Harness != "" && !ro.Harness.IsKnown() {
 			return fmt.Errorf("%s.agent: unknown harness %q", role, ro.Harness)
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
+		}
+	}
+	for role, permissions := range map[string]PermissionMode{
+		"planner":      c.Planner.AgentConfig.Permissions,
+		"planReviewer": c.PlanReviewer.AgentConfig.Permissions,
+	} {
+		if !permissions.AllowedForPlanRoles() {
+			return fmt.Errorf("%s.agentConfig.permissions: %q is not allowed for plan roles: want accept-edits or sharper", role, permissions)
 		}
 	}
 	for _, s := range c.Symlinks {

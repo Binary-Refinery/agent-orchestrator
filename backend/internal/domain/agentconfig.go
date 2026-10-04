@@ -56,6 +56,31 @@ func (m PermissionMode) Valid() bool {
 	}
 }
 
+// AllowedForPlanRoles reports whether the mode may be used by plan roles
+// (planner/planReviewer). Plan roles are coordination-only, so only
+// accept-edits and sharper-or-neutral modes (empty inherit, default baseline)
+// are allowed; auto and bypass-permissions never are.
+func (m PermissionMode) AllowedForPlanRoles() bool {
+	switch m {
+	case PermissionModeAuto, PermissionModeBypassPermissions:
+		return false
+	default:
+		return true
+	}
+}
+
+// ClampPlanRolePermissions enforces the sharpest permission level plan roles
+// may run with: auto and bypass-permissions are reduced to accept-edits.
+// Every other mode passes through unchanged, keeping unset/default configs
+// opt-in compatible. It is the fail-closed backstop for values that predate
+// validation or arrive through paths that bypass it.
+func ClampPlanRolePermissions(m PermissionMode) PermissionMode {
+	if m.AllowedForPlanRoles() {
+		return m
+	}
+	return PermissionModeAcceptEdits
+}
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
