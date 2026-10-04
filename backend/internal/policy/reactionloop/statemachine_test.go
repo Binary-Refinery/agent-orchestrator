@@ -178,3 +178,48 @@ func TestGreenWithoutEvidenceDenied(t *testing.T) {
 		}
 	}
 }
+
+// S4-D2: one-sided evidence must never close out either. Green checks
+// without any observed review comments deny with ReasonNoEvidence and
+// hold, from both polling states.
+func TestGreenWithoutReviewEvidenceDenied(t *testing.T) {
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	for _, s := range []State{StateWatching, StateDeltaReview} {
+		out := SummarizePoll(nil, checks)
+		if out.AllGreen() {
+			t.Fatalf("%s: checks-only poll reads green: %+v", s, out)
+		}
+		step := Advance(true, s, EventPollGreen, false, out)
+		if step.Decision.Allow || step.Decision.Reason != ReasonNoEvidence {
+			t.Fatalf("%s+green without review = %+v, want no_evidence deny", s, step.Decision)
+		}
+		if step.Next != s || step.Closeout != nil {
+			t.Fatalf("%s+green without review moved or drafted: %+v", s, step)
+		}
+	}
+}
+
+// S4-D1: a substantive "P1: no timeout on requests" verdict stays
+// blocking: it proposes triage on a findings event and refuses closeout
+// on a green event, from both polling states.
+func TestSubstantiveVerdictBlocksCloseout(t *testing.T) {
+	comments := []ReviewComment{{ID: "c1", IsCodex: true, Body: "P1: no timeout on requests"}}
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	out := SummarizePoll(comments, checks)
+	if !out.HasBlocking() {
+		t.Fatal("substantive P1 verdict must stay blocking")
+	}
+	triage := Advance(true, StateWatching, EventPollFindings, false, out)
+	if !triage.Decision.Allow || triage.Next != StateTriageProposed {
+		t.Fatalf("P1 findings = %+v, want triage_proposed", triage)
+	}
+	for _, s := range []State{StateWatching, StateDeltaReview} {
+		step := Advance(true, s, EventPollGreen, false, out)
+		if step.Decision.Allow || step.Closeout != nil {
+			t.Fatalf("%s+green over P1 = %+v, want deny without closeout", s, step)
+		}
+		if step.Next != s {
+			t.Fatalf("%s+green over P1 moved to %q, want hold", s, step.Next)
+		}
+	}
+}

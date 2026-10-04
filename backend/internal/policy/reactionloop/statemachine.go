@@ -107,6 +107,10 @@ func Advance(enabled bool, s State, e Event, human bool, outcome PollOutcome) St
 				Decision: allow(),
 			}
 		case EventPollGreen:
+			if outcome.CommentsSeen == 0 {
+				hold.Decision = deny(ReasonNoEvidence, "green event without observed review comments")
+				return hold
+			}
 			if outcome.Observed == 0 {
 				hold.Decision = deny(ReasonNoEvidence, "green event without any observed check run")
 				return hold

@@ -51,10 +51,14 @@ type PollOutcome struct {
 	Failed []string
 	// Pending names check runs that have not completed yet.
 	Pending []string
-	// Observed counts the check runs seen in this poll. A poll that
-	// observed nothing proves nothing: AllGreen requires Observed > 0
-	// so empty evidence can never read as green.
+	// Observed counts the check runs seen in this poll.
 	Observed int
+	// CommentsSeen counts the review comments observed in this poll.
+	// A poll that observed no comments proves nothing about the review
+	// side: AllGreen requires CommentsSeen > 0, so a missing or
+	// incomplete review collection can never read as green even when
+	// the observed checks are green.
+	CommentsSeen int
 }
 
 // severityMarker matches P0/P1 verdict labels in the forms reviewers use:
@@ -73,11 +77,13 @@ func (o PollOutcome) P0Count() int { return countSev(o.Findings, SevP0) }
 func (o PollOutcome) P1Count() int { return countSev(o.Findings, SevP1) }
 
 // AllGreen reports whether the PR needs nothing: no P0/P1 findings, no
-// failed checks, no pending checks, and at least one observed check run.
-// Empty evidence never reads as green. Only an all-green poll may draft
-// a closeout note.
+// failed checks, no pending checks, at least one observed check run,
+// and at least one observed review comment. Empty or one-sided evidence
+// never reads as green. Only an all-green poll may draft a closeout
+// note.
 func (o PollOutcome) AllGreen() bool {
-	return o.Observed > 0 && len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0
+	return o.Observed > 0 && o.CommentsSeen > 0 &&
+		len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0
 }
 
 func countSev(findings []Finding, sev Severity) int {
@@ -91,25 +97,66 @@ func countSev(findings []Finding, sev Severity) int {
 }
 
 // lowerSeverityTitle matches a line led by a weaker severity label (P2
-// and up): a P0/P1 mention inside such a line is prose about another
-// class, never a blocking verdict of its own.
-var lowerSeverityTitle = regexp.MustCompile(`(?i)^\s*[\[\(]?\s*P[2-9]\b`)
+// and up), optionally behind a list marker: a P0/P1 mention inside such
+// a line is prose about another class, never a blocking verdict of its
+// own. Examples: "P2: ...", "[P3] ...", "1. [P2] Clarify P0 handling".
+var lowerSeverityTitle = regexp.MustCompile(`(?i)^\s*(?:\d+[.)]\s*|[-*+]\s*)?[\[\(]?\s*P[2-9]\b`)
 
 // negationBefore matches a denial word shortly before the marker, in
-// English or German: "no P0", "without any P1", "keine P0-Befunde".
-// Such lines report the absence of severe findings, so they must not
-// become blocking findings themselves.
-var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|kein\w*|ohne)\b[\s\wäöü/-]{0,12}P[01]\b`)
+// English or German, brackets included: "no P0", "No [P0] findings
+// remain", "without any P1", "keine P0-Befunde". Such lines report the
+// absence of severe findings, so they must not become blocking findings
+// themselves.
+var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|kein\w*|ohne)\b[\s\wäöü/\-[\(]{0,12}P[01]\b`)
 
-// negationAfter matches a denial right after the marker: "P0: none",
-// "P1 - nichts gefunden".
-var negationAfter = regexp.MustCompile(`(?i)\bP[01]\b\s*[:\-–—]?\s*(none|nothing|no\b|kein\w*|nichts|ohne)\b`)
+// denialAfter matches a denial word right after a verdict marker:
+// "P0: none", "P1 - nichts gefunden". The denial only covers the line
+// when nothing substantive follows it (see fillerAfter): "P1: no
+// timeout on requests" states a real verdict — the missing timeout —
+// and must stay blocking.
+var denialAfter = regexp.MustCompile(`(?i)\bP[01]\b\s*[:\-–—]?\s*(none|nothing|kein\w*|nichts|ohne|no)\b`)
+
+// fillerAfter lists words that may trail a denial without reviving the
+// verdict: "P0: none found", "P1 - nichts gefunden". Any other trailing
+// word means the line says something substantive about P0/P1, so the
+// verdict stands. Residual ambiguity resolves toward the verdict: a
+// spurious triage proposal stays human-gated, while a missed verdict
+// could wrongly green-light a closeout.
+var fillerAfter = map[string]bool{
+	"found": true, "remaining": true, "remain": true, "remains": true,
+	"left": true, "mehr": true, "noch": true, "offen": true,
+	"vorhanden": true, "vorliegend": true, "gefunden": true,
+	"übrig": true, "uebrig": true,
+}
+
+// denialCoversLine reports whether the denial word ending at end (a match
+// end from denialAfter) exhausts the line: only filler words or bare
+// punctuation may follow.
+func denialCoversLine(line string, end int) bool {
+	for _, w := range strings.Fields(line[end:]) {
+		clean := strings.ToLower(strings.Trim(w, ".,;:!?()[]\"'"))
+		if clean == "" {
+			continue
+		}
+		if !fillerAfter[clean] {
+			return false
+		}
+	}
+	return true
+}
+
+// isQuoted reports blockquote lines: they cite older text instead of
+// stating a verdict, e.g. "> [P1] Historical issue already fixed".
+func isQuoted(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), ">")
+}
 
 // ExtractFindings pulls P0/P1 verdicts out of Codex review comments, one
 // finding per marker-bearing line. Non-Codex comments never contribute,
 // so human discussion cannot inject findings. Lines that merely talk
-// about P0/P1 — weaker-severity titles (P2 and up), negations, and
-// questions — are prose, not verdicts, and are skipped.
+// about P0/P1 — weaker-severity titles (P2 and up, listed or not),
+// negations, blockquotes, and questions — are prose, not verdicts, and
+// are skipped.
 func ExtractFindings(comments []ReviewComment) []Finding {
 	var out []Finding
 	for _, c := range comments {
@@ -122,16 +169,21 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 				continue
 			}
 			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
+			if trimmed == "" || isQuoted(line) {
 				continue
 			}
 			if lowerSeverityTitle.MatchString(line) {
 				continue
 			}
-			if negationBefore.MatchString(line) || negationAfter.MatchString(line) {
+			if negationBefore.MatchString(line) {
 				continue
 			}
-			if strings.HasSuffix(trimmed, "?") {
+			if loc := denialAfter.FindStringSubmatchIndex(line); loc != nil {
+				if denialCoversLine(line, loc[1]) {
+					continue
+				}
+			}
+			if strings.Contains(trimmed, "?") {
 				continue
 			}
 			sev := SevP1
@@ -147,7 +199,11 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 // SummarizePoll aggregates one poll over Codex review comments plus check
 // runs into a single outcome for the state machine.
 func SummarizePoll(comments []ReviewComment, checks []CheckRun) PollOutcome {
-	out := PollOutcome{Findings: ExtractFindings(comments), Observed: len(checks)}
+	out := PollOutcome{
+		Findings:     ExtractFindings(comments),
+		Observed:     len(checks),
+		CommentsSeen: len(comments),
+	}
 	for _, c := range checks {
 		switch strings.ToLower(strings.TrimSpace(c.Status)) {
 		case "completed", "complete", "done":

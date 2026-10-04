@@ -83,10 +83,47 @@ func TestExtractFindingsSkipsProse(t *testing.T) {
 	comments := []ReviewComment{
 		{ID: "c1", IsCodex: true, Body: "No P0 findings in this round.\nkeine P1-Befunde mehr offen\nP0: none\nP1 - nichts gefunden"},
 		{ID: "c2", IsCodex: true, Body: "P2: style nit, mentions P0 handling in passing\n[P3] docs wording near P1 logic"},
-		{ID: "c3", IsCodex: true, Body: "Is this really a P0?"},
+		{ID: "c3", IsCodex: true, Body: "Is the P0 label really warranted here? Please advise"},
 	}
 	if got := ExtractFindings(comments); len(got) != 0 {
 		t.Fatalf("prose findings = %+v, want none", got)
+	}
+}
+
+// S4-D3: quoted, listed, and bracket-denied prose must not convert. Each
+// fixture carries a live marker match, so a skip proves the guard fired
+// instead of the marker simply missing.
+func TestExtractFindingsSkipsDeltaProse(t *testing.T) {
+	for _, body := range []string{
+		"> [P1] Historical issue already fixed",
+		"> Quoted P0 verdict from the old thread",
+		"1. [P2] Clarify P0 handling",
+		"- [P2] Note on P1 scope",
+		"No [P0] findings remain",
+		"What about the P1 here? still valid",
+		"If P0, then what?",
+	} {
+		got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}})
+		if len(got) != 0 {
+			t.Fatalf("body %q -> %+v, want no findings", body, got)
+		}
+	}
+}
+
+// S4-D1: a denial word after the marker only denies when nothing
+// substantive follows. "P1: no timeout on requests" states the missing
+// timeout, so it must stay a blocking P1 verdict.
+func TestDenialAfterKeepsSubstantiveVerdict(t *testing.T) {
+	got := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P1: no timeout on requests"},
+	})
+	if len(got) != 1 || got[0].Severity != SevP1 {
+		t.Fatalf("substantive verdict = %+v, want one P1", got)
+	}
+	for _, body := range []string{"P0: none", "P0: none found", "P1: keine", "P1 - nichts gefunden"} {
+		if got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}}); len(got) != 0 {
+			t.Fatalf("denial %q -> %+v, want no findings", body, got)
+		}
 	}
 }
 
@@ -104,8 +141,9 @@ func TestExtractFindingsKeepsRealVerdicts(t *testing.T) {
 	}
 }
 
-// S4-P1-2: a poll that observed nothing proves nothing. Empty evidence
-// must never read as green, with or without comments.
+// S4-P1-2/S4-D2: a poll that observed nothing proves nothing, on either
+// side. Empty evidence must never read as green: neither without checks,
+// nor without review comments — even when the observed half is green.
 func TestEmptyPollIsNotGreen(t *testing.T) {
 	if out := SummarizePoll(nil, nil); out.AllGreen() {
 		t.Fatal("empty poll must not be green")
@@ -113,5 +151,9 @@ func TestEmptyPollIsNotGreen(t *testing.T) {
 	comments := []ReviewComment{{ID: "c1", IsCodex: true, Body: "Clean, no markers."}}
 	if out := SummarizePoll(comments, nil); out.AllGreen() {
 		t.Fatalf("poll without observed checks must not be green: %+v", out)
+	}
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	if out := SummarizePoll(nil, checks); out.AllGreen() {
+		t.Fatalf("poll without observed review comments must not be green: %+v", out)
 	}
 }
