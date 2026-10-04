@@ -317,7 +317,7 @@ func TestV2ObserverFIFOAcrossReorderedPolls(t *testing.T) {
 		t.Fatalf("spawn calls = %+v, want 0 (head disqualified, WIP full)", spawner.calls)
 	}
 	// WIP drains: the surviving queued take (#2) is now head and spawns.
-	store.fakeStore.sessions = nil
+	store.sessions = nil
 	if err := o.Poll(ctx); err != nil {
 		t.Fatalf("Poll 4: %v", err)
 	}
