@@ -59,10 +59,11 @@ type ProjectConfig struct {
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
 	// Planner and PlanReviewer are the Stufe-1 plan-role overrides. Both are
-	// opt-in: an unset slot means no plan-role default. Permissions in these
-	// slots are capped at accept-edits (see ClampPlanRolePermissions); auto
-	// and bypass-permissions are rejected by Validate and clamped at resolve
-	// time, so plan roles stay coordination-only by construction.
+	// opt-in: an unset slot means no plan-role default. Stored permissions in
+	// these slots reject auto and bypass-permissions at Validate time, and
+	// every plan-role resolution normalizes to explicit accept-edits (see
+	// ClampPlanRolePermissions), so plan roles stay coordination-only by
+	// construction.
 	Planner      RoleOverride `json:"planner,omitempty"`
 	PlanReviewer RoleOverride `json:"planReviewer,omitempty"`
 
@@ -142,12 +143,14 @@ type RoleOverride struct {
 
 // PlanRoleAgentConfig resolves the effective agent config for a plan role
 // (planner/planReviewer): the role override wins over the project base, then
-// permissions are clamped to the plan-role ceiling (never auto or bypass).
-// Model/Mode/Effort inherit only when the launch harness matches the role's
-// pinned harness, mirroring the worker/orchestrator resolution rule —
-// otherwise provider-specific values would leak onto the wrong harness. An
-// empty role harness means "not pinned" and always matches. Permissions is
-// harness-neutral and always merges before clamping.
+// permissions always resolve to the explicit accept-edits ceiling — never
+// auto, bypass, or a neutral empty/default baseline that a downstream mapper
+// could treat as bypass. Model/Mode/Effort inherit only when the launch
+// harness matches the role's pinned harness, mirroring the
+// worker/orchestrator resolution rule — otherwise provider-specific values
+// would leak onto the wrong harness. An empty role harness means "not pinned"
+// and always matches. Permissions is harness-neutral and always merges before
+// clamping.
 func PlanRoleAgentConfig(harness AgentHarness, base AgentConfig, role RoleOverride) AgentConfig {
 	merged := base
 	override := role.AgentConfig

@@ -127,10 +127,13 @@ type projectConfig struct {
 	AgentRules        string               `json:"agentRules,omitempty"`
 	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
 	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
+	PlannerRules      string               `json:"plannerRules,omitempty"`
 	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
 	GovernanceManaged bool                 `json:"governanceManaged,omitempty"`
 	Worker            roleOverride         `json:"worker,omitempty"`
 	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
+	Planner           roleOverride         `json:"planner,omitempty"`
+	PlanReviewer      roleOverride         `json:"planReviewer,omitempty"`
 	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
 	AutoReview        bool                 `json:"autoReview,omitempty"`
 	Reviewers         []reviewerConfig     `json:"reviewers,omitempty"`

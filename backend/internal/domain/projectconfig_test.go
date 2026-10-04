@@ -237,6 +237,10 @@ func TestProjectConfigIsZero(t *testing.T) {
 }
 
 func TestClampPlanRolePermissions(t *testing.T) {
+	// The clamp is default-safe: only explicit accept-edits passes through.
+	// Auto, bypass, the neutral empty/default baselines, and unrecognized
+	// values all become explicit accept-edits, because downstream mappers
+	// (notably Codex) treat empty/default as bypass.
 	tests := []struct {
 		name string
 		in   PermissionMode
@@ -245,16 +249,17 @@ func TestClampPlanRolePermissions(t *testing.T) {
 		{"auto sharpens to accept-edits", PermissionModeAuto, PermissionModeAcceptEdits},
 		{"bypass sharpens to accept-edits", PermissionModeBypassPermissions, PermissionModeAcceptEdits},
 		{"accept-edits passes through", PermissionModeAcceptEdits, PermissionModeAcceptEdits},
-		{"default passes through", PermissionModeDefault, PermissionModeDefault},
-		{"empty passes through", "", ""},
+		{"default normalizes to accept-edits", PermissionModeDefault, PermissionModeAcceptEdits},
+		{"empty normalizes to accept-edits", "", PermissionModeAcceptEdits},
+		{"unknown fails closed to accept-edits", "nope", PermissionModeAcceptEdits},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ClampPlanRolePermissions(tt.in); got != tt.want {
 				t.Fatalf("ClampPlanRolePermissions(%q) = %q, want %q", tt.in, got, tt.want)
 			}
-			if want := tt.want.AllowedForPlanRoles(); !want {
-				t.Fatalf("clamped mode %q must be allowed for plan roles", tt.want)
+			if got := ClampPlanRolePermissions(tt.in); got != PermissionModeAcceptEdits {
+				t.Fatalf("clamped mode = %q, want the single explicit plan-role mode accept-edits", got)
 			}
 		})
 	}
@@ -297,6 +302,12 @@ func TestPlanRoleAgentConfig(t *testing.T) {
 			AgentConfig{Model: "base", Permissions: PermissionModeAcceptEdits}, RoleOverride{})
 		if got.Model != "base" || got.Permissions != PermissionModeAcceptEdits {
 			t.Fatalf("got = %#v, want base model with accept-edits", got)
+		}
+	})
+	t.Run("empty base and empty override resolve explicit accept-edits", func(t *testing.T) {
+		got := PlanRoleAgentConfig(HarnessCodex, AgentConfig{}, RoleOverride{})
+		if got.Permissions != PermissionModeAcceptEdits {
+			t.Fatalf("Permissions = %q, want explicit accept-edits, never an empty baseline", got.Permissions)
 		}
 	})
 	t.Run("harness mismatch drops model but still clamps", func(t *testing.T) {

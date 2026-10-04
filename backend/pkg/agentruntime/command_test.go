@@ -342,3 +342,29 @@ func TestClaudeEffortFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestCodexPermissionArgsPlanRoleSafety pins the mapper behavior the plan-role
+// permission ceiling defends against: explicit accept-edits launches with
+// ask-for-approval and never bypasses, while the neutral empty/default
+// baselines DO map to --dangerously-bypass-approvals-and-sandbox. Plan-role
+// resolution must therefore never emit a neutral baseline downstream.
+func TestCodexPermissionArgsPlanRoleSafety(t *testing.T) {
+	const bypassFlag = "--dangerously-bypass-approvals-and-sandbox"
+	containsFlag := func(args []string, flag string) bool {
+		for _, arg := range args {
+			if arg == flag {
+				return true
+			}
+		}
+		return false
+	}
+
+	if got := CodexPermissionArgs(PermissionAcceptEdits); !reflect.DeepEqual(got, []string{"--ask-for-approval", "on-request"}) {
+		t.Fatalf("CodexPermissionArgs(accept-edits) = %#v, want exactly ask-for-approval on-request", got)
+	}
+	for _, policy := range []PermissionPolicy{"", PermissionDefault} {
+		if got := CodexPermissionArgs(policy); !containsFlag(got, bypassFlag) {
+			t.Fatalf("CodexPermissionArgs(%q) = %#v, want %s: neutral baselines bypass", policy, got, bypassFlag)
+		}
+	}
+}

@@ -69,13 +69,19 @@ func (m PermissionMode) AllowedForPlanRoles() bool {
 	}
 }
 
-// ClampPlanRolePermissions enforces the sharpest permission level plan roles
-// may run with: auto and bypass-permissions are reduced to accept-edits.
-// Every other mode passes through unchanged, keeping unset/default configs
-// opt-in compatible. It is the fail-closed backstop for values that predate
-// validation or arrive through paths that bypass it.
+// ClampPlanRolePermissions enforces the explicit safe mode plan roles run
+// with: only accept-edits passes through, everything else becomes
+// accept-edits. Auto and bypass-permissions are the obvious reductions, but
+// the neutral empty/default baselines must not pass through either —
+// downstream mappers treat them as bypass (Codex maps default to
+// --dangerously-bypass-approvals-and-sandbox), so a plan-role ceiling that
+// leaves them unchanged would not be default-safe. Unrecognized values fail
+// closed the same way; Validate rejects them at set time, and the clamp
+// covers values that predate validation or arrive through paths that bypass
+// it. Stored configs are untouched, keeping unset plan-role slots opt-in
+// compatible; only plan-role resolution is normalized.
 func ClampPlanRolePermissions(m PermissionMode) PermissionMode {
-	if m.AllowedForPlanRoles() {
+	if m == PermissionModeAcceptEdits {
 		return m
 	}
 	return PermissionModeAcceptEdits
