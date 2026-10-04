@@ -107,6 +107,10 @@ func Advance(enabled bool, s State, e Event, human bool, outcome PollOutcome) St
 				Decision: allow(),
 			}
 		case EventPollGreen:
+			if outcome.Observed == 0 {
+				hold.Decision = deny(ReasonNoEvidence, "green event without any observed check run")
+				return hold
+			}
 			if !outcome.AllGreen() {
 				hold.Decision = deny(ReasonInvalidStep, "green event for a non-green board")
 				return hold
@@ -131,6 +135,10 @@ func Advance(enabled bool, s State, e Event, human bool, outcome PollOutcome) St
 			hold.Decision = allow()
 			return hold
 		case EventHumanRejectTriage:
+			if !human {
+				hold.Decision = deny(ReasonNeedsHuman, "triage rejection needs a human")
+				return hold
+			}
 			hold.Next = StateWatching
 			hold.Decision = allow()
 			return hold

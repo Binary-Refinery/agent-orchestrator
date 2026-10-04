@@ -35,6 +35,7 @@ const (
 	ReasonTerminal        RejectReason = "reaction_closeout_terminal"
 	ReasonRedLine         RejectReason = "reaction_red_line"
 	ReasonMissingFindings RejectReason = "reaction_missing_findings"
+	ReasonNoEvidence      RejectReason = "reaction_no_evidence"
 )
 
 // Decision is the fail-closed outcome of one check.

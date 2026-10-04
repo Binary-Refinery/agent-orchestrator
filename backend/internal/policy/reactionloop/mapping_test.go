@@ -76,3 +76,42 @@ func TestPollWithoutFindingsIsGreenNotTriage(t *testing.T) {
 		t.Fatalf("denied step must hold watching, got %q", step.Next)
 	}
 }
+
+// S4-P2-3: prose about P0/P1 is not a verdict. Negations, weaker-severity
+// titles, and questions must never become blocking findings.
+func TestExtractFindingsSkipsProse(t *testing.T) {
+	comments := []ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "No P0 findings in this round.\nkeine P1-Befunde mehr offen\nP0: none\nP1 - nichts gefunden"},
+		{ID: "c2", IsCodex: true, Body: "P2: style nit, mentions P0 handling in passing\n[P3] docs wording near P1 logic"},
+		{ID: "c3", IsCodex: true, Body: "Is this really a P0?"},
+	}
+	if got := ExtractFindings(comments); len(got) != 0 {
+		t.Fatalf("prose findings = %+v, want none", got)
+	}
+}
+
+func TestExtractFindingsKeepsRealVerdicts(t *testing.T) {
+	comments := []ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P0/P1: both classes present, worst counts"},
+		{ID: "c2", IsCodex: true, Body: "P1: missing timeout is worse than the old P2 nit"},
+	}
+	got := ExtractFindings(comments)
+	if len(got) != 2 {
+		t.Fatalf("verdict findings = %+v, want 2", got)
+	}
+	if got[0].Severity != SevP0 || got[1].Severity != SevP1 {
+		t.Fatalf("verdict severities = %+v, want P0 then P1", got)
+	}
+}
+
+// S4-P1-2: a poll that observed nothing proves nothing. Empty evidence
+// must never read as green, with or without comments.
+func TestEmptyPollIsNotGreen(t *testing.T) {
+	if out := SummarizePoll(nil, nil); out.AllGreen() {
+		t.Fatal("empty poll must not be green")
+	}
+	comments := []ReviewComment{{ID: "c1", IsCodex: true, Body: "Clean, no markers."}}
+	if out := SummarizePoll(comments, nil); out.AllGreen() {
+		t.Fatalf("poll without observed checks must not be green: %+v", out)
+	}
+}

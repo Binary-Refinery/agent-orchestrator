@@ -51,12 +51,16 @@ type PollOutcome struct {
 	Failed []string
 	// Pending names check runs that have not completed yet.
 	Pending []string
+	// Observed counts the check runs seen in this poll. A poll that
+	// observed nothing proves nothing: AllGreen requires Observed > 0
+	// so empty evidence can never read as green.
+	Observed int
 }
 
-// severityMarker matches P0/P1 markers in the forms reviewers use: P0,
-// P1, [P0], (P1), "P0:" — case-insensitive, word-bounded so P10 or
-// AP01 never match.
-var severityMarker = regexp.MustCompile(`(?i)(?:^|[\s\[\(.:;-])P([01])(?:$|[\s\]\)}.,:;-])`)
+// severityMarker matches P0/P1 verdict labels in the forms reviewers use:
+// P0, P1, P0/P1, [P0], (P1), "P0:" — case-insensitive, word-bounded so
+// P10 or AP01 never match.
+var severityMarker = regexp.MustCompile(`(?i)(?:^|[\s\[\(.:;/-])P([01])(?:$|[\s\]\)}.,:;/-])`)
 
 // HasBlocking reports whether the outcome carries P0/P1 findings that
 // require a triage proposal.
@@ -69,10 +73,11 @@ func (o PollOutcome) P0Count() int { return countSev(o.Findings, SevP0) }
 func (o PollOutcome) P1Count() int { return countSev(o.Findings, SevP1) }
 
 // AllGreen reports whether the PR needs nothing: no P0/P1 findings, no
-// failed checks, and no pending checks. Only an all-green poll may draft
+// failed checks, no pending checks, and at least one observed check run.
+// Empty evidence never reads as green. Only an all-green poll may draft
 // a closeout note.
 func (o PollOutcome) AllGreen() bool {
-	return len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0
+	return o.Observed > 0 && len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0
 }
 
 func countSev(findings []Finding, sev Severity) int {
@@ -85,9 +90,26 @@ func countSev(findings []Finding, sev Severity) int {
 	return n
 }
 
-// ExtractFindings pulls P0/P1 findings out of Codex review comments, one
+// lowerSeverityTitle matches a line led by a weaker severity label (P2
+// and up): a P0/P1 mention inside such a line is prose about another
+// class, never a blocking verdict of its own.
+var lowerSeverityTitle = regexp.MustCompile(`(?i)^\s*[\[\(]?\s*P[2-9]\b`)
+
+// negationBefore matches a denial word shortly before the marker, in
+// English or German: "no P0", "without any P1", "keine P0-Befunde".
+// Such lines report the absence of severe findings, so they must not
+// become blocking findings themselves.
+var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|kein\w*|ohne)\b[\s\wäöü/-]{0,12}P[01]\b`)
+
+// negationAfter matches a denial right after the marker: "P0: none",
+// "P1 - nichts gefunden".
+var negationAfter = regexp.MustCompile(`(?i)\bP[01]\b\s*[:\-–—]?\s*(none|nothing|no\b|kein\w*|nichts|ohne)\b`)
+
+// ExtractFindings pulls P0/P1 verdicts out of Codex review comments, one
 // finding per marker-bearing line. Non-Codex comments never contribute,
-// so human discussion cannot inject findings.
+// so human discussion cannot inject findings. Lines that merely talk
+// about P0/P1 — weaker-severity titles (P2 and up), negations, and
+// questions — are prose, not verdicts, and are skipped.
 func ExtractFindings(comments []ReviewComment) []Finding {
 	var out []Finding
 	for _, c := range comments {
@@ -99,15 +121,24 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 			if m == nil {
 				continue
 			}
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if lowerSeverityTitle.MatchString(line) {
+				continue
+			}
+			if negationBefore.MatchString(line) || negationAfter.MatchString(line) {
+				continue
+			}
+			if strings.HasSuffix(trimmed, "?") {
+				continue
+			}
 			sev := SevP1
 			if m[1] == "0" {
 				sev = SevP0
 			}
-			summary := strings.TrimSpace(line)
-			if summary == "" {
-				continue
-			}
-			out = append(out, Finding{CommentID: c.ID, Severity: sev, Summary: summary})
+			out = append(out, Finding{CommentID: c.ID, Severity: sev, Summary: trimmed})
 		}
 	}
 	return out
@@ -116,7 +147,7 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 // SummarizePoll aggregates one poll over Codex review comments plus check
 // runs into a single outcome for the state machine.
 func SummarizePoll(comments []ReviewComment, checks []CheckRun) PollOutcome {
-	out := PollOutcome{Findings: ExtractFindings(comments)}
+	out := PollOutcome{Findings: ExtractFindings(comments), Observed: len(checks)}
 	for _, c := range checks {
 		switch strings.ToLower(strings.TrimSpace(c.Status)) {
 		case "completed", "complete", "done":

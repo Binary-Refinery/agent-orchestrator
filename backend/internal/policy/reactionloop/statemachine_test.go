@@ -55,9 +55,22 @@ func TestTriageNeedsHumanConfirmation(t *testing.T) {
 	if !allowed.Decision.Allow || allowed.Next != StateFixAuthorized {
 		t.Fatalf("confirmed triage = %+v, want fix_authorized", allowed)
 	}
-	rejected := Advance(true, StateTriageProposed, EventHumanRejectTriage, false, PollOutcome{})
+	rejected := Advance(true, StateTriageProposed, EventHumanRejectTriage, true, PollOutcome{})
 	if !rejected.Decision.Allow || rejected.Next != StateWatching {
 		t.Fatalf("rejected triage = %+v, want watching", rejected)
+	}
+}
+
+// S4-P1-1: rejecting a triage proposal is a human decision too. Without
+// the human flag the machine must deny with ReasonNeedsHuman and hold
+// the triage state instead of silently dropping the proposal.
+func TestRejectNeedsHumanConfirmation(t *testing.T) {
+	denied := Advance(true, StateTriageProposed, EventHumanRejectTriage, false, PollOutcome{})
+	if denied.Decision.Allow || denied.Decision.Reason != ReasonNeedsHuman {
+		t.Fatalf("unconfirmed reject = %+v, want needs_human deny", denied.Decision)
+	}
+	if denied.Next != StateTriageProposed {
+		t.Fatalf("denied reject must hold triage, got %q", denied.Next)
 	}
 }
 
@@ -144,5 +157,24 @@ func TestInconclusivePollHolds(t *testing.T) {
 	step := Advance(true, StateWatching, EventPollInconclusive, false, pending)
 	if !step.Decision.Allow || step.Next != StateWatching {
 		t.Fatalf("inconclusive poll = %+v, want hold in watching", step)
+	}
+}
+
+// S4-P1-2: empty evidence must never close out. A green event over a poll
+// that observed no check run denies with ReasonNoEvidence and holds the
+// state instead of drafting closeout.
+func TestGreenWithoutEvidenceDenied(t *testing.T) {
+	for _, s := range []State{StateWatching, StateDeltaReview} {
+		empty := SummarizePoll(nil, nil)
+		step := Advance(true, s, EventPollGreen, false, empty)
+		if step.Decision.Allow || step.Decision.Reason != ReasonNoEvidence {
+			t.Fatalf("%s+green without evidence = %+v, want no_evidence deny", s, step.Decision)
+		}
+		if step.Next != s {
+			t.Fatalf("denied green must hold %q, got %q", s, step.Next)
+		}
+		if step.Closeout != nil {
+			t.Fatalf("%s+green without evidence drafted closeout: %+v", s, step.Closeout)
+		}
 	}
 }
