@@ -86,11 +86,12 @@ type Observer struct {
 	clock          func() time.Time
 	logger         *slog.Logger
 	backoffUntil   map[string]time.Time
+	v2queues       map[string]*V2Queue
 }
 
 // New constructs an Observer with safe defaults.
 func New(resolver TrackerResolver, store Store, spawner Spawner, cfg Config) *Observer {
-	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}}
+	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}, v2queues: map[string]*V2Queue{}}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -150,7 +151,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 			o.logger.Debug("tracker intake: project in failure backoff", "project", project.ID, "until", until)
 			continue
 		}
-		if failed := o.pollProject(ctx, project, seen); failed {
+		if failed := o.pollProject(ctx, project, seen, sessions); failed {
 			o.backoffUntil[project.ID] = now.Add(o.failureBackoff)
 		} else {
 			delete(o.backoffUntil, project.ID)
@@ -161,7 +162,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool, sessions []domain.SessionRecord) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled || project.Config.GovernanceManaged {
 		return false
@@ -187,6 +188,13 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	if err != nil {
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
+	}
+	// V2 production wiring (opt-in/default-off): label-poll FIFO feed plus
+	// WIP-gate and preflight callers on the Take path. Fail-closed: any
+	// denial blocks the spawn and is audit-logged; the v1 path below is
+	// untouched when v2 is off.
+	if V2Enabled(cfg) {
+		return o.pollProjectV2(ctx, project, cfg, issues, sessions, seen)
 	}
 	var spawnFailed bool
 	for _, issue := range issues {
@@ -216,6 +224,131 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		seen[issueID] = true
 	}
 	return spawnFailed
+}
+
+// pollProjectV2 feeds the per-project FIFO queue from the label-poll pass and
+// takes at most the queue head through the WIP-gate and preflight callers.
+// Successive polls preserve FIFO across reordered tracker results, and label
+// removal disqualifies queued takes before any take.
+func (o *Observer) pollProjectV2(ctx context.Context, project domain.ProjectRecord, cfg domain.TrackerIntakeConfig, issues []domain.Issue, sessions []domain.SessionRecord, seen map[domain.IssueID]bool) (failed bool) {
+	audit := V2Audit{Logger: o.logger}
+	q := o.v2queues[project.ID]
+	if q == nil {
+		q = &V2Queue{}
+		o.v2queues[project.ID] = q
+	}
+	feed := q.V2PollFeed(ctx, issues, cfg, audit)
+	if len(feed.Denied) > 0 {
+		// Fail-closed: a denied feed pass (policy off, no configured label,
+		// cancelled context) must not take from a stale queue. Drop queued
+		// takes; they re-enter only via a future admitted feed pass.
+		for _, t := range q.Takes() {
+			audit.log(ctx, feed.Denied[0].Reason, "feed denied, dropping queued take", "issue", string(t.IssueID))
+		}
+		q.Clear()
+		return false
+	}
+	takes := q.Takes()
+	if len(takes) == 0 {
+		return false
+	}
+	now := o.clock().UTC()
+	active := v2ActiveTakes(project.ID, sessions, now)
+	byID := map[domain.IssueID]domain.Issue{}
+	for _, issue := range issues {
+		if issue.State != domain.IssueOpen {
+			continue
+		}
+		if id := CanonicalIssueID(issue.ID); id != "" {
+			byID[id] = issue
+		}
+	}
+	head := takes[0]
+	if seen[head.IssueID] {
+		audit.log(ctx, V2ReasonNotFirst, "head already has a session, popping", "issue", string(head.IssueID))
+		q.PopHead()
+		return false
+	}
+	issue, ok := byID[head.IssueID]
+	if !ok {
+		// Head no longer listed (label removed between feed and take, or
+		// closed): the next feed pass disqualifies it; never spawn blind.
+		o.logger.Warn("tracker intake: v2 head not listed, skipping take",
+			"project", project.ID, "issue", string(head.IssueID), "reason", string(V2ReasonNoLabel))
+		return false
+	}
+	if d := V2TakeCaller(ctx, takes, head, active, cfg, audit); !d.Allow {
+		return false
+	}
+	// Preflight runs on established facts only. The repo scope resolved
+	// above, so the base is resolvable; harness/repo/budget/branch facts
+	// must come from the Store's V2FactProvider surface. When facts are
+	// unavailable the take is denied fail-closed with a typed reason and
+	// audit entry rather than passing on assumptions.
+	provider, ok := o.store.(V2FactProvider)
+	if !ok {
+		audit.log(ctx, V2ReasonFactsUnavailable, "preflight facts unavailable: store has no v2 fact surface", "project", project.ID)
+		return false
+	}
+	facts, ok, err := provider.V2PreflightFacts(ctx, project.ID)
+	if err != nil {
+		o.logger.Error("tracker intake: v2 preflight fact lookup failed", "project", project.ID, "err", err)
+		audit.log(ctx, V2ReasonFactsUnavailable, "preflight fact lookup failed", "project", project.ID)
+		return false
+	}
+	if !ok {
+		audit.log(ctx, V2ReasonFactsUnavailable, "preflight facts not established", "project", project.ID)
+		return false
+	}
+	if d := V2PreflightCaller(ctx, V2ProbeFromFacts(facts, true), cfg, audit); !d.Allow {
+		return false
+	}
+	if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: domain.ProjectID(project.ID),
+		IssueID:   head.IssueID,
+		Kind:      domain.KindWorker,
+		Prompt:    BuildIssuePrompt(issue),
+	}); err != nil {
+		o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", head.IssueID, "err", err)
+		return true
+	}
+	seen[head.IssueID] = true
+	q.PopHead()
+	return false
+}
+
+// v2ActiveTakes derives the WIP-gate's active takes from durable session
+// facts: non-terminated worker sessions of this project. A session parked in
+// a sticky activity state (human decision/input pending) counts as stalled
+// with StalledFor from the last durable activity reading, so the gate's
+// stall timeout can block new takes.
+func v2ActiveTakes(projectID string, sessions []domain.SessionRecord, now time.Time) []V2ActiveTake {
+	var active []V2ActiveTake
+	for _, s := range sessions {
+		if s.IsTerminated || s.Kind != domain.KindWorker {
+			continue
+		}
+		if string(s.ProjectID) != projectID {
+			continue
+		}
+		take := V2ActiveTake{}
+		// A worker parked in a sticky activity state (waiting on a human
+		// decision/input) is a stalled review-like take. StalledFor runs
+		// from the last durable activity reading, falling back to the
+		// row update time, so the gate's stall timeout can block new takes.
+		if s.Activity.State.IsSticky() {
+			take.Stalled = true
+			since := s.Activity.LastActivityAt
+			if since.IsZero() {
+				since = s.UpdatedAt
+			}
+			if !since.IsZero() && now.After(since) {
+				take.StalledFor = now.Sub(since)
+			}
+		}
+		active = append(active, take)
+	}
+	return active
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
