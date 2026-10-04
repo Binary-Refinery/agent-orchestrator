@@ -48,7 +48,7 @@ func TestValidatorRejectsVagueGate(t *testing.T) {
 
 // P2-2: a lone "?" (or another terse fragment) is not a concrete gate.
 func TestValidatorRejectsLoneQuestionMarkGate(t *testing.T) {
-	for _, gate := range []string{"?", "  ?  ", "Mergen?", "Ja?"} {
+	for _, gate := range []string{"?", "  ?  ", "Mergen?", "Ja?", "? - - -", "? ... ..."} {
 		draft := strings.Replace(goodDraft(), "Soll ich mergen?", gate, 1)
 		if d := ValidateDraft(true, draft); d.Allow || d.Reason != ReasonGateVague {
 			t.Fatalf("gate %q = %+v, want gate_vague", gate, d)
@@ -176,15 +176,15 @@ func TestTokenNeverInOutput(t *testing.T) {
 
 // P1-2: every token assignment is redacted, whatever its format or count.
 func TestSanitizeRedactsAllAssignments(t *testing.T) {
-	in := "token=alpha1 token=beta2 TOKEN: gamma3 token:delta4 TokEn = \"eps5\""
+	in := "token=alpha1 token=beta2 TOKEN: gamma3 token:delta4 TokEn = \"eps5\" token=\tzeta6 token:\teta7"
 	got := Sanitize(in)
-	for _, want := range []string{"alpha1", "beta2", "gamma3", "delta4", "eps5"} {
+	for _, want := range []string{"alpha1", "beta2", "gamma3", "delta4", "eps5", "zeta6", "eta7"} {
 		if strings.Contains(got, want) {
 			t.Fatalf("assignment value leaked: %q", got)
 		}
 	}
-	if strings.Count(got, "[redacted]") != 5 {
-		t.Fatalf("expected 5 redactions, got %q", got)
+	if strings.Count(got, "[redacted]") != 7 {
+		t.Fatalf("expected 7 redactions, got %q", got)
 	}
 	prefixed := Sanitize("ghp_alpha1 and gho_beta2 and github_pat_gamma3")
 	for _, want := range []string{"alpha1", "beta2", "gamma3"} {

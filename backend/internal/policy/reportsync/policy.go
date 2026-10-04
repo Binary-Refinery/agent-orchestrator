@@ -11,6 +11,7 @@ package reportsync
 import (
 	"os"
 	"strings"
+	"unicode"
 )
 
 // RejectReason is the typed reason every refusal carries (fail-closed).
@@ -156,14 +157,30 @@ func isExplicitNoGate(gate string) bool {
 }
 
 // isConcreteQuestion accepts only a real decision question: a "?" plus at
-// least three words of substance. A lone "?" (or other terse fragments)
-// is vague, not concrete.
+// least three substance words. A word counts only when it holds a letter
+// or digit, so punctuation fragments like "? - - -" stay vague.
 func isConcreteQuestion(gate string) bool {
 	if !strings.Contains(gate, "?") {
 		return false
 	}
 	cleaned := strings.ReplaceAll(gate, "?", " ")
-	return len(strings.Fields(cleaned)) >= 3
+	substance := 0
+	for _, w := range strings.Fields(cleaned) {
+		if hasLetterOrDigit(w) {
+			substance++
+		}
+	}
+	return substance >= 3
+}
+
+// hasLetterOrDigit reports whether s holds at least one letter or digit.
+func hasLetterOrDigit(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // Phase is a reportable lifecycle event. Only these produce postings.
@@ -388,7 +405,7 @@ func redactTokenAssignments(s string) string {
 			continue
 		}
 		j++
-		for j < len(s) && (s[j] == ' ' || s[j] == '"' || s[j] == '\'') {
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '"' || s[j] == '\'') {
 			j++
 		}
 		k := j

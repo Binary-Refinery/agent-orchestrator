@@ -74,6 +74,36 @@ func TestRunnerSyncPhasePostsCommentAndStatus(t *testing.T) {
 	}
 }
 
+// P1 (Runde 2/2): token-shaped facts with tabs after the separator must
+// reach the fake tracker fully redacted; no value may appear in the output.
+func TestRunnerRedactsTokenShapedFacts(t *testing.T) {
+	tracker := &fakeTracker{}
+	board := &fakeBoard{}
+	r := &reportsync.Runner{Enabled: true, Tracker: tracker, Board: board}
+	seen := map[string]bool{}
+	d := r.SyncPhase(context.Background(), reportsync.PilotRepos[0], 9, reportsync.SyncInput{
+		Phase:   reportsync.PhaseCIResult,
+		Facts:   []string{"ci green", "token=alpha1 token:\tbeta2"},
+		HasAuth: true,
+		Seen:    seen,
+		SeenKey: "9:ci",
+	})
+	if !d.Allow {
+		t.Fatalf("enabled run denied: %+v", d)
+	}
+	if len(tracker.posts) != 1 {
+		t.Fatalf("tracker posts = %v, want one comment", tracker.posts)
+	}
+	for _, leaked := range []string{"alpha1", "beta2"} {
+		if strings.Contains(tracker.posts[0], leaked) {
+			t.Fatalf("token value reached tracker comment")
+		}
+	}
+	if strings.Count(tracker.posts[0], "[redacted]") != 2 {
+		t.Fatalf("expected 2 redactions in posted comment, got %q", tracker.posts[0])
+	}
+}
+
 func TestRunnerDisabledPostsNothing(t *testing.T) {
 	tracker := &fakeTracker{}
 	board := &fakeBoard{}
