@@ -21,6 +21,9 @@ const (
 	ReasonIncomplete    RejectReason = "report_incomplete"
 	ReasonGateVague     RejectReason = "report_gate_vague"
 	ReasonNoEvent       RejectReason = "sync_no_event"
+	ReasonNoKey         RejectReason = "sync_missing_key"
+	ReasonNoDeps        RejectReason = "sync_missing_deps"
+	ReasonPostFailed    RejectReason = "sync_post_failed"
 	ReasonDuplicate     RejectReason = "sync_duplicate"
 	ReasonUngrounded    RejectReason = "sync_ungrounded_claim"
 	ReasonRepoOutOfcope RejectReason = "sync_repo_out_of_scope"
@@ -66,78 +69,101 @@ var Sections = []string{
 }
 
 // ValidateDraft checks the 7-section format and GATE concreteness.
-// Missing or empty sections deny with ReasonIncomplete. A GATE without a
-// concrete decision question ("?") or an explicit "kein Gate offen" denies
-// with ReasonGateVague. Disabled denies closed with ReasonDisabled.
+// Missing, empty, or duplicated sections deny with ReasonIncomplete. A GATE
+// without a concrete decision question or an explicit "kein Gate offen"
+// denies with ReasonGateVague. Disabled denies closed with ReasonDisabled.
 func ValidateDraft(enabled bool, draft string) Decision {
 	if !enabled {
 		return deny(ReasonDisabled, "report-sync policy off")
 	}
-	upper := strings.ToUpper(draft)
-	bodies := splitSections(upper, draft)
+	bodies, dups := parseSections(draft)
 	for _, s := range Sections {
+		if dups[s] {
+			return deny(ReasonIncomplete, "duplicate section "+s)
+		}
 		body, ok := bodies[s]
 		if !ok {
 			return deny(ReasonIncomplete, "missing section "+s)
 		}
-		if strings.TrimSpace(stripHeading(body)) == "" {
+		if strings.TrimSpace(body) == "" {
 			return deny(ReasonIncomplete, "empty section "+s)
 		}
 	}
-	gate := strings.TrimSpace(stripHeading(bodies["GATE"]))
-	if strings.Contains(gate, "?") {
+	gate := strings.TrimSpace(bodies["GATE"])
+	if isExplicitNoGate(gate) {
 		return allow()
 	}
-	folded := strings.ToUpper(gate)
-	if strings.Contains(folded, "KEIN GATE OFFEN") {
+	if isConcreteQuestion(gate) {
 		return allow()
 	}
 	return deny(ReasonGateVague, "GATE needs a concrete decision question or explicit kein Gate offen")
 }
 
-// splitSections maps each known heading to the raw text following it up to
-// the next known heading. Matching is case-insensitive on upper-cased input.
-func splitSections(upper, raw string) map[string]string {
-	idx := map[string]int{}
-	for _, s := range Sections {
-		if i := strings.Index(upper, s); i >= 0 {
-			// Keep first occurrence only (fail-closed on ambiguity is
-			// handled by emptiness checks downstream).
-			if _, seen := idx[s]; !seen {
-				idx[s] = i
+// parseSections maps each known heading to its body text. Headings are
+// detected per line (case-insensitive, optional leading markdown hashes,
+// optional trailing colon with same-line body). It also reports headings
+// seen more than once so duplicates fail closed.
+func parseSections(draft string) (bodies map[string]string, dups map[string]bool) {
+	bodies = map[string]string{}
+	counts := map[string]int{}
+	var current string
+	currentSeen := false
+	flush := func() {}
+	_ = flush
+	for _, line := range strings.Split(draft, "\n") {
+		if sec, rest := headingOf(line); sec != "" {
+			counts[sec]++
+			current = sec
+			currentSeen = true
+			if rest != "" {
+				bodies[sec] += rest + "\n"
 			}
+			continue
+		}
+		if currentSeen {
+			bodies[current] += line + "\n"
 		}
 	}
-	out := map[string]string{}
-	type pos struct {
-		name string
-		at   int
-	}
-	var order []pos
-	for _, s := range Sections {
-		if at, ok := idx[s]; ok {
-			order = append(order, pos{s, at})
+	dups = map[string]bool{}
+	for sec, n := range counts {
+		if n > 1 {
+			dups[sec] = true
 		}
 	}
-	for i := 0; i < len(order); i++ {
-		end := len(raw)
-		for j := 0; j < len(order); j++ {
-			if order[j].at > order[i].at && order[j].at < end {
-				end = order[j].at
-			}
-		}
-		out[order[i].name] = raw[order[i].at:end]
-	}
-	return out
+	return bodies, dups
 }
 
-// stripHeading removes the heading line itself so emptiness checks look at
-// body content only.
-func stripHeading(chunk string) string {
-	if i := strings.Index(chunk, "\n"); i >= 0 {
-		return chunk[i+1:]
+// headingOf reports whether a line is a section heading and, for the
+// "HEADING: body" form, the same-line body.
+func headingOf(line string) (sec string, rest string) {
+	t := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
+	t = strings.TrimSpace(t)
+	u := strings.ToUpper(t)
+	for _, s := range Sections {
+		if u == s {
+			return s, ""
+		}
+		if strings.HasPrefix(u, s+":") {
+			return s, strings.TrimSpace(t[len(s)+1:])
+		}
 	}
-	return ""
+	return "", ""
+}
+
+// isExplicitNoGate accepts an explicit "kein Gate offen" statement.
+func isExplicitNoGate(gate string) bool {
+	return strings.Contains(strings.ToUpper(gate), "KEIN GATE OFFEN")
+}
+
+// isConcreteQuestion accepts only a real decision question: a "?" plus at
+// least three words of substance. A lone "?" (or other terse fragments)
+// is vague, not concrete.
+func isConcreteQuestion(gate string) bool {
+	if !strings.Contains(gate, "?") {
+		return false
+	}
+	cleaned := strings.ReplaceAll(gate, "?", " ")
+	return len(strings.Fields(cleaned)) >= 3
 }
 
 // Phase is a reportable lifecycle event. Only these produce postings.
@@ -177,18 +203,21 @@ type Action struct {
 type SyncInput struct {
 	Phase Phase
 	// Facts are the grounded observations (SHAs, URLs, check names).
+	// Empty or whitespace-only entries are ignored; at least one
+	// substantive fact is required.
 	Facts []string
 	// Repo is "owner/name"; must be a pilot repo.
 	Repo string
 	// HasAuth reuses existing gh auth; false fails closed without posting.
 	HasAuth bool
 	// Approval is true only when an explicit human approval event exists.
-	// Anything beyond bare facts (valuations, releases, merge claims
-	// without facts) requires it.
+	// Anything beyond bare facts (valuations, releases, merge claims,
+	// publish-go/approval statements) requires it.
 	Approval bool
 	// Seen deduplicates per phase event; key e.g. issue+phase.
 	Seen map[string]bool
-	// SeenKey identifies this event for dedup.
+	// SeenKey identifies this event for dedup. Empty fails closed so a
+	// missing event id can never bypass dedup.
 	SeenKey string
 }
 
@@ -209,18 +238,34 @@ func PlanSync(enabled bool, in SyncInput) (Action, Decision) {
 	if !repoAllowed(in.Repo) {
 		return zero, deny(ReasonRepoOutOfcope, "repo outside pilot scope")
 	}
-	if in.SeenKey != "" && in.Seen[in.SeenKey] {
+	if strings.TrimSpace(in.SeenKey) == "" {
+		return zero, deny(ReasonNoKey, "missing event id, refusing to bypass dedup")
+	}
+	if in.Seen[in.SeenKey] {
 		return zero, deny(ReasonDuplicate, "phase event already synced")
 	}
-	if len(in.Facts) == 0 {
-		return zero, deny(ReasonUngrounded, "merge/publish claims need facts")
+	facts := substantiveFacts(in.Facts)
+	if len(facts) == 0 {
+		return zero, deny(ReasonUngrounded, "phase event needs at least one substantive fact")
 	}
-	comment := "FAKTEN [" + string(in.Phase) + "] " + strings.Join(in.Facts, " | ")
+	comment := "FAKTEN [" + string(in.Phase) + "] " + strings.Join(facts, " | ")
 	if d := factOnly(comment, in.Approval); !d.Allow {
 		return zero, d
 	}
 	comment = Sanitize(comment)
 	return Action{Comment: comment, BoardStatus: boardStatus(in.Phase), FactOnly: true}, allow()
+}
+
+// substantiveFacts drops empty and whitespace-only entries.
+func substantiveFacts(facts []string) []string {
+	out := make([]string, 0, len(facts))
+	for _, f := range facts {
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // validPhase checks the closed phase vocabulary.
@@ -242,12 +287,14 @@ func repoAllowed(repo string) bool {
 	return false
 }
 
-// bannedWithoutApproval lists valuations/releases/merge claims that need an
-// explicit approval event on top of facts.
+// bannedWithoutApproval lists valuations, releases, merge claims, and
+// publish-go/approval statements that need an explicit approval event on
+// top of facts.
 var bannedWithoutApproval = []string{
-	"freigabe", "freigegeben", "lgtm", "approved",
-	"gemergt", "merged", "publiziert", "release freigegeben",
-	"bestätigt", "bestaetigt",
+	"freigabe", "freigegeben", "lgtm", "approved", "approval",
+	"gemergt", "merged", "publiziert", "publish-go", "publish go",
+	"granted", "genehmigt", "genehmigung",
+	"bestätigt", "bestaetigt", "abgenommen", "abnahme",
 }
 
 // factOnly rejects comments carrying valuations or ungrounded claims
@@ -287,16 +334,15 @@ func boardStatus(p Phase) string {
 }
 
 // Sanitize redacts token-shaped material so tokens never land in
-// repo/logs/artifacts. It replaces ghp_/gho_/github_pat_ values and any
-// "token=..." / "token:..." assignment value with "[redacted]".
+// repo/logs/artifacts. It replaces ghp_/gho_/github_pat_ values and every
+// token assignment value ("token=...", "token:...", including spaced and
+// quoted forms like `Token = "abc"`) with "[redacted]".
 func Sanitize(s string) string {
 	out := s
 	for _, prefix := range []string{"ghp_", "gho_", "github_pat_"} {
 		out = redactPrefixed(out, prefix)
 	}
-	out = redactAssigned(out, "token=")
-	out = redactAssigned(out, "token:")
-	return out
+	return redactTokenAssignments(out)
 }
 
 func redactPrefixed(s, prefix string) string {
@@ -313,14 +359,35 @@ func redactPrefixed(s, prefix string) string {
 	}
 }
 
-func redactAssigned(s, key string) string {
+// redactTokenAssignments redacts every token assignment value: the word
+// "token" (any case) followed by optional spaces and "=" or ":", then the
+// value with optional spaces/quotes. It walks the string once, copying
+// output forward, so an already-redacted assignment is never re-matched and
+// no later assignment is skipped.
+func redactTokenAssignments(s string) string {
 	lower := strings.ToLower(s)
-	for {
-		i := strings.Index(lower, key)
-		if i < 0 {
-			return s
+	var b strings.Builder
+	b.Grow(len(s))
+	start := 0
+	for start < len(s) {
+		rel := strings.Index(lower[start:], "token")
+		if rel < 0 {
+			b.WriteString(s[start:])
+			break
 		}
-		j := i + len(key)
+		i := start + rel
+		j := i + len("token")
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+		if j >= len(s) || (s[j] != '=' && s[j] != ':') {
+			// "token" without an assignment separator: copy through and
+			// continue scanning after the word.
+			b.WriteString(s[start:j])
+			start = j
+			continue
+		}
+		j++
 		for j < len(s) && (s[j] == ' ' || s[j] == '"' || s[j] == '\'') {
 			j++
 		}
@@ -329,12 +396,16 @@ func redactAssigned(s, key string) string {
 			k++
 		}
 		if k == j {
-			break
+			// Separator with no value: copy through and continue after it.
+			b.WriteString(s[start:j])
+			start = j
+			continue
 		}
-		s = s[:j] + "[redacted]" + s[k:]
-		lower = strings.ToLower(s)
+		b.WriteString(s[start:j])
+		b.WriteString("[redacted]")
+		start = k
 	}
-	return s
+	return b.String()
 }
 
 func isTokenChar(c byte) bool {

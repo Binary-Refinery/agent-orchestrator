@@ -46,11 +46,53 @@ func TestValidatorRejectsVagueGate(t *testing.T) {
 	}
 }
 
+// P2-2: a lone "?" (or another terse fragment) is not a concrete gate.
+func TestValidatorRejectsLoneQuestionMarkGate(t *testing.T) {
+	for _, gate := range []string{"?", "  ?  ", "Mergen?", "Ja?"} {
+		draft := strings.Replace(goodDraft(), "Soll ich mergen?", gate, 1)
+		if d := ValidateDraft(true, draft); d.Allow || d.Reason != ReasonGateVague {
+			t.Fatalf("gate %q = %+v, want gate_vague", gate, d)
+		}
+	}
+	// Concrete decision questions and explicit no-gate still pass.
+	for _, gate := range []string{"Soll ich den PR mergen?", "Kein Gate offen."} {
+		draft := strings.Replace(goodDraft(), "Soll ich mergen?", gate, 1)
+		if d := ValidateDraft(true, draft); !d.Allow {
+			t.Fatalf("gate %q denied: %+v", gate, d)
+		}
+	}
+}
+
+// P2-1: empty markdown sections and duplicate headings fail closed.
+func TestValidatorRejectsEmptyMarkdownAndDuplicateHeading(t *testing.T) {
+	md := "## VERLAUF\narbeit\n## STAND\n## PROBLEM/BEFUND\nbefund\n## BELEG\nsha\n## OFFEN\nrest\n## NAECHSTE SCHRITTE\ntests\n## GATE\nSoll ich den PR mergen?"
+	if d := ValidateDraft(true, md); d.Allow || d.Reason != ReasonIncomplete {
+		t.Fatalf("empty markdown section = %+v, want incomplete", d)
+	}
+	dup := goodDraft() + "\nSTAND\nnochmal"
+	if d := ValidateDraft(true, dup); d.Allow || d.Reason != ReasonIncomplete {
+		t.Fatalf("duplicate heading = %+v, want incomplete", d)
+	}
+}
+
 func TestSyncDedup(t *testing.T) {
 	seen := map[string]bool{"i1:gestartet": true}
 	in := SyncInput{Phase: PhaseStarted, Facts: []string{"sha abc"}, Repo: PilotRepos[0], HasAuth: true, Seen: seen, SeenKey: "i1:gestartet"}
 	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonDuplicate {
 		t.Fatalf("dup = %+v, want duplicate deny", d)
+	}
+}
+
+// P2-3: a missing event id fails closed instead of bypassing dedup.
+func TestSyncRequiresSeenKey(t *testing.T) {
+	in := SyncInput{Phase: PhaseStarted, Facts: []string{"sha abc"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}}
+	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonNoKey {
+		t.Fatalf("empty seen key = %+v, want missing_key deny", d)
+	}
+	// Even a Seen store claiming the empty key stays fail-closed.
+	in.Seen = map[string]bool{"": true}
+	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonNoKey {
+		t.Fatalf("empty seen key with marked store = %+v, want missing_key deny", d)
 	}
 }
 
@@ -69,7 +111,7 @@ func TestSyncNoPostingWithoutEvent(t *testing.T) {
 func TestSyncUngroundedAndApproval(t *testing.T) {
 	// facts mentioning merge without approval event are fine as facts only
 	// if they carry no valuation; valuation words need approval.
-	in := SyncInput{Phase: PhaseMerged, Facts: []string{"PR #1 gemergt"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}}
+	in := SyncInput{Phase: PhaseMerged, Facts: []string{"PR #1 gemergt"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k1"}
 	if _, d := PlanSync(true, in); d.Allow {
 		t.Fatalf("valuation without approval allowed: %+v", d)
 	}
@@ -78,45 +120,82 @@ func TestSyncUngroundedAndApproval(t *testing.T) {
 		t.Fatalf("approval-gated facts denied: %+v", d)
 	}
 	// merge claim without any facts fails
-	nofacts := SyncInput{Phase: PhaseMerged, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}}
+	nofacts := SyncInput{Phase: PhaseMerged, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k2"}
 	if _, d := PlanSync(true, nofacts); d.Allow || d.Reason != ReasonUngrounded {
 		t.Fatalf("no facts = %+v, want ungrounded", d)
 	}
 }
 
+// P1-3: publish-go/approval statements without an approval event fail.
+func TestSyncRejectsUngroundedApprovalClaim(t *testing.T) {
+	in := SyncInput{Phase: PhaseReview, Facts: []string{"Publish-Go: GRANTED"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k-p13"}
+	if a, d := PlanSync(true, in); d.Allow || d.Reason != ReasonUngrounded || a.FactOnly {
+		t.Fatalf("approval claim = %+v action=%+v, want ungrounded deny", d, a)
+	}
+	in.Approval = true
+	if _, d := PlanSync(true, in); !d.Allow {
+		t.Fatalf("approval-backed claim denied: %+v", d)
+	}
+}
+
+// P2-4: empty/whitespace facts are not grounding.
+func TestSyncRejectsEmptyFacts(t *testing.T) {
+	in := SyncInput{Phase: PhaseCIResult, Facts: []string{"", "   "}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k-p24"}
+	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonUngrounded {
+		t.Fatalf("empty facts = %+v, want ungrounded deny", d)
+	}
+}
+
 func TestSyncScopeAndAuth(t *testing.T) {
-	in := SyncInput{Phase: PhaseStarted, Facts: []string{"sha"}, Repo: "other/repo", HasAuth: true, Seen: map[string]bool{}}
+	in := SyncInput{Phase: PhaseStarted, Facts: []string{"sha"}, Repo: "other/repo", HasAuth: true, Seen: map[string]bool{}, SeenKey: "k-s1"}
 	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonRepoOutOfcope {
 		t.Fatalf("out of scope = %+v", d)
 	}
-	in = SyncInput{Phase: PhaseStarted, Facts: []string{"sha"}, Repo: PilotRepos[1], HasAuth: false, Seen: map[string]bool{}}
+	in = SyncInput{Phase: PhaseStarted, Facts: []string{"sha"}, Repo: PilotRepos[1], HasAuth: false, Seen: map[string]bool{}, SeenKey: "k-s2"}
 	if _, d := PlanSync(true, in); d.Allow || d.Reason != ReasonNoAuth {
 		t.Fatalf("no auth = %+v", d)
 	}
 }
 
 func TestTokenNeverInOutput(t *testing.T) {
-	in := SyncInput{Phase: PhaseCIResult, Facts: []string{"token=ghp_secret1234567890 ok", "sha abc"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}}
+	in := SyncInput{Phase: PhaseCIResult, Facts: []string{"ci green", "sha abc"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k-t1"}
 	a, d := PlanSync(true, in)
 	if !d.Allow {
 		t.Fatalf("denied: %+v", d)
 	}
-	if strings.Contains(a.Comment, "ghp_secret") || strings.Contains(a.Comment, "token=ghp") {
-		t.Fatalf("token leaked in comment: %q", a.Comment)
-	}
 	if !strings.HasPrefix(a.Comment, "FAKTEN") {
 		t.Fatalf("comment not fact-prefixed: %q", a.Comment)
 	}
-	for _, s := range []string{"ghp_abc123 token=mytoken123", "TOKEN: secret99", "github_pat_xyz"} {
-		got := Sanitize(s)
-		if strings.Contains(got, "abc123") || strings.Contains(got, "mytoken123") || strings.Contains(got, "secret99") || strings.Contains(got, "xyz") {
-			t.Fatalf("sanitize leaked: %q -> %q", s, got)
+	for _, s := range []string{"alpha", "beta", "gamma", "delta", "eps"} {
+		got := Sanitize("token=" + s + "-token-1")
+		if strings.Contains(got, s) {
+			t.Fatalf("sanitize leaked value for input class %q", s)
+		}
+	}
+}
+
+// P1-2: every token assignment is redacted, whatever its format or count.
+func TestSanitizeRedactsAllAssignments(t *testing.T) {
+	in := "token=alpha1 token=beta2 TOKEN: gamma3 token:delta4 TokEn = \"eps5\""
+	got := Sanitize(in)
+	for _, want := range []string{"alpha1", "beta2", "gamma3", "delta4", "eps5"} {
+		if strings.Contains(got, want) {
+			t.Fatalf("assignment value leaked: %q", got)
+		}
+	}
+	if strings.Count(got, "[redacted]") != 5 {
+		t.Fatalf("expected 5 redactions, got %q", got)
+	}
+	prefixed := Sanitize("ghp_alpha1 and gho_beta2 and github_pat_gamma3")
+	for _, want := range []string{"alpha1", "beta2", "gamma3"} {
+		if strings.Contains(prefixed, want) {
+			t.Fatalf("prefixed token leaked: %q", prefixed)
 		}
 	}
 }
 
 func TestSyncEmitsOnlyFactsAndStatus(t *testing.T) {
-	in := SyncInput{Phase: PhasePRCreated, Facts: []string{"PR https://example/x/1"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}}
+	in := SyncInput{Phase: PhasePRCreated, Facts: []string{"PR https://example/x/1"}, Repo: PilotRepos[0], HasAuth: true, Seen: map[string]bool{}, SeenKey: "k-f1"}
 	a, d := PlanSync(true, in)
 	if !d.Allow {
 		t.Fatalf("denied: %+v", d)
