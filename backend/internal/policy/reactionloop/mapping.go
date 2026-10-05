@@ -117,16 +117,26 @@ var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|kein\w*
 var denialAfter = regexp.MustCompile(`(?i)\bP[01]\b\s*[:\-–—]?\s*(none|nothing|kein\w*|nichts|ohne|no)\b`)
 
 // fillerAfter lists words that may trail a denial without reviving the
-// verdict: "P0: none found", "P1 - nichts gefunden". Any other trailing
-// word means the line says something substantive about P0/P1, so the
-// verdict stands. Residual ambiguity resolves toward the verdict: a
+// verdict: "P0: none found", "P1 - nichts gefunden", "P1: none found
+// in this review". It covers benign trailing denial context (locations
+// like "in this review", restatements like "issues"/"findings", German
+// counterparts), but never articles or substance nouns: "the" or
+// "timeout" after the denial word means the line still says something
+// about P0/P1, so the verdict stands. Any other trailing word keeps the
+// line blocking. Residual ambiguity resolves toward the verdict: a
 // spurious triage proposal stays human-gated, while a missed verdict
 // could wrongly green-light a closeout.
 var fillerAfter = map[string]bool{
 	"found": true, "remaining": true, "remain": true, "remains": true,
 	"left": true, "mehr": true, "noch": true, "offen": true,
 	"vorhanden": true, "vorliegend": true, "gefunden": true,
-	"übrig": true, "uebrig": true,
+	"übrig": true, "uebrig": true, "in": true, "this": true,
+	"that": true, "these": true, "those": true, "review": true,
+	"round": true, "runde": true, "here": true, "anymore": true,
+	"current": true, "issues": true, "issue": true, "findings": true,
+	"finding": true, "yet": true, "any": true, "so": true, "far": true,
+	"befund": true, "befunde": true, "befunden": true, "dieser": true,
+	"diese": true, "dieses": true,
 }
 
 // denialCoversLine reports whether the denial word ending at end (a match

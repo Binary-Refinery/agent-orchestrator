@@ -127,6 +127,32 @@ func TestDenialAfterKeepsSubstantiveVerdict(t *testing.T) {
 	}
 }
 
+// S4-D3 exception round: benign trailing denial context must not revive
+// the verdict. "P1: none found in this review" reports absence, so it
+// stays non-blocking — while substance after the denial ("P0: none,
+// review the timeout handling") keeps the line blocking.
+func TestDenialTrailingContextSkipped(t *testing.T) {
+	for _, body := range []string{
+		"P1: none found in this review",
+		"P0: no issues in this round",
+		"P1: nothing found here",
+		"P1: keine Befunde mehr",
+	} {
+		if got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}}); len(got) != 0 {
+			t.Fatalf("denial context %q -> %+v, want no findings", body, got)
+		}
+	}
+	for _, body := range []string{
+		"P1: no timeout on requests",
+		"P0: none, review the timeout handling",
+	} {
+		got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}})
+		if len(got) != 1 {
+			t.Fatalf("substantive line %q -> %+v, want one finding", body, got)
+		}
+	}
+}
+
 func TestExtractFindingsKeepsRealVerdicts(t *testing.T) {
 	comments := []ReviewComment{
 		{ID: "c1", IsCodex: true, Body: "P0/P1: both classes present, worst counts"},
