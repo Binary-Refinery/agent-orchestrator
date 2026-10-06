@@ -248,3 +248,106 @@ func TestEmptyPollIsNotGreen(t *testing.T) {
 		t.Fatalf("poll without observed review comments must not be green: %+v", out)
 	}
 }
+
+// PR#10 Codex P1: only Codex comments count as review evidence. Human or
+// other-bot chatter, even beside green checks, never satisfies the
+// review side — only eligible Codex review evidence does.
+func TestHumanChatterIsNotReviewEvidence(t *testing.T) {
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	human := []ReviewComment{{ID: "h", IsCodex: false, Body: "LGTM, ship it"}}
+	if out := SummarizePoll(human, checks); out.AllGreen() {
+		t.Fatalf("human chatter must not read as green: %+v", out)
+	}
+	mixed := []ReviewComment{
+		{ID: "h", IsCodex: false, Body: "LGTM, ship it"},
+		{ID: "c", IsCodex: true, Body: "Clean, no markers."},
+	}
+	if out := SummarizePoll(mixed, checks); !out.AllGreen() {
+		t.Fatalf("codex evidence beside chatter must read green: %+v", out)
+	}
+}
+
+// PR#10 Codex P1: "?" inside URL/query syntax is not a question.
+// Verdicts mentioning URLs stay verdicts; genuine questions stay prose.
+func TestURLVerdictsAreNotQuestions(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		sev  Severity
+	}{
+		{"[P1] Reject /callback?code=xyz", SevP1},
+		{"P0: guard /login?next=/dash properly", SevP0},
+		{"P1: see https://host/x?a=b for context", SevP1},
+	} {
+		got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: tc.body}})
+		if len(got) != 1 || got[0].Severity != tc.sev {
+			t.Fatalf("url verdict %q -> %+v, want one %s", tc.body, got, tc.sev)
+		}
+	}
+	for _, body := range []string{
+		"Is the P0 label really warranted here? Please advise",
+		"Is it P0 and/or P1?",
+		"What about the P1 here? still valid",
+	} {
+		if got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}}); len(got) != 0 {
+			t.Fatalf("question %q -> %+v, want no findings", body, got)
+		}
+	}
+}
+
+// PR#10 Codex P1: a denial governs only the marker it actually denies.
+// "This is not a P1 but a P0: data loss" denies the P1 and asserts the
+// P0, so exactly one SevP0 survives.
+func TestContrastKeepsAssertedMarker(t *testing.T) {
+	got := ExtractFindings([]ReviewComment{
+		{ID: "c", IsCodex: true, Body: "This is not a P1 but a P0: data loss"},
+	})
+	if len(got) != 1 || got[0].Severity != SevP0 {
+		t.Fatalf("contrast line = %+v, want one SevP0", got)
+	}
+	// Coordination without contrast still distributes the denial.
+	denied := ExtractFindings([]ReviewComment{
+		{ID: "c", IsCodex: true, Body: "No P0 or P1 issues"},
+	})
+	if len(denied) != 0 {
+		t.Fatalf("coordinated denial = %+v, want no findings", denied)
+	}
+	// No denial at all: both coordinated verdicts survive.
+	both := ExtractFindings([]ReviewComment{
+		{ID: "c", IsCodex: true, Body: "Fix P0 or P1"},
+	})
+	if len(both) != 2 {
+		t.Fatalf("coordinated verdicts = %+v, want two findings", both)
+	}
+}
+
+// PR#10 Codex P2: Markdown lead-in runes must not hide weaker-severity
+// titles. "### [P2] ..." and "**[P2] ..." stay prose, never P0/P1.
+func TestMarkdownTitlesStayProse(t *testing.T) {
+	for _, body := range []string{
+		"### [P2] Clarify P0 handling",
+		"**[P2] Clarify P1 handling**",
+		"## P2: note on P0 scope",
+	} {
+		if got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}}); len(got) != 0 {
+			t.Fatalf("markdown title %q -> %+v, want no findings", body, got)
+		}
+	}
+}
+
+// PR#10 Codex P1: an expected check set gates closeout. With required
+// checks unmet, the board is not green even when everything observed is
+// green; once the full set passes, closeout may proceed.
+func TestRequiredChecksGateCloseout(t *testing.T) {
+	comments := []ReviewComment{{ID: "c", IsCodex: true, Body: "Clean, no markers."}}
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	partial := SummarizePoll(comments, checks).RequireChecks([]string{"unit", "e2e"})
+	if partial.AllGreen() {
+		t.Fatalf("partial required set must not be green: %+v", partial)
+	}
+	full := SummarizePoll(comments, append(checks,
+		CheckRun{Name: "e2e", Status: "completed", Conclusion: "success"},
+	)).RequireChecks([]string{"unit", "e2e"})
+	if !full.AllGreen() {
+		t.Fatalf("full required set must be green: %+v", full)
+	}
+}

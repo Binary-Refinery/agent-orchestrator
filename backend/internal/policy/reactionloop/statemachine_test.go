@@ -223,3 +223,36 @@ func TestSubstantiveVerdictBlocksCloseout(t *testing.T) {
 		}
 	}
 }
+
+// PR#10 Codex P2: an inconclusive event carrying P0/P1 findings denies
+// closed instead of silently swallowing the triage signal. Finding-free
+// inconclusive polls still hold as before.
+func TestInconclusiveWithFindingsDenied(t *testing.T) {
+	for _, s := range []State{StateWatching, StateDeltaReview} {
+		step := Advance(true, s, EventPollInconclusive, false, findingsOutcome())
+		if step.Decision.Allow || step.Decision.Reason != ReasonInvalidStep {
+			t.Fatalf("%s+inconclusive with findings = %+v, want invalid deny", s, step.Decision)
+		}
+		if step.Next != s {
+			t.Fatalf("%s+inconclusive with findings moved to %q, want hold", s, step.Next)
+		}
+	}
+}
+
+// PR#10 Codex P1: a green event over an unmet required check set denies
+// without closeout from both polling states, even when every observed
+// check and the review side are green.
+func TestGreenWithUnmetRequiredDenied(t *testing.T) {
+	comments := []ReviewComment{{ID: "c1", IsCodex: true, Body: "Clean, no markers."}}
+	checks := []CheckRun{{Name: "unit", Status: "completed", Conclusion: "success"}}
+	out := SummarizePoll(comments, checks).RequireChecks([]string{"unit", "e2e"})
+	for _, s := range []State{StateWatching, StateDeltaReview} {
+		step := Advance(true, s, EventPollGreen, false, out)
+		if step.Decision.Allow || step.Decision.Reason != ReasonInvalidStep {
+			t.Fatalf("%s+green with unmet required = %+v, want invalid deny", s, step.Decision)
+		}
+		if step.Next != s || step.Closeout != nil {
+			t.Fatalf("%s+green with unmet required moved or drafted: %+v", s, step)
+		}
+	}
+}

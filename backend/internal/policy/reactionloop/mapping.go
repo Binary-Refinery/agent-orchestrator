@@ -51,13 +51,20 @@ type PollOutcome struct {
 	Failed []string
 	// Pending names check runs that have not completed yet.
 	Pending []string
+	// Passed names check runs completed without failing (success,
+	// skipped, neutral). Required checks are satisfied from this set.
+	Passed []string
+	// Required names the expected check set, when the caller knows it.
+	// Set it via RequireChecks: AllGreen then needs every required
+	// check passed, so discovery-incomplete polls hold instead of
+	// closing out on a fast subset.
+	Required []string
 	// Observed counts the check runs seen in this poll.
 	Observed int
-	// CommentsSeen counts the review comments observed in this poll.
-	// A poll that observed no comments proves nothing about the review
-	// side: AllGreen requires CommentsSeen > 0, so a missing or
-	// incomplete review collection can never read as green even when
-	// the observed checks are green.
+	// CommentsSeen counts the Codex-authored review comments observed in
+	// this poll. Only eligible Codex review evidence satisfies it: human
+	// or other-bot chatter never counts, so a missing Codex collection
+	// can never read as green even when the observed checks are green.
 	CommentsSeen int
 }
 
@@ -70,6 +77,15 @@ var severityMarker = regexp.MustCompile(`(?i)(?:^|[\s\[\(.:;/-])P([01])(?:$|[\s\
 // require a triage proposal.
 func (o PollOutcome) HasBlocking() bool { return len(o.Findings) > 0 }
 
+// RequireChecks returns a copy of o carrying the expected check set.
+// AllGreen on the copy needs every required check passed; use it
+// whenever the caller knows the required checks so an incomplete
+// discovery can never close out on a fast subset.
+func (o PollOutcome) RequireChecks(required []string) PollOutcome {
+	o.Required = required
+	return o
+}
+
 // P0Count counts P0 findings in the outcome.
 func (o PollOutcome) P0Count() int { return countSev(o.Findings, SevP0) }
 
@@ -78,12 +94,34 @@ func (o PollOutcome) P1Count() int { return countSev(o.Findings, SevP1) }
 
 // AllGreen reports whether the PR needs nothing: no P0/P1 findings, no
 // failed checks, no pending checks, at least one observed check run,
-// and at least one observed review comment. Empty or one-sided evidence
-// never reads as green. Only an all-green poll may draft a closeout
-// note.
+// at least one observed Codex review comment, and — when the caller
+// sets an expected set — every required check passed. Empty, one-sided,
+// or incomplete evidence never reads as green. Only an all-green poll
+// may draft a closeout note.
 func (o PollOutcome) AllGreen() bool {
 	return o.Observed > 0 && o.CommentsSeen > 0 &&
-		len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0
+		len(o.Findings) == 0 && len(o.Failed) == 0 && len(o.Pending) == 0 &&
+		o.requiredSatisfied()
+}
+
+// requiredSatisfied reports whether every expected check completed
+// without failing. An empty expected set constrains nothing; callers
+// that know the required checks must pass them via RequireChecks so a
+// fast subset can never green-light a closeout on its own.
+func (o PollOutcome) requiredSatisfied() bool {
+	if len(o.Required) == 0 {
+		return true
+	}
+	passed := make(map[string]bool, len(o.Passed))
+	for _, name := range o.Passed {
+		passed[name] = true
+	}
+	for _, name := range o.Required {
+		if !passed[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func countSev(findings []Finding, sev Severity) int {
@@ -162,15 +200,31 @@ func isQuoted(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), ">")
 }
 
+// mdLead strips Markdown lead-in runes so title detection sees the
+// label underneath: "### [P2] ...", "**[P2] ...", "1. [P2] ...".
+var mdLead = regexp.MustCompile(`^[#>*_~` + "`" + `]+`)
+
+// urlToken matches URL and path-query tokens whose "?" is syntax, not a
+// question: "https://host/x?a=b", "/callback?code=...".
+var urlToken = regexp.MustCompile(`https?://\S+|\S*/\S*\?\S+`)
+
+// isQuestion reports discussion lines: a "?" outside URL/query syntax.
+// Verdicts that merely mention a URL ("[P1] Reject /callback?code=...")
+// stay verdicts; only genuine questions are prose.
+func isQuestion(trimmed string) bool {
+	return strings.Contains(urlToken.ReplaceAllString(trimmed, ""), "?")
+}
+
 // ExtractFindings pulls P0/P1 verdicts out of Codex review comments, one
 // finding per non-denied marker. A mixed line keeps its real verdicts
 // while only the benign denial part is ignored: in "P1: timeout;
 // P0: none found in this review" the P1 stays blocking and the denied
 // P0 is dropped. Non-Codex comments never contribute, so human
 // discussion cannot inject findings. Lines that merely talk about
-// P0/P1 — weaker-severity titles (P2 and up, listed or not),
-// negations, blockquotes, and questions — are prose, not verdicts, and
-// are skipped.
+// P0/P1 — weaker-severity titles (P2 and up, listed, quoted in
+// Markdown, or not), negations, blockquotes, and genuine questions —
+// are prose, not verdicts, and are skipped. A "?" inside URL/query
+// syntax ("[P1] Reject /callback?code=...") is not a question.
 func ExtractFindings(comments []ReviewComment) []Finding {
 	var out []Finding
 	for _, c := range comments {
@@ -182,7 +236,7 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 			if trimmed == "" || isQuoted(line) {
 				continue
 			}
-			if strings.Contains(trimmed, "?") {
+			if isQuestion(trimmed) {
 				continue
 			}
 			out = append(out, extractLine(c.ID, line, trimmed)...)
@@ -206,18 +260,37 @@ func semiStart(line string, ms int) int {
 	return 0
 }
 
-// clauseStart returns the start of the denial clause holding the marker
-// at ms: clauses split at ';' and ',', so a denial in one clause can
-// never govern a marker in the next ("P0: none found; P1: timeout" keeps
-// its P1), while a denial inside the clause still applies ("No P0,
-// no P1" denies both).
-func clauseStart(line string, ms int) int {
-	for i := ms - 1; i >= 0; i-- {
-		if line[i] == ';' || line[i] == ',' {
-			return i + 1
+// coordGap matches text between two markers that carries a denial
+// across to the later one: only coordinators and punctuation
+// (" or ", ", nor ", "/").
+var coordGap = regexp.MustCompile(`(?i)^[\s,/:]*(or|and|nor)?[\s,/:]*$`)
+
+// contrastWord ends denial scope: "not a P1 but a P0" denies the P1 and
+// asserts the P0.
+var contrastWord = regexp.MustCompile(`(?i)\b(but|however|except|sondern|aber|doch|jedoch)\b`)
+
+// denialStart returns where the governing denial context for marker i
+// begins: after the last ';'/','/contrast word, or after a previous
+// marker unless only coordinators sit between the two — coordinated
+// denials extend ("No P0 or P1" denies both) while a contrasted marker
+// starts fresh ("not a P1 but a P0" keeps the P0).
+func denialStart(line string, locs [][]int, i, ms int) int {
+	start := 0
+	for j := ms - 1; j >= 0; j-- {
+		if line[j] == ';' || line[j] == ',' {
+			start = j + 1
+			break
 		}
 	}
-	return 0
+	if m := contrastWord.FindAllStringIndex(line[start:ms], -1); len(m) > 0 {
+		start += m[len(m)-1][1]
+	}
+	if i > 0 {
+		if prevEnd := locs[i-1][3]; prevEnd >= start && !coordGap.MatchString(line[prevEnd:ms]) {
+			start = prevEnd
+		}
+	}
+	return start
 }
 
 // extractLine evaluates every P0/P1 marker in one line on its own: a
@@ -233,14 +306,14 @@ func extractLine(commentID, line, trimmed string) []Finding {
 		// the marker class consumes (":", "; ", "["); the marker
 		// itself is the "P" just before group 1 plus the digit.
 		ms, me := loc[2]-1, loc[3]
-		if lowerSeverityTitle.MatchString(line[semiStart(line, ms):me]) {
+		if lowerSeverityTitle.MatchString(mdLead.ReplaceAllString(line[semiStart(line, ms):me], "")) {
 			continue
 		}
-		if negationBefore.MatchString(line[clauseStart(line, ms):me]) {
+		if negationBefore.MatchString(line[denialStart(line, locs, i, ms):me]) {
 			continue
 		}
 		after := line[ms:]
-		if m := denialAfter.FindStringSubmatchIndex(after); m != nil && m[0] == 0 {
+		if m := denialAfter.FindStringSubmatchIndex(after); len(m) >= 2 && m[0] == 0 {
 			rest := line[ms+m[1] : boundary(line, locs, i)]
 			if denialCoversLine(rest, 0) {
 				continue
@@ -268,16 +341,20 @@ func boundary(line string, locs [][]int, i int) int {
 // runs into a single outcome for the state machine.
 func SummarizePoll(comments []ReviewComment, checks []CheckRun) PollOutcome {
 	out := PollOutcome{
-		Findings:     ExtractFindings(comments),
-		Observed:     len(checks),
-		CommentsSeen: len(comments),
+		Findings: ExtractFindings(comments),
+		Observed: len(checks),
+	}
+	for _, c := range comments {
+		if c.IsCodex {
+			out.CommentsSeen++
+		}
 	}
 	for _, c := range checks {
 		switch strings.ToLower(strings.TrimSpace(c.Status)) {
 		case "completed", "complete", "done":
 			switch strings.ToLower(strings.TrimSpace(c.Conclusion)) {
 			case "success", "skipped", "neutral":
-				continue
+				out.Passed = append(out.Passed, c.Name)
 			default:
 				out.Failed = append(out.Failed, c.Name)
 			}

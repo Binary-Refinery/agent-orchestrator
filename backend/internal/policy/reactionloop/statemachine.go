@@ -125,6 +125,10 @@ func Advance(enabled bool, s State, e Event, human bool, outcome PollOutcome) St
 				Decision: allow(),
 			}
 		case EventPollInconclusive:
+			if len(outcome.Findings) > 0 {
+				hold.Decision = deny(ReasonInvalidStep, "inconclusive event carrying P0/P1 findings")
+				return hold
+			}
 			hold.Decision = allow()
 			return hold
 		}
