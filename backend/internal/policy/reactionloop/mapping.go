@@ -208,11 +208,24 @@ var mdLead = regexp.MustCompile(`^[#>*_~` + "`" + `]+`)
 // question: "https://host/x?a=b", "/callback?code=...".
 var urlToken = regexp.MustCompile(`https?://\S+|\S*/\S*\?\S+`)
 
+// stripURLs removes URL/query tokens but preserves a terminal "?": in
+// "[P1] Should we reject /callback?code=xyz?" the final "?" asks the
+// question, so it must survive for isQuestion instead of being consumed
+// as token syntax.
+func stripURLs(s string) string {
+	return urlToken.ReplaceAllStringFunc(s, func(m string) string {
+		if strings.HasSuffix(m, "?") {
+			return "?"
+		}
+		return ""
+	})
+}
+
 // isQuestion reports discussion lines: a "?" outside URL/query syntax.
 // Verdicts that merely mention a URL ("[P1] Reject /callback?code=...")
 // stay verdicts; only genuine questions are prose.
 func isQuestion(trimmed string) bool {
-	return strings.Contains(urlToken.ReplaceAllString(trimmed, ""), "?")
+	return strings.Contains(stripURLs(trimmed), "?")
 }
 
 // ExtractFindings pulls P0/P1 verdicts out of Codex review comments, one

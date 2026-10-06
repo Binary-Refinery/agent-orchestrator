@@ -294,6 +294,18 @@ func TestURLVerdictsAreNotQuestions(t *testing.T) {
 	}
 }
 
+// PR#10 delta P1: a terminal "?" after a URL still asks a question.
+// "[P1] Should we reject /callback?code=xyz?" is discussion, never a
+// blocking verdict — URL stripping must preserve terminal punctuation.
+func TestURLQuestionKeepsQuestionMark(t *testing.T) {
+	got := ExtractFindings([]ReviewComment{
+		{ID: "c", IsCodex: true, Body: "[P1] Should we reject /callback?code=xyz?"},
+	})
+	if len(got) != 0 {
+		t.Fatalf("url question = %+v, want no findings", got)
+	}
+}
+
 // PR#10 Codex P1: a denial governs only the marker it actually denies.
 // "This is not a P1 but a P0: data loss" denies the P1 and asserts the
 // P0, so exactly one SevP0 survives.
