@@ -288,6 +288,100 @@ func TestProjectSetConfig_ReviewerJSON(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_PlanRolesJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"plannerRules":"Plans stay coordination-only.","planner":{"agent":"codex","agentConfig":{"model":"gpt-5","effort":"high","permissions":"accept-edits"}},"planReviewer":{"agent":"claude-code","agentConfig":{"effort":"low"}}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.PlannerRules != "Plans stay coordination-only." {
+		t.Fatalf("plannerRules = %q, want plan standing instructions preserved", got.Config.PlannerRules)
+	}
+	if got.Config.Planner.Agent != "codex" || got.Config.Planner.AgentConfig.Model != "gpt-5" || got.Config.Planner.AgentConfig.Effort != "high" || got.Config.Planner.AgentConfig.Permissions != "accept-edits" {
+		t.Fatalf("planner = %#v, want codex override with effort preserved", got.Config.Planner)
+	}
+	if got.Config.PlanReviewer.Agent != "claude-code" || got.Config.PlanReviewer.AgentConfig.Effort != "low" {
+		t.Fatalf("planReviewer = %#v, want claude-code override with effort preserved", got.Config.PlanReviewer)
+	}
+}
+
+func TestProjectGet_PlanRolesEffortJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","config":{"planner":{"agent":"codex","agentConfig":{"effort":"high"}},"planReviewer":{"agent":"claude-code","agentConfig":{"effort":"low"}}}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "get", "demo", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/projects/demo" {
+		t.Fatalf("request = %s %s, want GET /api/v1/projects/demo", capture.method, capture.path)
+	}
+	var got projectGetResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode json output: %v\nout=%s", err, out)
+	}
+	if got.Project.Config == nil {
+		t.Fatalf("get json lost config:\n%s", out)
+	}
+	if got.Project.Config.Planner.AgentConfig.Effort != "high" {
+		t.Fatalf("planner effort = %q, want high:\n%s", got.Project.Config.Planner.AgentConfig.Effort, out)
+	}
+	if got.Project.Config.PlanReviewer.AgentConfig.Effort != "low" {
+		t.Fatalf("planReviewer effort = %q, want low:\n%s", got.Project.Config.PlanReviewer.AgentConfig.Effort, out)
+	}
+}
+
+func TestPlanRolesEffortPreservedThroughGetModifyPut(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","config":{"planner":{"agent":"codex","agentConfig":{"effort":"high"}},"planReviewer":{"agent":"claude-code","agentConfig":{"effort":"low"}}}}}`)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+	out, _, err := executeCLI(t, deps, "project", "get", "demo", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got projectGetResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Project.Config == nil {
+		t.Fatal("project get lost config")
+	}
+	got.Project.Config.PlannerRules = "Plans stay coordination-only."
+	edited, err := json.Marshal(got.Project.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeCLI(t, deps, "project", "set-config", "demo", "--config-json", string(edited)); err != nil {
+		t.Fatal(err)
+	}
+	var body setConfigRequest
+	if err := json.Unmarshal(capture.body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Config.Planner.AgentConfig.Effort != "high" {
+		t.Fatalf("planner effort lost: %s", capture.body)
+	}
+	if body.Config.PlanReviewer.AgentConfig.Effort != "low" {
+		t.Fatalf("planReviewer effort lost: %s", capture.body)
+	}
+	if body.Config.PlannerRules != "Plans stay coordination-only." {
+		t.Fatalf("plannerRules lost: %s", capture.body)
+	}
+}
+
 func TestProjectSetConfig_ReviewerFlags(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo"}}`)

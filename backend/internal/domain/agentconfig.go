@@ -56,6 +56,37 @@ func (m PermissionMode) Valid() bool {
 	}
 }
 
+// AllowedForPlanRoles reports whether the mode may be used by plan roles
+// (planner/planReviewer). Plan roles are coordination-only, so only
+// accept-edits and sharper-or-neutral modes (empty inherit, default baseline)
+// are allowed; auto and bypass-permissions never are.
+func (m PermissionMode) AllowedForPlanRoles() bool {
+	switch m {
+	case PermissionModeAuto, PermissionModeBypassPermissions:
+		return false
+	default:
+		return true
+	}
+}
+
+// ClampPlanRolePermissions enforces the explicit safe mode plan roles run
+// with: only accept-edits passes through, everything else becomes
+// accept-edits. Auto and bypass-permissions are the obvious reductions, but
+// the neutral empty/default baselines must not pass through either —
+// downstream mappers treat them as bypass (Codex maps default to
+// --dangerously-bypass-approvals-and-sandbox), so a plan-role ceiling that
+// leaves them unchanged would not be default-safe. Unrecognized values fail
+// closed the same way; Validate rejects them at set time, and the clamp
+// covers values that predate validation or arrive through paths that bypass
+// it. Stored configs are untouched, keeping unset plan-role slots opt-in
+// compatible; only plan-role resolution is normalized.
+func ClampPlanRolePermissions(m PermissionMode) PermissionMode {
+	if m == PermissionModeAcceptEdits {
+		return m
+	}
+	return PermissionModeAcceptEdits
+}
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {

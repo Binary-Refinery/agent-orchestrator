@@ -12283,6 +12283,12 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
           type: string
+        planReviewer:
+          $ref: '#/components/schemas/RoleOverride'
+        planner:
+          $ref: '#/components/schemas/RoleOverride'
+        plannerRules:
+          type: string
         postCreate:
           items:
             type: string

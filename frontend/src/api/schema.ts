@@ -4272,6 +4272,9 @@ export interface components {
             governanceManaged?: boolean;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
+            planReviewer?: components["schemas"]["RoleOverride"];
+            planner?: components["schemas"]["RoleOverride"];
+            plannerRules?: string;
             postCreate?: string[];
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
