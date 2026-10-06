@@ -184,6 +184,40 @@ func TestMixedMarkerLineKeepsRealVerdict(t *testing.T) {
 	}
 }
 
+// S4 coordinated-negation round: a denial keeps its force across comma
+// coordinated lists. "No P0, nor P1 findings remain" denies both, so no
+// marker may emit — neither the P0 nor the P1.
+func TestCoordinatedNegationDeniesBoth(t *testing.T) {
+	for _, body := range []string{
+		"No P0, nor P1 findings remain",
+		"Neither P0 nor P1 remain",
+		"No P0 or P1 issues in this review",
+	} {
+		if got := ExtractFindings([]ReviewComment{{ID: "c", IsCodex: true, Body: body}}); len(got) != 0 {
+			t.Fatalf("coordinated denial %q -> %+v, want no findings", body, got)
+		}
+	}
+}
+
+// S4 per-clause title round: a weaker-severity title governs its own
+// semicolon clause only. "P0: race; P2: style note mentioning P1" keeps
+// the P0 verdict and drops the P1 from the later P2-title prose clause.
+func TestLaterP2TitleClauseDropsP1(t *testing.T) {
+	got := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P0: race; P2: style note mentioning P1"},
+	})
+	if len(got) != 1 || got[0].Severity != SevP0 {
+		t.Fatalf("p2-title clause = %+v, want one SevP0", got)
+	}
+	// A comma does not break title scope: the whole line stays prose.
+	skipped := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P2: style nit, mentions P0 handling in passing"},
+	})
+	if len(skipped) != 0 {
+		t.Fatalf("comma p2 prose = %+v, want no findings", skipped)
+	}
+}
+
 func TestExtractFindingsKeepsRealVerdicts(t *testing.T) {
 	comments := []ReviewComment{
 		{ID: "c1", IsCodex: true, Body: "P0/P1: both classes present, worst counts"},

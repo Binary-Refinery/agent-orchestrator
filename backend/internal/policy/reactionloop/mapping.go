@@ -104,10 +104,11 @@ var lowerSeverityTitle = regexp.MustCompile(`(?i)^\s*(?:\d+[.)]\s*|[-*+]\s*)?[\[
 
 // negationBefore matches a denial word shortly before the marker, in
 // English or German, brackets included: "no P0", "No [P0] findings
-// remain", "without any P1", "keine P0-Befunde". Such lines report the
-// absence of severe findings, so they must not become blocking findings
-// themselves.
-var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|kein\w*|ohne)\b[\s\wäöü/\-[\(]{0,12}P[01]\b`)
+// remain", "without any P1", "keine P0-Befunde". Coordinating denials
+// ("nor", "neither") keep their force across comma lists: "No P0, nor
+// P1 findings remain" denies both. Such lines report the absence of
+// severe findings, so they must not become blocking findings themselves.
+var negationBefore = regexp.MustCompile(`(?i)\b(no|not|without|zero|none|neither|nor|kein\w*|ohne)\b[\s\wäöü/\-[\(]{0,12}P[01]\b`)
 
 // denialAfter matches a denial word right after a verdict marker:
 // "P0: none", "P1 - nichts gefunden". The denial only covers the line
@@ -181,9 +182,6 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 			if trimmed == "" || isQuoted(line) {
 				continue
 			}
-			if lowerSeverityTitle.MatchString(line) {
-				continue
-			}
 			if strings.Contains(trimmed, "?") {
 				continue
 			}
@@ -193,11 +191,26 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 	return out
 }
 
-// clauseStart returns the start of the clause holding the marker at ms:
-// clauses split at ';' and ',', so a denial in one clause can never
-// govern a marker in the next ("P0: none found; P1: timeout" keeps its
-// P1), while a denial inside the clause still applies ("No P0, no P1"
-// denies both).
+// semiStart returns the start of the semicolon clause holding the marker
+// at ms: ';' separates independent verdicts, while a comma does not
+// break title scope ("P2: style nit, mentions P0 handling" stays fully
+// skipped). A P2 title therefore governs its own clause only: in
+// "P0: race; P2: style note mentioning P1" the P0 stays a verdict and
+// the P1 inside the later P2-title clause is prose.
+func semiStart(line string, ms int) int {
+	for i := ms - 1; i >= 0; i-- {
+		if line[i] == ';' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// clauseStart returns the start of the denial clause holding the marker
+// at ms: clauses split at ';' and ',', so a denial in one clause can
+// never govern a marker in the next ("P0: none found; P1: timeout" keeps
+// its P1), while a denial inside the clause still applies ("No P0,
+// no P1" denies both).
 func clauseStart(line string, ms int) int {
 	for i := ms - 1; i >= 0; i-- {
 		if line[i] == ';' || line[i] == ',' {
@@ -208,9 +221,10 @@ func clauseStart(line string, ms int) int {
 }
 
 // extractLine evaluates every P0/P1 marker in one line on its own: a
-// marker preceded by a denial word inside its clause is denied, as is a
-// marker whose denial word exhausts the line up to the next marker or
-// the line end. Every surviving marker yields one finding.
+// marker inside a weaker-severity title clause is prose, a marker
+// preceded by a denial word inside its clause is denied, as is a marker
+// whose denial word exhausts the line up to the next marker or the line
+// end. Every surviving marker yields one finding.
 func extractLine(commentID, line, trimmed string) []Finding {
 	locs := severityMarker.FindAllStringSubmatchIndex(line, -1)
 	var out []Finding
@@ -219,6 +233,9 @@ func extractLine(commentID, line, trimmed string) []Finding {
 		// the marker class consumes (":", "; ", "["); the marker
 		// itself is the "P" just before group 1 plus the digit.
 		ms, me := loc[2]-1, loc[3]
+		if lowerSeverityTitle.MatchString(line[semiStart(line, ms):me]) {
+			continue
+		}
 		if negationBefore.MatchString(line[clauseStart(line, ms):me]) {
 			continue
 		}
