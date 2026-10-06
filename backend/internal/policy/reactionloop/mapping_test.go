@@ -153,6 +153,37 @@ func TestDenialTrailingContextSkipped(t *testing.T) {
 	}
 }
 
+// S4 mixed-marker exception round: a line may hold a real verdict and a
+// benign denial side by side. The verdict survives, only the denied part
+// is ignored: "P1: timeout; P0: none found in this review" yields exactly
+// one SevP1 finding.
+func TestMixedMarkerLineKeepsRealVerdict(t *testing.T) {
+	got := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P1: timeout; P0: none found in this review"},
+	})
+	if len(got) != 1 || got[0].Severity != SevP1 {
+		t.Fatalf("mixed line = %+v, want one SevP1", got)
+	}
+	mirrored := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P0: none found; P1: timeout on requests"},
+	})
+	if len(mirrored) != 1 || mirrored[0].Severity != SevP1 {
+		t.Fatalf("mirrored line = %+v, want one SevP1", mirrored)
+	}
+	both := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "P0: race on shutdown; P1: timeout on requests"},
+	})
+	if len(both) != 2 || both[0].Severity != SevP0 || both[1].Severity != SevP1 {
+		t.Fatalf("two-verdict line = %+v, want P0 then P1", both)
+	}
+	neither := ExtractFindings([]ReviewComment{
+		{ID: "c1", IsCodex: true, Body: "No P0, no P1 findings in this review"},
+	})
+	if len(neither) != 0 {
+		t.Fatalf("double denial = %+v, want no findings", neither)
+	}
+}
+
 func TestExtractFindingsKeepsRealVerdicts(t *testing.T) {
 	comments := []ReviewComment{
 		{ID: "c1", IsCodex: true, Body: "P0/P1: both classes present, worst counts"},

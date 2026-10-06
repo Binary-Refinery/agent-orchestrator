@@ -162,9 +162,12 @@ func isQuoted(line string) bool {
 }
 
 // ExtractFindings pulls P0/P1 verdicts out of Codex review comments, one
-// finding per marker-bearing line. Non-Codex comments never contribute,
-// so human discussion cannot inject findings. Lines that merely talk
-// about P0/P1 — weaker-severity titles (P2 and up, listed or not),
+// finding per non-denied marker. A mixed line keeps its real verdicts
+// while only the benign denial part is ignored: in "P1: timeout;
+// P0: none found in this review" the P1 stays blocking and the denied
+// P0 is dropped. Non-Codex comments never contribute, so human
+// discussion cannot inject findings. Lines that merely talk about
+// P0/P1 — weaker-severity titles (P2 and up, listed or not),
 // negations, blockquotes, and questions — are prose, not verdicts, and
 // are skipped.
 func ExtractFindings(comments []ReviewComment) []Finding {
@@ -174,10 +177,6 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 			continue
 		}
 		for _, line := range strings.Split(c.Body, "\n") {
-			m := severityMarker.FindStringSubmatch(line)
-			if m == nil {
-				continue
-			}
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" || isQuoted(line) {
 				continue
@@ -185,25 +184,67 @@ func ExtractFindings(comments []ReviewComment) []Finding {
 			if lowerSeverityTitle.MatchString(line) {
 				continue
 			}
-			if negationBefore.MatchString(line) {
-				continue
-			}
-			if loc := denialAfter.FindStringSubmatchIndex(line); loc != nil {
-				if denialCoversLine(line, loc[1]) {
-					continue
-				}
-			}
 			if strings.Contains(trimmed, "?") {
 				continue
 			}
-			sev := SevP1
-			if m[1] == "0" {
-				sev = SevP0
-			}
-			out = append(out, Finding{CommentID: c.ID, Severity: sev, Summary: trimmed})
+			out = append(out, extractLine(c.ID, line, trimmed)...)
 		}
 	}
 	return out
+}
+
+// clauseStart returns the start of the clause holding the marker at ms:
+// clauses split at ';' and ',', so a denial in one clause can never
+// govern a marker in the next ("P0: none found; P1: timeout" keeps its
+// P1), while a denial inside the clause still applies ("No P0, no P1"
+// denies both).
+func clauseStart(line string, ms int) int {
+	for i := ms - 1; i >= 0; i-- {
+		if line[i] == ';' || line[i] == ',' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// extractLine evaluates every P0/P1 marker in one line on its own: a
+// marker preceded by a denial word inside its clause is denied, as is a
+// marker whose denial word exhausts the line up to the next marker or
+// the line end. Every surviving marker yields one finding.
+func extractLine(commentID, line, trimmed string) []Finding {
+	locs := severityMarker.FindAllStringSubmatchIndex(line, -1)
+	var out []Finding
+	for i, loc := range locs {
+		// loc[0:2] span the whole match including the delimiter runes
+		// the marker class consumes (":", "; ", "["); the marker
+		// itself is the "P" just before group 1 plus the digit.
+		ms, me := loc[2]-1, loc[3]
+		if negationBefore.MatchString(line[clauseStart(line, ms):me]) {
+			continue
+		}
+		after := line[ms:]
+		if m := denialAfter.FindStringSubmatchIndex(after); m != nil && m[0] == 0 {
+			rest := line[ms+m[1] : boundary(line, locs, i)]
+			if denialCoversLine(rest, 0) {
+				continue
+			}
+		}
+		sev := SevP1
+		if line[loc[2]:loc[3]] == "0" {
+			sev = SevP0
+		}
+		out = append(out, Finding{CommentID: commentID, Severity: sev, Summary: trimmed})
+	}
+	return out
+}
+
+// boundary ends a marker's denial scope at the next marker or the line
+// end, so "P0: none; P1: timeout" denies only the P0.
+func boundary(line string, locs [][]int, i int) int {
+	if i+1 < len(locs) {
+		return locs[i+1][0]
+	}
+	return len(line)
 }
 
 // SummarizePoll aggregates one poll over Codex review comments plus check
