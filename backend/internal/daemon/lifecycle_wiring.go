@@ -24,6 +24,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
+	"github.com/aoagents/agent-orchestrator/backend/internal/policy/supervision"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
@@ -65,6 +66,7 @@ func startLifecycle(ctx context.Context, dataDir string, store *sqlite.Store, ru
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
+		lifecycle.WithSupervision(lifecycle.SupervisionConfigFromEnv()),
 		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
@@ -85,6 +87,38 @@ func startLifecycle(ctx context.Context, dataDir string, store *sqlite.Store, ru
 		activityDone:  activityPoller.Start(ctx),
 		herdr:         herdrServer,
 	}
+}
+
+// supervisionKindForReport maps turn-mandating worker report states
+// onto the supervision wake-up kinds. All other report states carry no
+// wake-up mandate.
+func supervisionKindForReport(state domain.ReportState) (supervision.ReportKind, bool) {
+	switch state {
+	case domain.ReportDone:
+		return supervision.ReportDone, true
+	case domain.ReportCheckpoint:
+		return supervision.ReportCheckpoint, true
+	default:
+		return "", false
+	}
+}
+
+// superviseReportTurn enforces the opt-in supervision wake-up guarantee
+// on the production report path: a done/checkpoint worker report
+// mandates one orchestrator turn through the lifecycle manager. When
+// the supervision policy is disabled (default) this is a closed deny
+// with no side effects; when enabled, delivery failures are audited
+// durably by the lifecycle wiring. Nil-manager safe: a missing reducer
+// never blocks report delivery.
+func superviseReportTurn(ctx context.Context, lcm *lifecycle.Manager, rec domain.ReportRecord) {
+	if lcm == nil {
+		return
+	}
+	kind, ok := supervisionKindForReport(rec.State)
+	if !ok {
+		return
+	}
+	lcm.SupervisedReportTurn(ctx, rec.SessionID, kind)
 }
 
 // startupSignalGatesInput resolves whether an adapter promises that its first

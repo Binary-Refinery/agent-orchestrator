@@ -24,11 +24,13 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/policy/supervision"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 // SupervisionConfig carries the opt-in supervision enforcement wired
@@ -61,8 +63,11 @@ func WithSupervision(cfg SupervisionConfig) Option {
 	return func(m *Manager) { m.supervision = cfg }
 }
 
-// SupervisionAudits returns the durable audit trail recorded by the
-// supervision wiring (wake-up failures, escalations) for this manager.
+// SupervisionAudits returns the manager-local audit trail recorded by
+// the supervision wiring (one entry per wake-up failure or escalation).
+// The durable counterpart of each entry is the needs-input notification
+// persisted through the notification sink; this accessor is the
+// repository-durable readback for the in-process trail.
 func (m *Manager) SupervisionAudits() []string {
 	m.supMu.Lock()
 	defer m.supMu.Unlock()
@@ -86,32 +91,45 @@ func (m *Manager) supervised() bool {
 
 // SupervisedReportTurn mandates one orchestrator turn for a
 // done/checkpoint worker report on the session. Disabled denies closed
-// with no side effects. Enabled delivers through the session guard
-// with retry; terminal failure records a durable needs-input
-// notification (human-visible audit) and returns the audit in the plan.
+// with no side effects. Enabled delivers through the guard's Deliver
+// boundary (not Send: a suppressed-but-nil-error outcome must read as
+// failure, never as a delivered turn) with retry; terminal failure
+// records exactly one durable audit and returns it in the plan.
+// A suppressed write (blocked, terminated, missing, exited, gated)
+// performs no pane write: the turn is denied and audited instead.
 func (m *Manager) SupervisedReportTurn(ctx context.Context, id domain.SessionID, kind supervision.ReportKind) supervision.WakeupPlan {
 	if !m.supervised() {
 		return supervision.WakeupPlan{Decision: denyClosed()}
 	}
 	if m.guard == nil {
 		plan := supervision.DeliverWakeup(true, kind, nil)
-		m.persistSupAudit(ctx, id, plan.Audit)
+		m.persistSupAudit(ctx, id, "", plan.Audit)
 		return plan
 	}
 	guard := m.guard
 	plan := supervision.DeliverWakeup(true, kind, func() error {
-		return guard.Send(ctx, id, "supervision: orchestrator turn for "+string(kind))
+		outcome, err := guard.Deliver(ctx, id, "supervision: orchestrator turn for "+string(kind))
+		if err != nil {
+			return err
+		}
+		if outcome != sessionguard.Sent {
+			return errors.New("supervision: wake-up suppressed (" + outcome.String() + ")")
+		}
+		return nil
 	})
 	if plan.Audit != "" {
-		m.persistSupAudit(ctx, id, plan.Audit)
+		m.persistSupAudit(ctx, id, "", plan.Audit)
 	}
 	return plan
 }
 
 // SupervisionStallCheck evaluates time-since-progress for the session.
 // Disabled denies closed with no side effects. Enabled: quiet allows,
-// nudge sends one worker nudge through the guard, escalation records a
-// durable needs-input notification for the human.
+// nudge sends one worker nudge through the guard's Nudge boundary
+// (which refuses at waiting_input/blocked, unlike Deliver), escalation
+// records a durable needs-input notification for the human. A refused
+// or failed nudge writes nothing and escalates instead: the refusal is
+// audited durably, so the stall is never silently idle.
 func (m *Manager) SupervisionStallCheck(ctx context.Context, id domain.SessionID, project domain.ProjectID, sinceProgress time.Duration) supervision.StallCheck {
 	if !m.supervised() {
 		return supervision.StallCheck{Decision: denyClosed()}
@@ -122,13 +140,35 @@ func (m *Manager) SupervisionStallCheck(ctx context.Context, id domain.SessionID
 	}
 	switch check.Outcome {
 	case supervision.OutcomeNudge:
-		if m.guard != nil {
-			_ = m.guard.Send(ctx, id, "supervision: stall nudge, report progress")
+		if m.guard == nil {
+			return escalateDeniedNudge(ctx, m, id, project, "no delivery guard wired")
+		}
+		outcome, err := m.guard.Nudge(ctx, id, "supervision: stall nudge, report progress")
+		if err != nil || outcome != sessionguard.Sent {
+			reason := "nudge refused (" + outcome.String() + ")"
+			if err != nil {
+				reason = "nudge failed (" + err.Error() + ")"
+			}
+			return escalateDeniedNudge(ctx, m, id, project, reason)
 		}
 	case supervision.OutcomeEscalate:
-		m.emitSupEscalation(ctx, id, project, "supervision: stall escalation, no progress")
+		m.persistSupAudit(ctx, id, project, "supervision: stall escalation, no progress")
 	}
 	return check
+}
+
+// escalateDeniedNudge converts a refused/failed stall nudge into a
+// durable human escalation: no pane write happened, so the human owns
+// the stall. The returned check carries the escalate outcome.
+func escalateDeniedNudge(ctx context.Context, m *Manager, id domain.SessionID, project domain.ProjectID, reason string) supervision.StallCheck {
+	m.persistSupAudit(ctx, id, project, "supervision: stall nudge denied, escalated ("+reason+")")
+	// Canonical escalate decision from the policy: the nudge window was
+	// reached and the write was refused, so the human owns the stall.
+	escalated := supervision.CheckStall(true, m.supervision.Watchdog, m.supervision.Watchdog.EscalateAfter)
+	if !escalated.Decision.Allow || escalated.Outcome != supervision.OutcomeEscalate {
+		escalated.Outcome = supervision.OutcomeEscalate
+	}
+	return escalated
 }
 
 // SupervisionPlanStep enforces the round/session/fix-round budget gates
@@ -150,32 +190,29 @@ func (m *Manager) SupervisionAdvance(cur supervision.ChainStep, elapsed time.Dur
 	return supervision.AdvanceChain(true, m.supervision.Chain, cur, elapsed, human)
 }
 
-// persistSupAudit records the wake-up failure audit durably: in the
-// manager audit trail plus, when a notification sink is wired, as a
-// human-visible needs-input notification.
-func (m *Manager) persistSupAudit(ctx context.Context, id domain.SessionID, audit string) {
-	if audit == "" {
+// persistSupAudit records exactly one audit entry per event: the
+// manager audit trail entry plus, when a notification sink is wired, a
+// human-visible needs-input notification carrying the same detail (the
+// durable record that survives a daemon restart via the notification
+// store). A notification persistence failure is folded into the same
+// single entry as a notify_err suffix, never dropped and never
+// recorded twice.
+func (m *Manager) persistSupAudit(ctx context.Context, id domain.SessionID, project domain.ProjectID, detail string) {
+	if detail == "" {
 		return
 	}
-	entry := "session=" + string(id) + " " + audit
+	entry := "session=" + string(id) + " " + detail
+	if m.notifications != nil {
+		if err := m.notifications.Notify(ctx, ports.NotificationIntent{
+			Type:      domain.NotificationNeedsInput,
+			SessionID: id,
+			ProjectID: project,
+			CreatedAt: m.supClock(),
+		}); err != nil {
+			entry += " notify_err=" + err.Error()
+		}
+	}
 	m.recordSupAudit(entry)
-	m.emitSupEscalation(ctx, id, "", entry)
-}
-
-// emitSupEscalation delivers a stall/wake-up escalation to the human as
-// a durable needs-input notification. Without a sink the audit trail
-// above is the record; nothing is silently dropped.
-func (m *Manager) emitSupEscalation(ctx context.Context, id domain.SessionID, project domain.ProjectID, detail string) {
-	m.recordSupAudit("session=" + string(id) + " " + detail)
-	if m.notifications == nil {
-		return
-	}
-	_ = m.notifications.Notify(ctx, ports.NotificationIntent{
-		Type:      domain.NotificationNeedsInput,
-		SessionID: id,
-		ProjectID: project,
-		CreatedAt: m.supClock(),
-	})
 }
 
 func (m *Manager) supClock() time.Time {
