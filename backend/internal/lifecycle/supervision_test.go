@@ -155,6 +155,78 @@ func withState(rec domain.SessionRecord, state domain.ActivityState) domain.Sess
 	return rec
 }
 
+func withKind(rec domain.SessionRecord, kind domain.SessionKind) domain.SessionRecord {
+	rec.Kind = kind
+	return rec
+}
+
+func TestSupervisedReportTurnForWorkerTargetsActiveOrchestrator(t *testing.T) {
+	sink := &fakeNotifySink{}
+	m, st, msg := newManager(WithSupervision(enabledSupervision()), WithNotificationSink(sink))
+	worker := domain.SessionID("sess-worker")
+	orch := domain.SessionID("sess-orchestrator")
+	stale := domain.SessionID("sess-orch-stale")
+	st.sessions[worker] = withKind(working(worker), domain.KindWorker)
+	st.sessions[orch] = withKind(working(orch), domain.KindOrchestrator)
+	st.sessions[stale] = withKind(withState(working(stale), domain.ActivityExited), domain.KindOrchestrator)
+
+	plan := m.SupervisedReportTurnForWorker(ctx, worker, "mer", supervision.ReportDone)
+	if !plan.Decision.Allow || plan.Audit != "" {
+		t.Fatalf("worker report wake-up = %+v, want delivered orchestrator turn", plan)
+	}
+	// Exactly one delivery, and it targets the active orchestrator —
+	// never the reporting worker, never the exited orchestrator.
+	if len(msg.ids) != 1 || msg.ids[0] != orch {
+		t.Fatalf("wake-up deliveries = %q, want exactly [%q]", msg.ids, orch)
+	}
+}
+
+func TestSupervisedReportTurnForWorkerWithoutOrchestratorDeniesAndAudits(t *testing.T) {
+	sink := &fakeNotifySink{}
+	m, st, msg := newManager(WithSupervision(enabledSupervision()), WithNotificationSink(sink))
+	worker := domain.SessionID("sess-lone-worker")
+	st.sessions[worker] = withKind(working(worker), domain.KindWorker)
+
+	plan := m.SupervisedReportTurnForWorker(ctx, worker, "mer", supervision.ReportCheckpoint)
+	if plan.Decision.Allow || plan.Audit == "" {
+		t.Fatalf("orchestrator-less wake-up = %+v, want fail-closed audit deny", plan)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("orchestrator-less wake-up wrote %d pane messages, want none", len(msg.msgs))
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("orchestrator-less wake-up must persist exactly one audit: %+v", sink.intents)
+	}
+}
+
+func TestSupervisionRepeatedEscalationIsIdempotent(t *testing.T) {
+	sink := &fakeNotifySink{}
+	m, st, _ := newManager(WithSupervision(enabledSupervision()), WithNotificationSink(sink))
+	id := domain.SessionID("sess-repeat")
+	st.sessions[id] = working(id)
+	cfg := supervision.DefaultWatchdogConfig()
+
+	// The same stall escalated twice persists exactly one durable
+	// audit and one notification — repeated polls never duplicate.
+	for i := 0; i < 2; i++ {
+		if check := m.SupervisionStallCheck(ctx, id, "mer", cfg.EscalateAfter); check.Outcome != supervision.OutcomeEscalate {
+			t.Fatalf("poll %d = %+v, want escalation", i, check)
+		}
+	}
+	if audits := m.SupervisionAudits(); len(audits) != 1 {
+		t.Fatalf("repeated escalation audits = %q, want exactly one", audits)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("repeated escalation intents = %d, want exactly one", len(sink.intents))
+	}
+	// The durable readback carries the session, project, and type the
+	// notification store persists across restarts.
+	got := sink.intents[0]
+	if got.Type != domain.NotificationNeedsInput || got.SessionID != id || got.ProjectID != domain.ProjectID("mer") || got.CreatedAt.IsZero() {
+		t.Fatalf("durable escalation readback = %+v, want needs_input with session/project/timestamp", got)
+	}
+}
+
 func TestSupervisedReportTurnBlockedWritesNothingAndAudits(t *testing.T) {
 	sink := &fakeNotifySink{}
 	m, st, msg := newManager(WithSupervision(enabledSupervision()), WithNotificationSink(sink))

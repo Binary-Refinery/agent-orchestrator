@@ -576,7 +576,11 @@ func Run() error {
 		if reportCoordinator != nil {
 			reportCoordinator.Wake()
 		}
-		superviseReportTurn(ctx, lcStack.LCM, created)
+		// The wake-up result is never dropped silently: a durably
+		// audited delivery failure is surfaced in the daemon log.
+		if plan := superviseReportTurn(ctx, lcStack.LCM, created); plan.Audit != "" {
+			log.Warn("supervision wake-up failed", "session", created.SessionID, "audit", plan.Audit)
+		}
 	}})
 	reportCoordinator = reportsvc.NewCoordinator(reportsvc.CoordinatorDeps{
 		Store:    store,

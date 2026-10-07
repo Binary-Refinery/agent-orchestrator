@@ -38,7 +38,11 @@ func (s *supWiringStore) UpdateSessionFromActivitySignal(_ context.Context, rec 
 }
 
 func (s *supWiringStore) ListSessions(_ context.Context, _ domain.ProjectID) ([]domain.SessionRecord, error) {
-	return nil, nil
+	out := make([]domain.SessionRecord, 0, len(s.sessions))
+	for _, rec := range s.sessions {
+		out = append(out, rec)
+	}
+	return out, nil
 }
 
 func (s *supWiringStore) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]domain.PullRequest, error) {
@@ -67,14 +71,16 @@ func (s *supWiringStore) UpdatePRLastNudgeSignature(_ context.Context, _, _ stri
 
 type supWiringMessenger struct {
 	sends int
+	ids   []domain.SessionID
 	err   error
 }
 
-func (m *supWiringMessenger) Send(_ context.Context, _ domain.SessionID, _ string) error {
+func (m *supWiringMessenger) Send(_ context.Context, id domain.SessionID, _ string) error {
 	if m.err != nil {
 		return m.err
 	}
 	m.sends++
+	m.ids = append(m.ids, id)
 	return nil
 }
 
@@ -134,22 +140,34 @@ func TestSuperviseReportTurnReachesProductionReportPath(t *testing.T) {
 	msgr := &supWiringMessenger{}
 	notifier := &supWiringNotifier{}
 	lcm := supWiringManager(true, store, msgr, notifier)
-	id := domain.SessionID("sess-prod")
-	store.sessions[id] = supWiringSession(id, domain.ActivityIdle)
+	worker := domain.SessionID("sess-prod-worker")
+	orch := domain.SessionID("sess-prod-orch")
+	store.sessions[worker] = domain.SessionRecord{ID: worker, ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive}}
+	store.sessions[orch] = domain.SessionRecord{ID: orch, ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle}}
 
-	// Enabled config: a done report on the production hook mandates
-	// and delivers one orchestrator turn.
-	superviseReportTurn(ctx, lcm, domain.ReportRecord{ID: "rpt-1", SessionID: id, ProjectID: "mer", State: domain.ReportDone})
+	// Enabled config: a done worker report on the production hook
+	// mandates and delivers exactly one turn to the active
+	// orchestrator — never to the reporting worker.
+	plan := superviseReportTurn(ctx, lcm, domain.ReportRecord{ID: "rpt-1", SessionID: worker, ProjectID: "mer", State: domain.ReportDone})
+	if !plan.Decision.Allow {
+		t.Fatalf("enabled report hook plan = %+v, want delivered turn", plan)
+	}
 	if msgr.sends != 1 {
 		t.Fatalf("enabled report hook sends = %d, want 1 orchestrator turn", msgr.sends)
 	}
+	if len(msgr.ids) != 1 || msgr.ids[0] != orch {
+		t.Fatalf("report hook deliveries = %q, want exactly [%q]", msgr.ids, orch)
+	}
 	// Non-mandating states stay silent.
-	superviseReportTurn(ctx, lcm, domain.ReportRecord{ID: "rpt-2", SessionID: id, ProjectID: "mer", State: domain.ReportStuck})
+	plan = superviseReportTurn(ctx, lcm, domain.ReportRecord{ID: "rpt-2", SessionID: worker, ProjectID: "mer", State: domain.ReportStuck})
+	if plan.Decision.Allow {
+		t.Fatalf("non-mandating report hook plan = %+v, want closed deny", plan)
+	}
 	if msgr.sends != 1 {
 		t.Fatalf("non-mandating report hook sends = %d, want still 1", msgr.sends)
 	}
 	// Enabled stall path: watchdog escalation reaches the human durably.
-	check := lcm.SupervisionStallCheck(ctx, id, "mer", 24*time.Hour)
+	check := lcm.SupervisionStallCheck(ctx, orch, "mer", 24*time.Hour)
 	if check.Outcome != supervision.OutcomeEscalate {
 		t.Fatalf("stall check = %+v, want escalation", check)
 	}

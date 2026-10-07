@@ -269,8 +269,9 @@ type Manager struct {
 	// config. Zero value is disabled: no sends, no notifications.
 	supervision SupervisionConfig
 	// supMu guards supAudits, the durable supervision audit trail.
-	supMu     sync.Mutex
-	supAudits []string
+	supMu      sync.Mutex
+	supAudits  []string
+	supEmitted map[string]struct{}
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.

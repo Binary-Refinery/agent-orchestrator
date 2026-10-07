@@ -74,7 +74,23 @@ func (m *Manager) SupervisionAudits() []string {
 	return append([]string(nil), m.supAudits...)
 }
 
-func (m *Manager) recordSupAudit(entry string) {
+// claimSupAudit claims the event key for recording: the first claim
+// wins, later duplicates of the identical event are skipped entirely
+// (no trail append, no re-notify).
+func (m *Manager) claimSupAudit(key string) bool {
+	m.supMu.Lock()
+	defer m.supMu.Unlock()
+	if m.supEmitted == nil {
+		m.supEmitted = map[string]struct{}{}
+	}
+	if _, seen := m.supEmitted[key]; seen {
+		return false
+	}
+	m.supEmitted[key] = struct{}{}
+	return true
+}
+
+func (m *Manager) appendSupAudit(entry string) {
 	m.supMu.Lock()
 	defer m.supMu.Unlock()
 	m.supAudits = append(m.supAudits, entry)
@@ -171,6 +187,54 @@ func escalateDeniedNudge(ctx context.Context, m *Manager, id domain.SessionID, p
 	return escalated
 }
 
+// SupervisedReportTurnForWorker mandates one orchestrator turn for a
+// done/checkpoint worker report. The worker session only originates the
+// report: the turn always targets the project's active orchestrator,
+// resolved from durable session facts with the same selection the
+// report coordinator uses (newest live orchestrator). Disabled denies
+// closed with no side effects. With no resolvable orchestrator the
+// turn is denied and audited durably against the worker session —
+// never delivered to the worker itself.
+func (m *Manager) SupervisedReportTurnForWorker(ctx context.Context, worker domain.SessionID, project domain.ProjectID, kind supervision.ReportKind) supervision.WakeupPlan {
+	if !m.supervised() {
+		return supervision.WakeupPlan{Decision: denyClosed()}
+	}
+	target, ok, err := m.activeOrchestrator(ctx, project)
+	if err != nil {
+		plan := supervision.WakeupPlan{Decision: denyWakeup("orchestrator resolution failed: " + err.Error())}
+		plan.Audit = "wakeup kind=" + string(kind) + " worker=" + string(worker) + " err=" + err.Error()
+		m.persistSupAudit(ctx, worker, project, plan.Audit)
+		return plan
+	}
+	if !ok {
+		plan := supervision.WakeupPlan{Decision: denyWakeup("no active orchestrator")}
+		plan.Audit = "wakeup kind=" + string(kind) + " worker=" + string(worker) + " err=no-active-orchestrator"
+		m.persistSupAudit(ctx, worker, project, plan.Audit)
+		return plan
+	}
+	return m.SupervisedReportTurn(ctx, target, kind)
+}
+
+// activeOrchestrator resolves the newest live orchestrator session for
+// the project from durable facts, mirroring the report coordinator's
+// selection: orchestrator kind, not terminated, agent not exited.
+func (m *Manager) activeOrchestrator(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return "", false, err
+	}
+	var selected domain.SessionRecord
+	for _, rec := range recs {
+		if rec.Kind != domain.KindOrchestrator || rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+			continue
+		}
+		if selected.ID == "" || rec.CreatedAt.After(selected.CreatedAt) {
+			selected = rec
+		}
+	}
+	return selected.ID, selected.ID != "", nil
+}
+
 // SupervisionPlanStep enforces the round/session/fix-round budget gates
 // before a session step starts. Disabled denies closed.
 func (m *Manager) SupervisionPlanStep(usage supervision.Usage, isFixRound bool, humanException bool) supervision.Decision {
@@ -195,13 +259,20 @@ func (m *Manager) SupervisionAdvance(cur supervision.ChainStep, elapsed time.Dur
 // human-visible needs-input notification carrying the same detail (the
 // durable record that survives a daemon restart via the notification
 // store). A notification persistence failure is folded into the same
-// single entry as a notify_err suffix, never dropped and never
-// recorded twice.
+// single entry as a notify_err suffix, never dropped. Repeated
+// identical events are idempotent: the first recording wins and later
+// duplicates neither append nor re-notify.
 func (m *Manager) persistSupAudit(ctx context.Context, id domain.SessionID, project domain.ProjectID, detail string) {
 	if detail == "" {
 		return
 	}
-	entry := "session=" + string(id) + " " + detail
+	key := "session=" + string(id) + " " + detail
+	// Idempotency first: a repeated identical event neither appends
+	// nor re-notifies, so the durable record stays exactly one.
+	if !m.claimSupAudit(key) {
+		return
+	}
+	entry := key
 	if m.notifications != nil {
 		if err := m.notifications.Notify(ctx, ports.NotificationIntent{
 			Type:      domain.NotificationNeedsInput,
@@ -212,7 +283,7 @@ func (m *Manager) persistSupAudit(ctx context.Context, id domain.SessionID, proj
 			entry += " notify_err=" + err.Error()
 		}
 	}
-	m.recordSupAudit(entry)
+	m.appendSupAudit(entry)
 }
 
 func (m *Manager) supClock() time.Time {
@@ -224,4 +295,10 @@ func (m *Manager) supClock() time.Time {
 
 func denyClosed() supervision.Decision {
 	return supervision.PlanStep(false, supervision.Budget{}, supervision.Usage{}, false, false)
+}
+
+// denyWakeup builds a fail-closed wake-up denial for resolution
+// failures that never reach delivery.
+func denyWakeup(detail string) supervision.Decision {
+	return supervision.Decision{Reason: supervision.ReasonWakeupFailed, Detail: detail}
 }
