@@ -193,6 +193,18 @@ func TestBudgetCaps(t *testing.T) {
 	if d := PlanStep(true, Budget{}, Usage{}, false, false); d.Allow {
 		t.Fatalf("zero budget must deny")
 	}
+	// Negative caller-supplied counters fail closed, one per counter.
+	for _, bad := range []Usage{{Rounds: -1}, {SessionSteps: -1}, {FixRounds: -1}} {
+		if d := PlanStep(true, b, bad, false, false); d.Allow || d.Reason != ReasonBudgetInvalid {
+			t.Fatalf("negative usage %+v = %+v, want invalid-usage deny", bad, d)
+		}
+	}
+	// A negative fix counter denies even with an explicit human
+	// exception: the exception authorizes a third round, never corrupt
+	// input.
+	if d := PlanStep(true, b, Usage{FixRounds: -1}, true, true); d.Allow || d.Reason != ReasonBudgetInvalid {
+		t.Fatalf("negative fix counter with exception = %+v, want invalid-usage deny", d)
+	}
 }
 
 func TestRedLinesNeverAllowed(t *testing.T) {

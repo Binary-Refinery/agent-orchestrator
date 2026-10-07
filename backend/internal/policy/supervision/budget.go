@@ -37,6 +37,12 @@ func PlanStep(enabled bool, budget Budget, usage Usage, isFixRound bool, humanEx
 	if !enabled {
 		return deny(ReasonDisabled, "supervision policy off")
 	}
+	// Fail-closed on caller-supplied counters: a negative counter is a
+	// corrupt input, never a free pass. Each counter is typed so the
+	// audit can name the offending field.
+	if usage.Rounds < 0 || usage.SessionSteps < 0 || usage.FixRounds < 0 {
+		return deny(ReasonBudgetInvalid, "negative budget usage counter")
+	}
 	if budget.MaxRounds <= 0 || usage.Rounds >= budget.MaxRounds {
 		return deny(ReasonBudgetRound, "round budget reached")
 	}

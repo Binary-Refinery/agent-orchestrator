@@ -1,8 +1,13 @@
 // Package supervision implements slice af-ao-supervision-v1: opt-in,
 // default-off supervision guarantees for worker chains.
 //
-// Four parts, all fail-closed and side-effect free (no network, no
-// storage, no daemon wiring in this package):
+// Four parts, all fail-closed. The policy helpers in this package are
+// side-effect free (no network, no storage); the lifecycle package
+// wires them opt-in/default-off/fail-closed into the session paths
+// (see backend/internal/lifecycle/supervision.go): wake-up delivery via
+// the agent messenger with retry plus durable audit, stall nudge via
+// the messenger plus durable human escalation via notifications, chain
+// and budget gates on the session step path.
 //
 //  1. Wake-up guarantee (wakeup.go): a done/checkpoint report mandates
 //     one orchestrator turn. Delivery is retried; terminal failure
@@ -54,6 +59,7 @@ const (
 	ReasonBudgetRound   RejectReason = "supervision_budget_round_exhausted"
 	ReasonBudgetSession RejectReason = "supervision_budget_session_exhausted"
 	ReasonBudgetFixCap  RejectReason = "supervision_budget_fix_cap"
+	ReasonBudgetInvalid RejectReason = "supervision_budget_invalid_usage"
 )
 
 // Decision is the fail-closed outcome of one check.
