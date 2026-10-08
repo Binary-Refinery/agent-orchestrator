@@ -12,7 +12,7 @@ const (
 	RedLineAutoTerminate   RedLineKind = "auto_terminate_worker"
 	RedLineAutoConfirm     RedLineKind = "auto_confirm_finding"
 	RedLineAutoPublishGo   RedLineKind = "auto_publish_go"
-	RedLineHumanGateBypass RedLineKind = "human_gate_bypass"
+	RedLineHumanGateBypass RedLineKind = "human_gate_bypass" //nolint:gosec // G101 false positive: enum name of a forbidden automation, not a credential.
 )
 
 // RedLines lists every forbidden automation for enumeration tests.
