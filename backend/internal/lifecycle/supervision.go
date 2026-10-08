@@ -237,7 +237,7 @@ func (m *Manager) activeOrchestrator(ctx context.Context, project domain.Project
 
 // SupervisionPlanStep enforces the round/session/fix-round budget gates
 // before a session step starts. Disabled denies closed.
-func (m *Manager) SupervisionPlanStep(usage supervision.Usage, isFixRound bool, humanException bool) supervision.Decision {
+func (m *Manager) SupervisionPlanStep(usage supervision.Usage, isFixRound, humanException bool) supervision.Decision {
 	if !m.supervised() {
 		return denyClosed()
 	}

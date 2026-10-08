@@ -33,7 +33,7 @@ type Usage struct {
 // The fix-round cap binds even when round/session budget remains:
 // FixRounds >= 2 denies with ReasonBudgetFixCap unless the caller
 // passes humanException=true for an explicit human override.
-func PlanStep(enabled bool, budget Budget, usage Usage, isFixRound bool, humanException bool) Decision {
+func PlanStep(enabled bool, budget Budget, usage Usage, isFixRound, humanException bool) Decision {
 	if !enabled {
 		return deny(ReasonDisabled, "supervision policy off")
 	}

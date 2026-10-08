@@ -70,14 +70,14 @@ func DeliverWakeup(enabled bool, kind ReportKind, deliver DeliverFunc) WakeupPla
 	}
 	var lastErr string
 	for i := 1; i <= MaxWakeupAttempts; i++ {
-		if err := deliver(); err == nil {
+		err := deliver()
+		if err == nil {
 			return WakeupPlan{
 				Decision: allowWith(ReasonWakeupDelivered, "orchestrator turn delivered"),
 				Attempts: i,
 			}
-		} else {
-			lastErr = err.Error()
 		}
+		lastErr = err.Error()
 		if i < MaxWakeupAttempts {
 			_ = ReasonWakeupRetry
 		}
