@@ -265,6 +265,13 @@ type Manager struct {
 	// adapter via WithUrgentNudgeGate; the default answers false, so an unknown
 	// harness never takes an urgent write while waiting_input.
 	urgentNudgeWaitingInputSafe func(domain.AgentHarness) bool
+	// supervision carries the opt-in af-ao-supervision-v1 enforcement
+	// config. Zero value is disabled: no sends, no notifications.
+	supervision SupervisionConfig
+	// supMu guards supAudits, the durable supervision audit trail.
+	supMu      sync.Mutex
+	supAudits  []string
+	supEmitted map[string]struct{}
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
+	"github.com/aoagents/agent-orchestrator/backend/internal/policy/supervision"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -38,12 +39,21 @@ type outputReader interface {
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
+// StallSupervisor is the opt-in supervision stall boundary the observer
+// drives once per reconciled session. The lifecycle manager implements
+// it; when no supervisor is set (default) the observer performs no
+// stall evaluation at all.
+type StallSupervisor interface {
+	SupervisionStallCheck(ctx context.Context, id domain.SessionID, project domain.ProjectID, sinceProgress time.Duration) supervision.StallCheck
+}
+
 // Observer reconciles stale hook activity from adapter-owned terminal markers.
 type Observer struct {
 	sessions    sessionSource
 	sink        activitySink
 	runtime     outputReader
 	agents      ports.AgentResolver
+	supervisor  StallSupervisor
 	tick        time.Duration
 	staleAfter  time.Duration
 	outputLines int
@@ -92,6 +102,12 @@ func (o *Observer) Start(ctx context.Context) <-chan struct{} {
 	return observe.StartPollLoop(ctx, o.tick, o.Poll, o.logger, "activity observer")
 }
 
+// SetStallSupervisor wires the opt-in supervision stall pass onto the
+// observer. A nil supervisor (default) leaves stall evaluation off.
+func (o *Observer) SetStallSupervisor(s StallSupervisor) {
+	o.supervisor = s
+}
+
 // Poll performs one activity reconciliation pass.
 func (o *Observer) Poll(ctx context.Context) error {
 	sessions, err := o.sessions.ListAllSessions(ctx)
@@ -101,8 +117,24 @@ func (o *Observer) Poll(ctx context.Context) error {
 	now := o.clock()
 	for _, session := range sessions {
 		o.reconcile(ctx, session, now)
+		o.superviseStall(ctx, session, now)
 	}
 	return nil
+}
+
+// superviseStall runs the opt-in supervision stall pass for one session:
+// time-since-progress drives nudge-then-escalation on the supervisor.
+// Unset supervisor, terminated sessions, and sessions without a progress
+// timestamp stay silent.
+func (o *Observer) superviseStall(ctx context.Context, session domain.SessionRecord, now time.Time) {
+	if o.supervisor == nil || session.IsTerminated || session.Activity.LastActivityAt.IsZero() {
+		return
+	}
+	since := now.Sub(session.Activity.LastActivityAt)
+	if since < 0 {
+		return
+	}
+	o.supervisor.SupervisionStallCheck(ctx, session.ID, session.ProjectID, since)
 }
 
 func (o *Observer) reconcile(ctx context.Context, session domain.SessionRecord, now time.Time) {

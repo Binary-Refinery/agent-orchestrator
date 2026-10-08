@@ -572,9 +572,14 @@ func Run() error {
 		return errors.New("wire report delivery: session manager lacks semantic send support")
 	}
 	var reportCoordinator *reportsvc.Coordinator
-	reportSvc := reportsvc.New(reportsvc.Deps{Store: store, OnCreated: func(domain.ReportRecord) {
+	reportSvc := reportsvc.New(reportsvc.Deps{Store: store, OnCreated: func(created domain.ReportRecord) {
 		if reportCoordinator != nil {
 			reportCoordinator.Wake()
+		}
+		// The wake-up result is never dropped silently: a durably
+		// audited delivery failure is surfaced in the daemon log.
+		if plan := superviseReportTurn(ctx, lcStack.LCM, created); plan.Audit != "" {
+			log.Warn("supervision wake-up failed", "session", created.SessionID, "audit", plan.Audit)
 		}
 	}})
 	reportCoordinator = reportsvc.NewCoordinator(reportsvc.CoordinatorDeps{
