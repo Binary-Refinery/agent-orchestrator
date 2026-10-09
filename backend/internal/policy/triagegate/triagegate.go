@@ -6,14 +6,17 @@
 // artifacts are belegt: Review-Report, Triage-Entscheid, and Delta-Status
 // as session/commit facts handed in by the caller. A fact counts as
 // belegt only when observed and bound to a well-formed session/commit
-// reference, and all bound facts must belong to one chain (one session
-// id per session scope, one commit sha per commit scope). Missing,
-// unbound, or inconsistent evidence denies fail-closed with wait+melden
-// (EffectWait): never silently skipped, never counted as done, never
-// passed through. A poll_findings event in an invalid or unknown state
-// follows the same missing-evidence/wait-report invariant instead of
-// passing. The gate is opt-in and default-off (AO_TRIAGE_GATE); disabled
-// denies closed so no finding enters Slice-4 without an explicit opt-in.
+// reference: session ids are opaque non-empty identities, commit ids are
+// immutable hex SHAs (7 to 40 hex chars). All three bound facts must
+// resolve to exactly one chain — the same scope plus the same identity
+// across Review-Report, Triage-Entscheid, and Delta-Status. Missing,
+// unbound, non-SHA, or foreign-chain evidence denies fail-closed with
+// wait+melden (EffectWait): never silently skipped, never counted as
+// done, never passed through. A poll_findings event in an invalid or
+// unknown state follows the same missing-evidence/wait-report invariant
+// instead of passing. The gate is opt-in and default-off (AO_TRIAGE_GATE);
+// disabled denies closed so no finding enters Slice-4 without an explicit
+// opt-in.
 //
 // Red lines (enforced by design, no code path exists for them): no silent
 // skip of missing evidence, no done-without-evidence, no finding
@@ -110,14 +113,23 @@ func EnabledFromEnv(v string) bool {
 // unbound claim can never read as a bound fact.
 var bindingPattern = regexp.MustCompile(`^(session|commit):([^/\s]+)/([^:\s]+):(\S+)$`)
 
+// shaPattern admits only immutable hex SHAs as commit identities: 7 to
+// 40 hex chars (abbreviated to full). Placeholders such as "c-1" or
+// non-hex strings never qualify, so no mutable label can stand in for a
+// commit fact.
+var shaPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
 // parseBinding validates a trimmed ref against the closed grammar and
 // returns its scope (session|commit) plus chain id (session id or commit
-// sha). The slot and fact parts are grammar-checked but carry no routing
+// SHA). The slot and fact parts are grammar-checked but carry no routing
 // meaning, so they are not returned. ok is false for every ref outside
-// the closed grammar.
+// the closed grammar, including commit refs without a hex SHA.
 func parseBinding(ref string) (scope, id string, ok bool) {
 	m := bindingPattern.FindStringSubmatch(strings.TrimSpace(ref))
 	if m == nil {
+		return "", "", false
+	}
+	if m[1] == "commit" && !shaPattern.MatchString(m[2]) {
 		return "", "", false
 	}
 	return m[1], m[2], true
@@ -196,29 +208,32 @@ func (e ChainEvidence) missing() []string {
 	return out
 }
 
-// consistent reports whether all bound artifacts belong to one chain:
-// every session-scoped ref names the same session id and every
-// commit-scoped ref names the same commit sha. Mixed scopes are allowed
-// only while each scope group stays unanimous, so facts from foreign
-// chains can never jointly authorize an entry.
+// consistent reports whether all bound artifacts resolve to exactly one
+// chain: the same scope plus the same identity across Review-Report,
+// Triage-Entscheid, and Delta-Status. Scopes and identities are never
+// tracked separately, so an unconnected session/commit mixture — one
+// session identity beside an unrelated commit identity — reads as
+// foreign and denies. Only one unanimous triple authorizes an entry.
 func (e ChainEvidence) consistent() bool {
-	sessions := map[string]bool{}
-	commits := map[string]bool{}
+	var scope, id string
+	first := true
 	for _, a := range []Artifact{e.ReviewReport, e.TriageDecision, e.DeltaStatus} {
 		if !a.bound() {
 			continue
 		}
-		scope, id, ok := parseBinding(a.Ref)
+		s, i, ok := parseBinding(a.Ref)
 		if !ok {
 			return false
 		}
-		if scope == "session" {
-			sessions[id] = true
-		} else {
-			commits[id] = true
+		if first {
+			scope, id, first = s, i, false
+			continue
+		}
+		if s != scope || i != id {
+			return false
 		}
 	}
-	return len(sessions) <= 1 && len(commits) <= 1
+	return true
 }
 
 // Outcome is the fail-closed result of one entry check.

@@ -7,11 +7,22 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/policy/reactionloop"
 )
 
+// fullSHA is a real immutable commit SHA from this repository's history.
+const fullSHA = "4a6febc7c89994ccd5a423f9c7824da5b4fc65b0"
+
 func boundEvidence() ChainEvidence {
 	return ChainEvidence{
 		ReviewReport:   Artifact{Present: true, Ref: "session:ao-source-48/report:r1"},
 		TriageDecision: Artifact{Present: true, Ref: "session:ao-source-48/decision:d1"},
-		DeltaStatus:    Artifact{Present: true, Ref: "commit:4a6febc/delta:s1"},
+		DeltaStatus:    Artifact{Present: true, Ref: "session:ao-source-48/delta:s1"},
+	}
+}
+
+func boundCommitEvidence() ChainEvidence {
+	return ChainEvidence{
+		ReviewReport:   Artifact{Present: true, Ref: "commit:" + fullSHA + "/report:r1"},
+		TriageDecision: Artifact{Present: true, Ref: "commit:" + fullSHA + "/decision:d1"},
+		DeltaStatus:    Artifact{Present: true, Ref: "commit:" + fullSHA + "/delta:s1"},
 	}
 }
 
@@ -52,17 +63,20 @@ func TestDisabledGateStopsClosed(t *testing.T) {
 }
 
 func TestBoundChainEnters(t *testing.T) {
+	chains := []ChainEvidence{boundEvidence(), boundCommitEvidence()}
 	for _, s := range []reactionloop.State{reactionloop.StateWatching, reactionloop.StateDeltaReview} {
-		out := CheckEntry(true, boundEvidence(), s, reactionloop.EventPollFindings)
-		if !out.Decision.Allow || out.Decision.Reason != ReasonEnter {
-			t.Fatalf("%s entry = %+v, want chain_bound allow", s, out.Decision)
-		}
-		if out.Effect != EffectEnter {
-			t.Fatalf("%s entry effect = %q, want enter", s, out.Effect)
-		}
-		for _, want := range []string{"review-report=", "triage-decision=", "delta-status="} {
-			if !strings.Contains(out.Decision.Detail, want) {
-				t.Fatalf("%s entry detail = %q, want bound ref %q", s, out.Decision.Detail, want)
+		for ci, ev := range chains {
+			out := CheckEntry(true, ev, s, reactionloop.EventPollFindings)
+			if !out.Decision.Allow || out.Decision.Reason != ReasonEnter {
+				t.Fatalf("chain %d %s entry = %+v, want chain_bound allow", ci, s, out.Decision)
+			}
+			if out.Effect != EffectEnter {
+				t.Fatalf("chain %d %s entry effect = %q, want enter", ci, s, out.Effect)
+			}
+			for _, want := range []string{"review-report=", "triage-decision=", "delta-status="} {
+				if !strings.Contains(out.Decision.Detail, want) {
+					t.Fatalf("chain %d %s entry detail = %q, want bound ref %q", ci, s, out.Decision.Detail, want)
+				}
 			}
 		}
 	}
@@ -80,6 +94,11 @@ func TestArbitraryRefsNeverBind(t *testing.T) {
 		"session:ao source/report:r1",
 		"commit:4a6febc",
 		"commit:4a6febc/delta:",
+		"commit:c-1/delta:s1",
+		"commit:xyz/delta:s1",
+		"commit:12345/delta:s1",
+		"commit:4a6febc!/delta:s1",
+		"commit:4a6febc7c89994ccd5a423f9c7824da5b4fc65b00/delta:s1",
 		"http://host/session:ao-source-48/report:r1",
 		"SESSION:ao-source-48/report:r1",
 		"session:ao-source-48:report:r1",
@@ -105,6 +124,9 @@ func TestArbitraryRefsNeverBind(t *testing.T) {
 		if out.Effect != EffectWait {
 			t.Fatalf("ref %q effect = %q, want wait", ref, out.Effect)
 		}
+		if strings.TrimSpace(out.Decision.Detail) == "" {
+			t.Fatalf("ref %q carries no Meldung, wait must meld", ref)
+		}
 	}
 	unobserved := Artifact{Ref: "session:ao-source-48/report:r1"}
 	if unobserved.bound() || !unobserved.malformed() {
@@ -114,6 +136,8 @@ func TestArbitraryRefsNeverBind(t *testing.T) {
 	for _, ref := range []string{
 		"session:ao-source-48/report:r1",
 		"commit:4a6febc/delta:s1",
+		"commit:" + fullSHA + "/delta:s1",
+		"commit:ABCDEF1/delta:s1",
 		"session:s-1/a:b",
 	} {
 		a := Artifact{Present: true, Ref: ref}
@@ -156,15 +180,16 @@ func TestMissingArtifactWaitsInChainOrder(t *testing.T) {
 func TestInconsistentChainWaitsReport(t *testing.T) {
 	full := boundEvidence()
 	foreignSession := Artifact{Present: true, Ref: "session:ao-source-49/report:r9"}
-	commitA := Artifact{Present: true, Ref: "commit:aaaaaaa/delta:s9"}
-	commitB := Artifact{Present: true, Ref: "commit:bbbbbbb/delta:s9"}
+	otherSHA := Artifact{Present: true, Ref: "commit:bbbbbbb/delta:s9"}
+	sessionDelta := Artifact{Present: true, Ref: "commit:" + fullSHA + "/delta:s1"}
 	for _, tc := range []struct {
 		name string
 		ev   ChainEvidence
 	}{
 		{"foreign triage session", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: foreignSession, DeltaStatus: full.DeltaStatus}},
-		{"split commit shas", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: commitA, DeltaStatus: commitB}},
-		{"all bound, sessions split", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: foreignSession, DeltaStatus: commitA}},
+		{"split commit shas", ChainEvidence{ReviewReport: Artifact{Present: true, Ref: "commit:aaaaaaa/report:r9"}, TriageDecision: Artifact{Present: true, Ref: "commit:bbbbbbb/decision:d9"}, DeltaStatus: Artifact{Present: true, Ref: "commit:aaaaaaa/delta:s9"}}},
+		{"unconnected session/commit mix", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: full.TriageDecision, DeltaStatus: sessionDelta}},
+		{"commit beside foreign session", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: foreignSession, DeltaStatus: otherSHA}},
 	} {
 		out := CheckEntry(true, tc.ev, reactionloop.StateWatching, reactionloop.EventPollFindings)
 		if out.Decision.Allow || out.Decision.Reason != ReasonWaitInconsistentChain {
@@ -177,13 +202,8 @@ func TestInconsistentChainWaitsReport(t *testing.T) {
 			t.Fatalf("%s carries no Meldung, wait must meld", tc.name)
 		}
 	}
-	mixed := ChainEvidence{
-		ReviewReport:   Artifact{Present: true, Ref: "session:ao-source-48/report:r1"},
-		TriageDecision: Artifact{Present: true, Ref: "session:ao-source-48/decision:d1"},
-		DeltaStatus:    Artifact{Present: true, Ref: "commit:4a6febc/delta:s1"},
-	}
-	if !mixed.consistent() {
-		t.Fatal("one session id plus one commit sha must read as one chain")
+	if !boundEvidence().consistent() || !boundCommitEvidence().consistent() {
+		t.Fatal("unanimous session and commit triples must each read as one chain")
 	}
 }
 
@@ -195,7 +215,7 @@ func TestInvalidFindingEntryWaitsReport(t *testing.T) {
 		reactionloop.State("unknown"),
 		reactionloop.State(""),
 	} {
-		for _, ev := range []ChainEvidence{boundEvidence(), ChainEvidence{}} {
+		for _, ev := range []ChainEvidence{boundEvidence(), boundCommitEvidence(), ChainEvidence{}} {
 			out := CheckEntry(true, ev, s, reactionloop.EventPollFindings)
 			if out.Decision.Allow || out.Decision.Reason != ReasonInvalidEntry {
 				t.Fatalf("%s+poll_findings = %+v, want invalid_entry deny", s, out.Decision)
@@ -255,6 +275,7 @@ func TestWaitAndStopAlwaysCarryMeldung(t *testing.T) {
 		CheckEntry(false, boundEvidence(), reactionloop.StateWatching, reactionloop.EventPollFindings),
 		CheckEntry(true, ChainEvidence{}, reactionloop.StateWatching, reactionloop.EventPollFindings),
 		CheckEntry(true, ChainEvidence{ReviewReport: Artifact{Present: true, Ref: "r1"}}, reactionloop.StateDeltaReview, reactionloop.EventPollFindings),
+		CheckEntry(true, ChainEvidence{ReviewReport: Artifact{Present: true, Ref: "commit:c-1/delta:s1"}}, reactionloop.StateWatching, reactionloop.EventPollFindings),
 		CheckEntry(true, boundEvidence(), reactionloop.StateTriageProposed, reactionloop.EventPollFindings),
 		AttemptRedLine(RedLineSilentSkip),
 		AttemptRedLine(RedLineDoneNoEvidence),
@@ -277,12 +298,14 @@ func TestNeverSilentSkipOrDone(t *testing.T) {
 	goodA := Artifact{Present: true, Ref: "session:s-1/report:r1"}
 	goodB := Artifact{Present: true, Ref: "session:s-1/decision:d1"}
 	goodC := Artifact{Present: true, Ref: "session:s-1/delta:s1"}
+	commitC := Artifact{Present: true, Ref: "commit:" + fullSHA + "/delta:s1"}
 	foreign := Artifact{Present: true, Ref: "session:s-2/decision:d9"}
-	loose := Artifact{Present: true, Ref: "r1"}
+	loose := Artifact{Present: true, Ref: "c-1"}
 	combos := []ChainEvidence{
 		{},
 		{ReviewReport: goodA},
 		{ReviewReport: goodA, TriageDecision: goodB, DeltaStatus: goodC},
+		{ReviewReport: goodA, TriageDecision: goodB, DeltaStatus: commitC},
 		{ReviewReport: goodA, TriageDecision: foreign, DeltaStatus: goodC},
 		{ReviewReport: loose, TriageDecision: goodB, DeltaStatus: goodC},
 		{ReviewReport: goodA, TriageDecision: goodB, DeltaStatus: Artifact{Present: true, Ref: "commit:c-1/delta:s1"}},
