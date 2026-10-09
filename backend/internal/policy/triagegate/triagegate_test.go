@@ -38,6 +38,7 @@ func TestDisabledGateStopsClosed(t *testing.T) {
 	}{
 		{reactionloop.StateWatching, reactionloop.EventPollFindings},
 		{reactionloop.StateDeltaReview, reactionloop.EventPollFindings},
+		{reactionloop.StateTriageProposed, reactionloop.EventPollFindings},
 		{reactionloop.StateWatching, reactionloop.EventPollGreen},
 	} {
 		out := CheckEntry(false, boundEvidence(), tc.state, tc.event)
@@ -63,6 +64,61 @@ func TestBoundChainEnters(t *testing.T) {
 			if !strings.Contains(out.Decision.Detail, want) {
 				t.Fatalf("%s entry detail = %q, want bound ref %q", s, out.Decision.Detail, want)
 			}
+		}
+	}
+}
+
+func TestArbitraryRefsNeverBind(t *testing.T) {
+	for _, ref := range []string{
+		"r1",
+		"report-1",
+		"ao-source-48/report:r1",
+		"session:/report:r1",
+		"session:ao-source-48/:r1",
+		"session:ao-source-48/report:",
+		"session:ao-source-48/report: ",
+		"session:ao source/report:r1",
+		"commit:4a6febc",
+		"commit:4a6febc/delta:",
+		"http://host/session:ao-source-48/report:r1",
+		"SESSION:ao-source-48/report:r1",
+		"session:ao-source-48:report:r1",
+		"",
+		"   ",
+	} {
+		a := Artifact{Present: true, Ref: ref}
+		if a.bound() {
+			t.Fatalf("ref %q binds, want unbound", ref)
+		}
+		if !a.malformed() && strings.TrimSpace(ref) != "" {
+			t.Fatalf("ref %q with Present is neither bound nor malformed", ref)
+		}
+		ev := ChainEvidence{
+			ReviewReport:   a,
+			TriageDecision: boundEvidence().TriageDecision,
+			DeltaStatus:    boundEvidence().DeltaStatus,
+		}
+		out := CheckEntry(true, ev, reactionloop.StateWatching, reactionloop.EventPollFindings)
+		if out.Decision.Allow || out.Decision.Reason != ReasonWaitUnboundEvidence {
+			t.Fatalf("ref %q = %+v, want wait_unbound_evidence deny", ref, out.Decision)
+		}
+		if out.Effect != EffectWait {
+			t.Fatalf("ref %q effect = %q, want wait", ref, out.Effect)
+		}
+	}
+	unobserved := Artifact{Ref: "session:ao-source-48/report:r1"}
+	if unobserved.bound() || !unobserved.malformed() {
+		t.Fatalf("unobserved ref claim = bound %v malformed %v, want unbound malformed",
+			unobserved.bound(), unobserved.malformed())
+	}
+	for _, ref := range []string{
+		"session:ao-source-48/report:r1",
+		"commit:4a6febc/delta:s1",
+		"session:s-1/a:b",
+	} {
+		a := Artifact{Present: true, Ref: ref}
+		if !a.bound() || a.malformed() {
+			t.Fatalf("ref %q = bound %v malformed %v, want bound", ref, a.bound(), a.malformed())
 		}
 	}
 }
@@ -97,23 +153,59 @@ func TestMissingArtifactWaitsInChainOrder(t *testing.T) {
 	}
 }
 
-func TestUnclearEvidenceStopsRed(t *testing.T) {
+func TestInconsistentChainWaitsReport(t *testing.T) {
 	full := boundEvidence()
+	foreignSession := Artifact{Present: true, Ref: "session:ao-source-49/report:r9"}
+	commitA := Artifact{Present: true, Ref: "commit:aaaaaaa/delta:s9"}
+	commitB := Artifact{Present: true, Ref: "commit:bbbbbbb/delta:s9"}
 	for _, tc := range []struct {
 		name string
 		ev   ChainEvidence
 	}{
-		{"report observed but unbound", ChainEvidence{ReviewReport: Artifact{Present: true}, TriageDecision: full.TriageDecision, DeltaStatus: full.DeltaStatus}},
-		{"report bound but unobserved", ChainEvidence{ReviewReport: Artifact{Ref: "session:x/report:r"}, TriageDecision: full.TriageDecision, DeltaStatus: full.DeltaStatus}},
-		{"decision whitespace ref", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: Artifact{Present: true, Ref: "  "}, DeltaStatus: full.DeltaStatus}},
-		{"delta unobserved ref", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: full.TriageDecision, DeltaStatus: Artifact{Ref: "commit:x/delta:s"}}},
+		{"foreign triage session", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: foreignSession, DeltaStatus: full.DeltaStatus}},
+		{"split commit shas", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: commitA, DeltaStatus: commitB}},
+		{"all bound, sessions split", ChainEvidence{ReviewReport: full.ReviewReport, TriageDecision: foreignSession, DeltaStatus: commitA}},
 	} {
 		out := CheckEntry(true, tc.ev, reactionloop.StateWatching, reactionloop.EventPollFindings)
-		if out.Decision.Allow || out.Decision.Reason != ReasonUnclearEvidence {
-			t.Fatalf("%s = %+v, want unclear_evidence deny", tc.name, out.Decision)
+		if out.Decision.Allow || out.Decision.Reason != ReasonWaitInconsistentChain {
+			t.Fatalf("%s = %+v, want wait_inconsistent_chain deny", tc.name, out.Decision)
 		}
-		if out.Effect != EffectStop {
-			t.Fatalf("%s effect = %q, want stop", tc.name, out.Effect)
+		if out.Effect != EffectWait {
+			t.Fatalf("%s effect = %q, want wait", tc.name, out.Effect)
+		}
+		if strings.TrimSpace(out.Decision.Detail) == "" {
+			t.Fatalf("%s carries no Meldung, wait must meld", tc.name)
+		}
+	}
+	mixed := ChainEvidence{
+		ReviewReport:   Artifact{Present: true, Ref: "session:ao-source-48/report:r1"},
+		TriageDecision: Artifact{Present: true, Ref: "session:ao-source-48/decision:d1"},
+		DeltaStatus:    Artifact{Present: true, Ref: "commit:4a6febc/delta:s1"},
+	}
+	if !mixed.consistent() {
+		t.Fatal("one session id plus one commit sha must read as one chain")
+	}
+}
+
+func TestInvalidFindingEntryWaitsReport(t *testing.T) {
+	for _, s := range []reactionloop.State{
+		reactionloop.StateTriageProposed,
+		reactionloop.StateFixAuthorized,
+		reactionloop.StateCloseoutDrafted,
+		reactionloop.State("unknown"),
+		reactionloop.State(""),
+	} {
+		for _, ev := range []ChainEvidence{boundEvidence(), ChainEvidence{}} {
+			out := CheckEntry(true, ev, s, reactionloop.EventPollFindings)
+			if out.Decision.Allow || out.Decision.Reason != ReasonInvalidEntry {
+				t.Fatalf("%s+poll_findings = %+v, want invalid_entry deny", s, out.Decision)
+			}
+			if out.Effect != EffectWait {
+				t.Fatalf("%s+poll_findings effect = %q, want wait", s, out.Effect)
+			}
+			if strings.TrimSpace(out.Decision.Detail) == "" {
+				t.Fatalf("%s+poll_findings carries no Meldung, wait must meld", s)
+			}
 		}
 	}
 }
@@ -129,9 +221,8 @@ func TestOutOfScopePassesWithoutRuling(t *testing.T) {
 		{reactionloop.StateTriageProposed, reactionloop.EventHumanRejectTriage},
 		{reactionloop.StateFixAuthorized, reactionloop.EventFixCompleted},
 		{reactionloop.StateDeltaReview, reactionloop.EventPollGreen},
-		{reactionloop.StateCloseoutDrafted, reactionloop.EventPollFindings},
 		{reactionloop.StateCloseoutDrafted, reactionloop.EventPollGreen},
-		{reactionloop.State("unknown"), reactionloop.EventPollFindings},
+		{reactionloop.State("unknown"), reactionloop.EventPollGreen},
 		{reactionloop.StateWatching, reactionloop.Event("unknown")},
 	} {
 		out := CheckEntry(true, ChainEvidence{}, tc.state, tc.event)
@@ -163,9 +254,11 @@ func TestWaitAndStopAlwaysCarryMeldung(t *testing.T) {
 	inputs := []Outcome{
 		CheckEntry(false, boundEvidence(), reactionloop.StateWatching, reactionloop.EventPollFindings),
 		CheckEntry(true, ChainEvidence{}, reactionloop.StateWatching, reactionloop.EventPollFindings),
-		CheckEntry(true, ChainEvidence{ReviewReport: Artifact{Present: true}}, reactionloop.StateDeltaReview, reactionloop.EventPollFindings),
+		CheckEntry(true, ChainEvidence{ReviewReport: Artifact{Present: true, Ref: "r1"}}, reactionloop.StateDeltaReview, reactionloop.EventPollFindings),
+		CheckEntry(true, boundEvidence(), reactionloop.StateTriageProposed, reactionloop.EventPollFindings),
 		AttemptRedLine(RedLineSilentSkip),
 		AttemptRedLine(RedLineDoneNoEvidence),
+		AttemptRedLine(RedLineInvalidEntryPass),
 	}
 	for i, out := range inputs {
 		if out.Decision.Allow {
@@ -181,47 +274,56 @@ func TestWaitAndStopAlwaysCarryMeldung(t *testing.T) {
 }
 
 func TestNeverSilentSkipOrDone(t *testing.T) {
-	artifacts := []Artifact{
+	goodA := Artifact{Present: true, Ref: "session:s-1/report:r1"}
+	goodB := Artifact{Present: true, Ref: "session:s-1/decision:d1"}
+	goodC := Artifact{Present: true, Ref: "session:s-1/delta:s1"}
+	foreign := Artifact{Present: true, Ref: "session:s-2/decision:d9"}
+	loose := Artifact{Present: true, Ref: "r1"}
+	combos := []ChainEvidence{
 		{},
-		{Present: true},
-		{Ref: "session:x/fakt:f"},
-		{Present: true, Ref: "session:x/fakt:f"},
-		{Present: true, Ref: "   "},
+		{ReviewReport: goodA},
+		{ReviewReport: goodA, TriageDecision: goodB, DeltaStatus: goodC},
+		{ReviewReport: goodA, TriageDecision: foreign, DeltaStatus: goodC},
+		{ReviewReport: loose, TriageDecision: goodB, DeltaStatus: goodC},
+		{ReviewReport: goodA, TriageDecision: goodB, DeltaStatus: Artifact{Present: true, Ref: "commit:c-1/delta:s1"}},
 	}
-	states := []reactionloop.State{
-		reactionloop.StateWatching,
-		reactionloop.StateDeltaReview,
+	entryStates := []reactionloop.State{reactionloop.StateWatching, reactionloop.StateDeltaReview}
+	otherStates := []reactionloop.State{
 		reactionloop.StateTriageProposed,
 		reactionloop.StateFixAuthorized,
 		reactionloop.StateCloseoutDrafted,
+		reactionloop.State("unknown"),
 	}
-	events := []reactionloop.Event{
-		reactionloop.EventPollFindings,
+	nonFinding := []reactionloop.Event{
 		reactionloop.EventPollGreen,
 		reactionloop.EventPollInconclusive,
 		reactionloop.EventHumanConfirmTriage,
 		reactionloop.EventFixCompleted,
 	}
-	for _, a := range artifacts {
-		for _, b := range artifacts {
-			for _, c := range artifacts {
-				ev := ChainEvidence{ReviewReport: a, TriageDecision: b, DeltaStatus: c}
-				complete := a.bound() && b.bound() && c.bound()
-				for _, s := range states {
-					for _, e := range events {
-						out := CheckEntry(true, ev, s, e)
-						inScope := (s == reactionloop.StateWatching || s == reactionloop.StateDeltaReview) &&
-							e == reactionloop.EventPollFindings
-						if out.Effect == EffectEnter && (!inScope || !complete) {
-							t.Fatalf("enter without bound in-scope chain: ev=%+v %s+%s", ev, s, e)
-						}
-						if out.Decision.Allow && out.Effect != EffectEnter && out.Effect != EffectPass {
-							t.Fatalf("allow without enter/pass: ev=%+v %s+%s = %+v", ev, s, e, out)
-						}
-						if !out.Decision.Allow && out.Effect != EffectWait && out.Effect != EffectStop {
-							t.Fatalf("deny without wait/stop: ev=%+v %s+%s = %+v", ev, s, e, out)
-						}
-					}
+	for ci, ev := range combos {
+		enterOK := ev.malformed() == nil &&
+			ev.missing() == nil &&
+			ev.consistent()
+		for _, s := range entryStates {
+			out := CheckEntry(true, ev, s, reactionloop.EventPollFindings)
+			if enterOK && (out.Effect != EffectEnter || !out.Decision.Allow) {
+				t.Fatalf("combo %d %s must enter: %+v", ci, s, out)
+			}
+			if !enterOK && (out.Decision.Allow || out.Effect != EffectWait) {
+				t.Fatalf("combo %d %s must wait+melden, got %+v", ci, s, out)
+			}
+		}
+		for _, s := range otherStates {
+			out := CheckEntry(true, ev, s, reactionloop.EventPollFindings)
+			if out.Decision.Allow || out.Effect != EffectWait {
+				t.Fatalf("combo %d %s+poll_findings must wait+melden, got %+v", ci, s, out)
+			}
+		}
+		for _, s := range append(append([]reactionloop.State{}, entryStates...), otherStates...) {
+			for _, e := range nonFinding {
+				out := CheckEntry(true, ev, s, e)
+				if !out.Decision.Allow || out.Effect != EffectPass {
+					t.Fatalf("combo %d %s+%s without findings must pass, got %+v", ci, s, e, out)
 				}
 			}
 		}
