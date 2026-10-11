@@ -40,19 +40,11 @@ func (s *Service) PrepareSpawn(ctx context.Context, in SpawnInput) (string, erro
 	if in.Role == "" {
 		in.Role = "worker"
 	}
-	if in.WorkID == "" && in.ParentSessionID != "" {
-		parent, ok, e := s.WorkForSession(ctx, in.ParentSessionID)
-		if e != nil {
-			return "", e
-		}
-		if ok {
-			for _, l := range parent.Launches {
-				if l.SessionID == in.ParentSessionID && l.Role != "orchestrator" && l.Role != "instructor" {
-					in.WorkID = parent.ID
-				}
-			}
-		}
+	workID, err := s.ResolveSpawnWork(ctx, in.ParentSessionID, in.WorkID, in.Role)
+	if err != nil {
+		return workID, err
 	}
+	in.WorkID = workID
 	var w domain.InstructorWork
 	if in.WorkID != "" {
 		var e error
@@ -124,37 +116,67 @@ func (s *Service) PrepareSpawn(ctx context.Context, in SpawnInput) (string, erro
 			return w.ID, err
 		}
 	}
-	role, ok := w.Policy.Roles[in.Role]
+	return w.ID, s.validateRoleSelection(ctx, w, in.Role, in.Harness, in.Model, in.Effort)
+}
+
+// ResolveSpawnWork confines managed non-control delegation to the parent's work.
+// The daemon calls it before its unbound project-orchestrator launch shortcut.
+func (s *Service) ResolveSpawnWork(ctx context.Context, parentID domain.SessionID, requestedWorkID, childRole string) (string, error) {
+	if parentID == "" {
+		return requestedWorkID, nil
+	}
+	parent, managed, err := s.WorkForSession(ctx, parentID)
+	if err != nil || !managed {
+		return requestedWorkID, err
+	}
+	role, _, err := s.sessionRole(ctx, parent, parentID)
+	if err != nil {
+		return parent.ID, err
+	}
+	if role == "orchestrator" || role == "instructor" {
+		return requestedWorkID, nil
+	}
+	if requestedWorkID != "" && requestedWorkID != parent.ID {
+		return parent.ID, invalid("managed non-control parent cannot delegate into another work")
+	}
+	if childRole == "orchestrator" || childRole == "instructor" {
+		return parent.ID, invalid("managed non-control parent cannot delegate a control role")
+	}
+	if err := s.validateManagedResume(ctx, parent, parentID); err != nil {
+		return parent.ID, err
+	}
+	return parent.ID, nil
+}
+
+func (s *Service) validateRoleSelection(ctx context.Context, w domain.InstructorWork, name, harness, model, effort string) error {
+	role, ok := w.Policy.Roles[name]
 	if !ok {
-		return w.ID, invalid(fmt.Sprintf("role %s is not declared in pinned policy", in.Role))
+		return invalid(fmt.Sprintf("role %s is not declared in pinned policy", name))
 	}
-	if role.Harness != "" && role.Harness != in.Harness {
-		return w.ID, invalid(fmt.Sprintf("role %s requires harness %s", in.Role, role.Harness))
+	if role.Harness != "" && role.Harness != harness {
+		return invalid(fmt.Sprintf("role %s requires harness %s", name, role.Harness))
 	}
-	if role.Model != "" && role.Model != in.Model {
-		return w.ID, invalid("launch model does not match pinned role")
+	if role.Model != "" && role.Model != model {
+		return invalid("launch model does not match pinned role")
 	}
-	if in.Model == "" || in.Effort == "" {
-		return w.ID, invalid("managed role needs explicit model and native effort")
+	if model == "" || effort == "" {
+		return invalid("managed role needs explicit model and native effort")
 	}
 	if role.Effort == "maximum" {
-		expected := role.EffortByModel[in.Model]
+		expected := role.EffortByModel[model]
 		if expected == "" {
-			return w.ID, invalid("maximum requires explicit approved native effort mapping for this model")
+			return invalid("maximum requires explicit approved native effort mapping for this model")
 		}
-		if expected != in.Effort {
-			return w.ID, invalid("launch effort does not match approved maximum mapping")
+		if expected != effort {
+			return invalid("launch effort does not match approved maximum mapping")
 		}
-	} else if role.Effort != "configured" && role.Effort != in.Effort {
-		return w.ID, invalid("launch effort does not match pinned role")
+	} else if role.Effort != "configured" && role.Effort != effort {
+		return invalid("launch effort does not match pinned role")
 	}
 	if s.deps.RoleValidator == nil {
-		return w.ID, invalid("native model capability validator unavailable")
+		return invalid("native model capability validator unavailable")
 	}
-	if err := s.deps.RoleValidator.ValidateInstructorAgentConfig(ctx, in.ProjectID, role, in.Harness, in.Model, in.Effort); err != nil {
-		return w.ID, err
-	}
-	return w.ID, nil
+	return s.deps.RoleValidator.ValidateInstructorAgentConfig(ctx, w.ProjectID, role, harness, model, effort)
 }
 
 // ValidateResume enforces managed work authority while preserving unassigned legacy sessions.
@@ -166,6 +188,10 @@ func (s *Service) ValidateResume(ctx context.Context, id domain.SessionID) error
 	if !ok {
 		return nil
 	}
+	return s.validateManagedResume(ctx, w, id)
+}
+
+func (s *Service) validateManagedResume(ctx context.Context, w domain.InstructorWork, id domain.SessionID) error {
 	if err := validateWorkExceptions(w, s.now()); err != nil {
 		return err
 	}
@@ -178,19 +204,51 @@ func (s *Service) ValidateResume(ctx context.Context, id domain.SessionID) error
 	if w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
 		return invalid("work may not resume in current state")
 	}
-	if sessionRole(w, id) == "worker" {
-		return correctiveWorkerAdmission(w)
+	role, adopted, err := s.sessionRole(ctx, w, id)
+	if err != nil {
+		return err
+	}
+	if role == "worker" {
+		if err := correctiveWorkerAdmission(w); err != nil {
+			return err
+		}
+	}
+	if adopted != nil {
+		// Adoption establishes an assignment, not requested/sent/confirmed launch
+		// evidence. Validate the existing persisted native selection directly.
+		return s.validateRoleSelection(ctx, w, role, string(adopted.Harness), adopted.Metadata.Model, adopted.Metadata.Effort)
 	}
 	return nil
 }
 
-func sessionRole(w domain.InstructorWork, id domain.SessionID) string {
+func (s *Service) sessionRole(ctx context.Context, w domain.InstructorWork, id domain.SessionID) (string, *domain.SessionRecord, error) {
 	for i := len(w.Launches) - 1; i >= 0; i-- {
 		if w.Launches[i].SessionID == id {
-			return w.Launches[i].Role
+			role := w.Launches[i].Role
+			if _, declared := w.Policy.Roles[role]; !declared {
+				return "", nil, invalid("managed session launch role is not declared in pinned policy")
+			}
+			return role, nil, nil
 		}
 	}
-	return ""
+	sessions, ok := s.deps.Store.(interface {
+		GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
+	})
+	if !ok {
+		return "", nil, invalid("adopted session identity reader unavailable")
+	}
+	session, found, err := sessions.GetSession(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	if !found || session.ProjectID != w.ProjectID {
+		return "", nil, invalid("adopted session identity is missing or belongs to another project")
+	}
+	role := string(session.Kind)
+	if _, declared := w.Policy.Roles[role]; !declared || role == "" {
+		return "", nil, invalid("adopted session kind is not declared in pinned policy")
+	}
+	return role, &session, nil
 }
 
 // A declared corrective human gate applies at admission, including the interval

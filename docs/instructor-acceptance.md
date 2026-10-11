@@ -5,9 +5,10 @@ listed executable boundary exists in this branch; coverage records source and
 regressions separately, including any pending case. This does not mean
 final-head checks or native provider integration have passed.
 **Partial** identifies a remaining predicate. **Pending** identifies incomplete
-acceptance, including final verification. The final verification record stays
-pending until independent reviewers and the repository's applicable checks
-inspect the frozen publication head.
+acceptance, including final verification. Final acceptance requires independent
+reviewers and the repository's applicable checks to inspect the frozen publication
+head. The live verification record is
+linked below, so a later commit cannot inherit an earlier head's green result.
 
 The baseline is [the consolidated Rulebook](artifaktory/instructor/RULEBOOK.md).
 The work is opt-in; existing unassigned sessions are visible legacy work, not
@@ -31,7 +32,7 @@ retrospectively certified managed execution.
 | E4 | One bounded stall nudge followed by escalation; human waits preserved | Implemented: [Core] Tick tracks ProgressAt/NudgedAt and deadlines; [Core tests] human waits do not spend nudges and worker reports cannot release gates. |
 | E5 | RED stop, two fix rounds and verification budgets enforced | Implemented blocked/stop predicates, default two fix rounds in [Core]/[Engine], and two deep verification passes per immutable source/day in [Verify]; [Core tests] reject third baseline fix and preserve publication gates under delivery uncertainty. Scoped human exceptions can extend fix budget up to ten. |
 | S1 | GUI and Instructor share verified work facts and freshness | Implemented: [API] projects [Core]/[Verify] state, [UI hook] has no local work reducer; [UI tests] expose revoked/failed verification and unknown readback. |
-| S2 | Light Status, change/manual/daily deep verification and cached unchanged evidence | Implemented: [Verify] claims a persistent source/day cache, runs at most two concurrent inspections, and [Discovery] hashes relevant durable native facts; [Runtime evidence tests] cover source changes and ignored observation churn. [Core tests] cover persistent heartbeat/restart/source/day budgets and late-attempt lease fencing; final-head runs remain pending. |
+| S2 | Light Status, change/manual/daily deep verification and cached unchanged evidence | Implemented: [Verify] claims a persistent source/day cache, runs at most two concurrent inspections, and [Discovery] hashes relevant durable native facts; [Runtime evidence tests] cover source changes and ignored observation churn. [Core tests] cover persistent heartbeat/restart/source/day budgets and late-attempt lease fencing; see the final-head verification record below. |
 | S3 | Immutable version/timestamp/revision snapshots, corrections and deltas auditable | Implemented: [Storage] immutable snapshot insert, [Core] revision compare-and-swap, [Catalog] explicit deltas; [Core tests] restart/stale-scope/concurrent-retry tests and [Catalog tests]. |
 | S4 | Complete accessible default Status; explicit delta, no twenty-row coverage limit | Implemented: [Core] lists the full work set, [Catalog] delta is separate, [UI] filters only its presentation; [UI tests] retain the displayed command snapshot across delta display. |
 | S5 | Grouped human-readable table, plan stations, last/current/next, legend and details | Implemented: [UI] groups projects, shows policy phase stations, summary/next, state legend and details/event/evidence panels; [UI tests]. Plan stations are the effective workflow graph, not a separately editable free-form project plan. |
@@ -46,7 +47,7 @@ retrospectively certified managed execution.
 | G1 | Existing guidance plus validated versioned structured repository contract | Implemented [Policy] strict JSON or single ao-policy fenced JSON, canonical structured hash, repo-relative containment and locked baseline; [Traceability tests] load the checked-in policy example. |
 | G2 | Document-defined roles/workflows/checks/gates/evidence and agreed budgets | Implemented roles/transitions/profiles/commands/evidence, fixed argv check timeouts, fix/stall limits and human work exceptions in [Policy]/[Engine]/[Checks]/[Exceptions]; [Verify] enforces two deep passes per immutable source/day. Token/cost caps were not required by the approved Rulebook and are not supported or implied by this schema. |
 | G3 | Defined precedence and locked constraints; invalid policy cannot weaken enforcement | Implemented [Daemon]/[Policy]: explicit repository file, conventional .ao/governance.json, then stored/global policy; invalid present file fails, never silently falls back. Work pins structured hash; [Core tests] launch policy/role checks and [Catalog tests] conflicting command checks. |
-| G4 | Launch/delegation/resume/transition/approval/publication/closeout checked in daemon | Implemented [Launch], [Reviewer guard], [Chat], [Core], [Engine]; [Launch tests], [Core tests] and reviewer scope regressions. Corrective worker admission requires the current human fix grant before spawn, resume or queued execution. [Native Chat admission tests] cover ordinary and relayed empty-key messages, changed authority at queued drain, and unchanged unmanaged behavior; final-head required checks remain pending. |
+| G4 | Launch/delegation/resume/transition/approval/publication/closeout checked in daemon | Implemented [Launch], [Reviewer guard], [Chat], [Core], [Engine]; [Launch tests], [Core tests] and reviewer scope regressions. Corrective worker admission requires the current human fix grant before spawn, resume or queued execution. [Native Chat admission tests] cover ordinary and relayed empty-key messages, changed authority at queued drain, and unchanged unmanaged behavior; see the final-head verification record below. Legacy public session attachment validates persisted native kind and configuration without inventing managed launch provenance. Non-control parent delegation remains bound to its current work and authority, including explicit Work IDs and native orchestrator shortcuts; [Adoption tests] and [Parent guard tests] cover these boundaries. |
 | G5 | Task packet, push/full summaries, SHA, review/triage/fixes/delta/CI bound to final revision | Implemented [Checks], [Discovery], [Evidence], [Traceability], exact SHA/policy/phase binding in [Core]; [Core tests] and [Runtime evidence tests]. A no-change fix still has an explicit verification/delta phase. |
 | G6 | Trusted result verification rather than worker pass assertions | Implemented daemon profile execution and actual stored native review/check facts in [Checks]/[Evidence]; [Core tests] client verified flag rejected and failed native profile produces no accepted proof. |
 | G7 | Independent review chain and required human triage gates enforced | Implemented [Reviewer guard] selection/scope/reuse checks, [Core]/[Engine] grant/evidence checks; [Runtime evidence tests] actual launch/run, negative triage, initial-vs-delta distinction; [Review tests] same-SHA delta cannot reuse old verdict. |
@@ -58,19 +59,20 @@ retrospectively certified managed execution.
 | M3 | Desired/passed/confirmed separate; unsupported confirmation remains unknown | Implemented [Daemon] launch provenance, [Chat] desired vs complete/partial native config report, [UI] separate columns; [Chat tests] partial report cannot confirm retained desired fields, real SQLite reviewer owner regression in [Reviewer config tests]. Provider config readback is not proof of inference reasoning. |
 | M4 | Mandatory unsupported effort fails visibly, no silent lower fallback | Implemented: capability failures, missing/setter-clamped/unknown native ACP choices reject before inference in [Launch]/[ACP]/[Native selection]; [Native selection tests] and [ACP tests]. OpenCode plugin rejects alternate selectable primary agents, wrong model and unavailable/disabled variant; [Plugin tests]. Unsupported ACP read-only sandbox fails before launch/adoption in [Read-only tests]. Managed setter RPC uncertainty blocks the controller in [Chat tests]. |
 | M5 | Native effort uses the provider's own vocabulary and stays distinct from execution limits | Implemented: per-model native choices in [Model catalog]/[Policy] are separate from profile/planning timeouts, fix rounds and verification limits. This branch does not introduce optional token/cost caps or equate an effort word with such a cap. |
-| M6 | Configured independent Codex review/OpenCode worker profile and authorized exceptions | Implemented locked [Policy] baseline and [Exceptions] exact work/snapshot/proposal human approval, reason and at most 24-hour expiry; [Core tests] cover scoped persistence, native capability validation, policy rebinding and expiry at execution/queued continuation boundaries. A work with any valid publication grant refuses later policy rebinding; use a follow-up work. [API tests]/[CLI tests] preserve exact payload; final-head checks remain pending. |
+| M6 | Configured independent Codex review/OpenCode worker profile and authorized exceptions | Implemented locked [Policy] baseline and [Exceptions] exact work/snapshot/proposal human approval, reason and at most 24-hour expiry; [Core tests] cover scoped persistence, native capability validation, policy rebinding and expiry at execution/queued continuation boundaries. A work with any valid publication grant refuses later policy rebinding; use a follow-up work. [API tests]/[CLI tests] preserve exact payload; see the final-head verification record below. |
 | U1 | Existing automation forms/schedules preserved and runs linked to work | Implemented [Automation] actual origin-based WorkID plus governed business acceptance before completion, existing automation form retained; [Automation tests] association survives missing/deleted session, frontend automation regressions. |
 | U2 | Global Instructor UI, filters/details/evidence/gates/commands/model configuration | Implemented [UI], [UI hook], [Policy UI] and [Planning UI], sidebar/route above projects; [UI tests]/[Policy UI tests]/[Planning UI tests]. Strategic history/proposals remain bound to the displayed frozen snapshot and require explicit command/intake admission. |
 | U3 | Real runtime data, all states/resources/settings/build/policy versions visible | Implemented [API] capability/build/policy metadata, real [Inventory]/[Core] projections and [UI]; [API tests]/[UI tests] disabled/unknown/failure states remain honest. Renderer E2E tests use deterministic HTTP fixtures; they do not prove a live native provider. |
-| R1 | Fork includes implementation/contracts/examples/install docs, no secrets/runtime state | Implemented source/schema/examples/docs in this branch; [Operator guide] gives exact global-policy export/load/import steps, including local-version removal and policy precedence. Live GUI settings require that explicit export; credentials/runtime state are per machine. Final publication diff/secret and build review pending. [Install] remains the platform-specific build guide. |
-| R2 | Opt-in capability and non-destructive migration preserve current daemon | Implemented AO_INSTRUCTOR default-off [Daemon]/[API], additive SQLite migrations and existing route behavior; [API tests] disabled mutations and [Reviewer config tests] feature-off reviewer choices. Final full compatibility and migration checks pending. |
-| R3 | Final-head independent review, resolved P0/P1, required local and remote checks recorded | Pending: independent review is running and findings are being resolved. No green final-head or remote-CI claim yet. |
+| R1 | Fork includes implementation/contracts/examples/install docs, no secrets/runtime state | Implemented source/schema/examples/docs in this branch; [Operator guide] gives exact global-policy export/load/import steps, including local-version removal and policy precedence. Live GUI settings require that explicit export; credentials/runtime state are per machine. Publication diff, secret scanning and build results are recorded against the PR head. [Install] remains the platform-specific build guide. |
+| R2 | Opt-in capability and non-destructive migration preserve current daemon | Implemented AO_INSTRUCTOR default-off [Daemon]/[API], additive SQLite migrations and existing route behavior; [API tests] disabled mutations and [Reviewer config tests] feature-off reviewer choices. Full compatibility and migration results are recorded against the PR head. |
+| R3 | Final-head independent review, resolved P0/P1, required local and remote checks recorded | Final acceptance gate: the linked PR records the exact reviewed head, resolved independent findings, applicable check results and remaining native integration limits. A draft or incomplete/failing head is not accepted. |
 
 ## Remaining scope and verification limits
 
 All mandatory implementation predicates above now have executable paths and
 source/regression coverage. Final-head independent review, full checks and
-remote CI remain pending; documentation alone cannot close verification.
+remote CI are separate acceptance gates; documentation alone cannot close
+verification.
 Optional token/cost caps are outside this change and are not enforced.
 
 AO enforces its managed native launch, workflow and admission boundaries. It
@@ -94,12 +96,28 @@ app-server adapter.
 
 ## Final-head verification record
 
-Pending. The independent focused review has run native catalogue/OpenCode,
-effort policy, ACP, typed reviewer launch/scope, partial native readback and the
-real SQLite reviewer-owner callback regression. Those runs occurred during
-implementation and do not replace the frozen-head required build, full tests,
-race, vet, lint, frontend, API/sqlc drift, packaging/platform and remote CI gates.
-Record the exact final commit and each applicable result before publication.
+[PR #14](https://github.com/Binary-Refinery/agent-orchestrator/pull/14) is the
+verification record for this change. Its description identifies the exact
+reviewed commit, independent findings and local results; its Checks tab records
+the remote results for the current head. Keep it a draft until all applicable
+final-head checks pass and no unresolved P0/P1 finding remains. Re-run affected
+checks and independent review after a correction; a prior head's result does not
+certify the correction.
+
+Required gates include build, full tests, race, vet, lint, frontend types and
+unit tests, renderer smoke, API/sqlc drift, desktop packaging, supported-platform
+checks and secret scanning. Record environment-limited local failures alongside
+the corresponding clean-runner results rather than labelling them local passes.
+Do not widen assertions, suppress tests or fabricate native tool confirmation to
+obtain a green result.
+
+Focused tests exercise native catalogue/OpenCode effort policy, ACP, typed
+reviewer launch/scope, partial native readback, actual SQLite reviewer ownership,
+legacy attachment admission and empty-key Chat admission. These are protocol and
+runtime-boundary regression proofs. Authenticated live Codex/OpenCode inference
+and the operator's currently running local daemon are separate deployment
+validation; this workspace has not inspected that daemon or provided such a live
+provider proof.
 
 ## End-to-end acceptance scenarios
 
@@ -183,6 +201,8 @@ persistent, available Instructor.
 [Chat]: ../backend/internal/service/chat/service.go
 [Chat tests]: ../backend/internal/service/chat/native_config_readback_test.go
 [Native Chat admission tests]: ../backend/internal/service/chat/native_worker_admission_test.go
+[Adoption tests]: ../backend/internal/service/instructor/legacy_admission_test.go
+[Parent guard tests]: ../backend/internal/daemon/instructor_parent_admission_test.go
 [Model catalog]: ../backend/internal/adapters/agent/modelcatalog/opencode_models.go
 [Model tests]: ../backend/internal/adapters/agent/modelcatalog/opencode_models_test.go
 [OpenCode adapter]: ../backend/internal/adapters/agent/opencode/opencode.go

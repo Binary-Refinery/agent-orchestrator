@@ -1307,6 +1307,40 @@ func TestInstructorCorrectiveWorkerAdmissionCannotBeatTheHumanFixGate(t *testing
 	}
 }
 
+func TestInstructorAttachedLegacyWorkerCannotBypassCorrectiveOrPausedAdmission(t *testing.T) {
+	for _, state := range []string{"ready", "parked", "blocked", "waiting_human"} {
+		t.Run(state, func(t *testing.T) {
+			f := newInstructorFixture(t)
+			policy := instructorsvc.DefaultPolicy()
+			role := policy.Roles["worker"]
+			role.EffortByModel = map[string]string{"provider/worker": "high"}
+			policy.Roles["worker"] = role
+			work := f.register(t, "attached-legacy-admission", policy)
+			worker, err := f.store.CreateSession(context.Background(), domain.SessionRecord{
+				ProjectID: "governed", Kind: domain.KindWorker, Harness: domain.HarnessOpenCode,
+				Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: f.now},
+				Metadata: domain.SessionMetadata{Model: "provider/worker", Effort: "high"}, CreatedAt: f.now, UpdatedAt: f.now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The public legacy-adoption endpoint calls AttachSession alone; it
+			// cannot manufacture proof that a native managed launch occurred.
+			if err = f.service.AttachSession(context.Background(), work.ID, worker.ID); err != nil {
+				t.Fatal(err)
+			}
+			f.trustedFacts(t, work.ID, func(w *domain.InstructorWork) {
+				w.Phase, w.State, w.SHA, w.FixRounds = "triage", state, immutableSHA, 1
+			})
+			resumeErr := f.service.ValidateResume(context.Background(), worker.ID)
+			queuedErr := f.service.ValidateDispatchAdmission(context.Background(), worker.ID, "ordinary-native-queued-worker-turn")
+			if resumeErr == nil || queuedErr == nil {
+				t.Fatalf("publicly attached worker without launch history bypassed corrective or paused admission: resume=%v queued=%v", resumeErr, queuedErr)
+			}
+		})
+	}
+}
+
 func TestInstructorProgressCannotReleaseAnOperatorPauseOrHumanGate(t *testing.T) {
 	for _, state := range []string{"parked", "waiting_human", "blocked"} {
 		t.Run(state, func(t *testing.T) {

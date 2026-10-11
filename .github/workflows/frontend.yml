@@ -1,8 +1,6 @@
 name: Frontend
 
-# Runs the renderer vitest suite and typechecks the codebase.
-#
-# This job ensures both compiler/type checking passes and vitest tests succeed.
+# Checks the frontend and builds the Linux desktop package with its native runtime.
 
 on:
   push:
@@ -10,6 +8,13 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "backend/**"
+      - "package.json"
+      - "package-lock.json"
+      - "go.work"
+      - "go.work.sum"
+      - "cloud/go.mod"
+      - "cloud/go.sum"
       - ".github/workflows/**"
       - "contracts/cloud/**"
       - "packages/cloud-client/**"
@@ -20,6 +25,55 @@ permissions:
   contents: read
 
 jobs:
+  linux-desktop-package:
+    # Use the supported glibc baseline, as in build-artifacts.yml. This gate runs
+    # the actual package lifecycle, including the native tmux socket smoke, on
+    # a clean host; renderer fixtures alone cannot verify those boundaries.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      AO_RELEASE_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            packages/product-ui/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential bison pkg-config python3
+      - name: Install root dependencies
+        run: npm ci
+        working-directory: .
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install product UI dependencies
+        run: npm ci
+        working-directory: packages/product-ui
+      - name: Forward optional public authentication configuration
+        env:
+          PUBLIC_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
+        run: |
+          if [ -n "$PUBLIC_WORKOS_CLIENT_ID" ]; then
+            printf 'VITE_WORKOS_CLIENT_ID=%s\n' "$PUBLIC_WORKOS_CLIENT_ID" >> "$GITHUB_ENV"
+          fi
+      - name: Build Linux desktop package (no publish)
+        env:
+          AO_DATA_DIR: ${{ runner.temp }}/ao-desktop-package
+        run: npm run build
+
   mac-update-helper:
     runs-on: macos-14
     timeout-minutes: 15

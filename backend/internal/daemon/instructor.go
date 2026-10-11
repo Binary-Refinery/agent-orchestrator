@@ -217,10 +217,15 @@ func (g instructorGovernance) PrepareLaunch(ctx context.Context, cfg ports.Spawn
 	if role == "" {
 		role = string(cfg.Kind)
 	}
+	if cfg.Kind == domain.KindOrchestrator && role != string(domain.KindOrchestrator) {
+		return "", fmt.Errorf("%w: a project orchestrator requires the orchestrator role", instructorsvc.ErrValidation)
+	}
+	workID, err := g.svc.ResolveSpawnWork(ctx, cfg.ParentSessionID, cfg.WorkID, role)
+	if err != nil {
+		return workID, err
+	}
+	cfg.WorkID = workID
 	if cfg.Kind == domain.KindOrchestrator && cfg.WorkID == "" && cfg.AutomationRunID == nil {
-		if role != string(domain.KindOrchestrator) {
-			return "", fmt.Errorf("%w: an unbound project orchestrator requires the orchestrator role", instructorsvc.ErrValidation)
-		}
 		policy, err := g.effectiveProjectPolicy(ctx, project)
 		if err != nil {
 			return "", err

@@ -47,17 +47,22 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 			if w.State == "parked" || w.State == "waiting_human" || w.State == "blocked" {
 				return invalid("native execution submission is not authorized in the current work state")
 			}
+			if containsSession(w, target) {
+				if err := s.validateManagedResume(ctx, w, target); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
-	// An ordinary native turn is not an Instructor dispatch, but a managed
-	// corrective worker still has to satisfy its pinned human admission gate.
+	// Ordinary native turns also obey the current managed work authority,
+	// including sessions adopted without managed launch provenance.
 	w, managed, err := s.WorkForSession(ctx, target)
 	if err != nil {
 		return err
 	}
-	if managed && sessionRole(w, target) == "worker" {
-		return s.ValidateResume(ctx, target)
+	if managed {
+		return s.validateManagedResume(ctx, w, target)
 	}
 	return nil
 }
