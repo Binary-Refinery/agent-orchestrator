@@ -115,7 +115,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID)
+	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID)
+	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.Permissions, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID, cfg.Config)
 	if err != nil {
 		return nil, false, err
 	}
@@ -392,8 +392,10 @@ type opencodeInlineConfig struct {
 }
 
 type opencodeAgentSettings struct {
-	Mode   string `json:"mode,omitempty"`
-	Prompt string `json:"prompt,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Variant string `json:"variant,omitempty"`
 	// Either a ruleset or OpenCode's scalar form, and it outranks every config
 	// layer — which is what makes bypass a true bypass.
 	Permission any `json:"permission,omitempty"`
@@ -420,7 +422,9 @@ func opencodePermissionConfig(mode ports.PermissionMode) map[string]string {
 	return nil
 }
 
-func opencodeConfigEnvPrefix(permissions ports.PermissionMode, inlinePrompt, promptFile, sessionID string) ([]string, string, error) {
+func opencodeConfigEnvPrefix(permissions ports.PermissionMode, inlinePrompt, promptFile, sessionID string, agentConfig ports.AgentConfig) ([]string, string, error) {
+	effort := strings.TrimSpace(agentConfig.Effort)
+	model := strings.TrimSpace(agentConfig.Model)
 	permission := opencodePermissionConfig(permissions)
 	// Bypass goes on the agent, not in the config body. OpenCode's native flag
 	// is an alias of --auto, which still enforces explicit deny rules, and a
@@ -438,6 +442,9 @@ func opencodeConfigEnvPrefix(permissions ports.PermissionMode, inlinePrompt, pro
 	// it at exec time. Writing to OPENCODE_CONFIG instead also keeps a single
 	// answer for precedence: a worktree opencode.json always overrides AO.
 	if promptFile == "" {
+		if effort != "" {
+			return nil, "", fmt.Errorf("%w: OpenCode Terminal UI effort requires an AO agent prompt file", ports.ErrUnsupportedEffort)
+		}
 		if inlinePrompt != "" {
 			return nil, "", fmt.Errorf("opencode: system prompt file required to build agent config")
 		}
@@ -454,7 +461,7 @@ func opencodeConfigEnvPrefix(permissions ports.PermissionMode, inlinePrompt, pro
 		Schema:     "https://opencode.ai/config.json",
 		Permission: permission,
 		Agent: map[string]opencodeAgentSettings{
-			agentName: {Mode: "primary", Prompt: prompt, Permission: agentPermission},
+			agentName: {Mode: "primary", Prompt: prompt, Model: model, Variant: effort, Permission: agentPermission},
 		},
 	}
 	data, err := json.MarshalIndent(config, "", "  ")
@@ -468,7 +475,14 @@ func opencodeConfigEnvPrefix(permissions ports.PermissionMode, inlinePrompt, pro
 	if err := hookutil.AtomicWriteFile(configPath, data, 0o600); err != nil {
 		return nil, "", fmt.Errorf("opencode: write prompt config: %w", err)
 	}
-	return []string{"env", opencodeConfigEnvVar + "=" + configPath}, agentName, nil
+	prefix := []string{"env", opencodeConfigEnvVar + "=" + configPath}
+	if effort != "" {
+		// V1 TUI has no --variant flag, and its model.json memory can outrank
+		// agent.variant. The workspace plugin pins the native variant at the
+		// request boundary, scoped to this generated primary agent only.
+		prefix = append(prefix, "AO_OPENCODE_EFFORT="+effort, "AO_OPENCODE_MODEL="+model, "AO_OPENCODE_AGENT="+agentName)
+	}
+	return prefix, agentName, nil
 }
 
 // ACP permission tiers. OpenCode's session modes are agents, and an agent

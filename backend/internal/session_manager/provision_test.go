@@ -529,3 +529,65 @@ func TestSpawnPermissionPrecedence(t *testing.T) {
 		t.Fatalf("non-spawn resolution changed: %q", got.Permissions)
 	}
 }
+
+func TestResolveOpenCodeUsesExactModelNativeEffort(t *testing.T) {
+	m := &Manager{modelCatalog: tuningCatalog{catalog: ports.AgentModelCatalog{Models: []ports.AgentModelInfo{
+		{ID: "custom/reasoner", Efforts: []string{"minimal", "contributor", "ultra", "default"}, EffortSupport: "supported"},
+		{ID: "custom/other", Efforts: []string{"deep"}, EffortSupport: "supported"},
+		{ID: "custom/unknown", EffortSupport: "unknown"},
+	}}}}
+	project := domain.ProjectConfig{Worker: domain.RoleOverride{Harness: domain.HarnessOpenCode, AgentConfig: domain.AgentConfig{Model: "custom/reasoner", Effort: "contributor"}}}
+	for _, effort := range []string{"contributor", "ultra", "default"} {
+		resolved, err := m.resolveAgentConfig(context.Background(), ports.SpawnConfig{ProjectID: "p", Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, AgentConfig: ports.AgentConfig{Effort: effort}}, project)
+		if err != nil || resolved.Effort != effort || resolved.Model != "custom/reasoner" {
+			t.Fatalf("native %q resolved=%+v err=%v", effort, resolved, err)
+		}
+	}
+	_, err := m.resolveAgentConfig(context.Background(), ports.SpawnConfig{ProjectID: "p", Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, AgentConfig: ports.AgentConfig{Model: "custom/other"}}, project)
+	if !errors.Is(err, ports.ErrUnsupportedEffort) {
+		t.Fatalf("incompatible inherited effort must require explicit correction, got %v", err)
+	}
+	_, err = m.resolveAgentConfig(context.Background(), ports.SpawnConfig{ProjectID: "p", Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, AgentConfig: ports.AgentConfig{Model: "custom/unknown", Effort: "max"}}, project)
+	if !errors.Is(err, ports.ErrModelCapabilitiesUnavailable) {
+		t.Fatalf("unknown variants must not become a universal max, got %v", err)
+	}
+}
+
+func TestOpenCodeFloorRequiresActualModelNativeSupport(t *testing.T) {
+	m := &Manager{modelCatalog: tuningCatalog{catalog: ports.AgentModelCatalog{Models: []ports.AgentModelInfo{
+		{ID: "custom/legacy", Efforts: []string{"low", "max"}, EffortSupport: "supported"},
+		{ID: "custom/native", Efforts: []string{"contributor", "ultra"}, EffortSupport: "supported"},
+	}}}}
+	cfg := ports.SpawnConfig{Harness: domain.HarnessOpenCode, ProjectID: "p"}
+	raised, effort, _, err := m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/legacy"}, false)
+	if err != nil || !raised || effort != "max" {
+		t.Fatalf("native legacy max: raised=%v effort=%q err=%v", raised, effort, err)
+	}
+	raised, effort, _, err = m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/native", Effort: "contributor"}, false)
+	if err != nil || raised || effort != "contributor" {
+		t.Fatalf("explicit native effort: raised=%v effort=%q err=%v", raised, effort, err)
+	}
+	_, _, _, err = m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/native"}, false)
+	if !errors.Is(err, ports.ErrUnsupportedEffort) {
+		t.Fatalf("native max unknown must refuse: %v", err)
+	}
+}
+
+func TestRestoredNativeEffortIsPinnedAndRevalidated(t *testing.T) {
+	for _, harness := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessOpenCode} {
+		t.Run(string(harness), func(t *testing.T) {
+			rec := domain.SessionRecord{ID: "s", ProjectID: "p", Kind: domain.KindWorker, Harness: harness}
+			rec.Metadata.Model, rec.Metadata.Effort = "custom/reasoner", "ultra"
+			project := domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "different", Effort: "low"}}
+			pinned := restoredAgentConfig(rec, project)
+			if pinned.Model != "custom/reasoner" || pinned.Effort != "ultra" {
+				t.Fatalf("durable selection=%+v", pinned)
+			}
+			m := &Manager{modelCatalog: tuningCatalog{catalog: ports.AgentModelCatalog{Models: []ports.AgentModelInfo{{ID: "custom/reasoner", Efforts: []string{"low"}, EffortSupport: "supported"}}}}}
+			_, err := m.validateRestoredAgentConfig(context.Background(), rec, pinned)
+			if !errors.Is(err, ports.ErrUnsupportedEffort) {
+				t.Fatalf("unsupported pinned selection must not downgrade, got %v", err)
+			}
+		})
+	}
+}

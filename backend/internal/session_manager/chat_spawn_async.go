@@ -248,6 +248,10 @@ func (m *Manager) completeAsyncChatSpawn(ctx context.Context, in asyncChatSpawn)
 		m.failAsyncChatSpawn(ctx, id, err)
 		return
 	}
+	if err := m.instructorControllerStarted(ctx, in.cfg, id); err != nil {
+		m.failAsyncChatSpawn(ctx, id, err)
+		return
+	}
 	m.logAsyncChatSpawnStage(id, "mark_ready", stageStarted)
 	m.logAsyncChatSpawnStage(id, "total", totalStarted)
 }
@@ -265,6 +269,13 @@ func (m *Manager) failAsyncChatSpawn(ctx context.Context, id domain.SessionID, c
 	m.logger.Error("spawn: asynchronous chat start failed", "sessionID", id, "error", cause)
 	cleanupCtx, cancel := spawnRollbackContext(ctx)
 	defer cancel()
+	if observer, ok := m.instructor.(interface {
+		SessionLaunchFailed(context.Context, domain.SessionID, error) error
+	}); ok {
+		if err := observer.SessionLaunchFailed(cleanupCtx, id, cause); err != nil {
+			m.logger.Error("spawn: record managed asynchronous failure", "sessionID", id, "error", err)
+		}
+	}
 	m.stopChatBestEffort(cleanupCtx, id)
 	if _, err := m.setProvisionState(cleanupCtx, id, domain.SessionProvisionFailed, cause.Error()); err != nil {
 		m.logger.Error("spawn: record failed start", "sessionID", id, "error", err)
@@ -325,6 +336,10 @@ func (m *Manager) retryFailedChatSpawn(ctx context.Context, rec domain.SessionRe
 	}
 	if rec.Metadata.Permissions != "" {
 		config.Permissions = rec.Metadata.Permissions
+	}
+	config, err = m.validateRestoredAgentConfig(ctx, rec, config)
+	if err != nil {
+		return RestoreResult{}, false, err
 	}
 	cfg := ports.SpawnConfig{
 		ProjectID: rec.ProjectID, IssueID: rec.IssueID, Kind: rec.Kind,

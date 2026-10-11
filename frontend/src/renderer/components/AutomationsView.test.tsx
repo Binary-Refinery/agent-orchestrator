@@ -10,9 +10,11 @@ const mocks = vi.hoisted(() => ({
 	create: vi.fn(),
 	update: vi.fn(),
 	runsError: null as Error | null,
+	runs: [] as Array<Record<string, unknown>>,
+	navigate: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => mocks.navigate }));
 const codexSnapshot = { id: "codex", label: "Codex", installation: { state: "installed", freshness: "fresh" }, authentication: { state: "authorized", freshness: "fresh" }, effectiveReadiness: "ready", usageCount: 3, lastUsedAt: null };
 const cursorSnapshot = { id: "cursor", label: "Cursor", installation: { state: "not_installed", freshness: "fresh" }, authentication: { state: "unknown", freshness: "stale" }, effectiveReadiness: "not_ready", usageCount: 0, lastUsedAt: null };
 vi.mock("../hooks/useAgentReadinessQuery", () => ({ useAgentReadinessQuery: () => ({ data: { agents: [codexSnapshot, cursorSnapshot] } }) }));
@@ -38,7 +40,7 @@ vi.mock("../hooks/useAutomations", () => ({
 	useCreateAutomation: () => ({ mutateAsync: mocks.create, isPending: false, error: null }),
 	useUpdateAutomation: () => ({ mutateAsync: mocks.update, isPending: false, error: null }),
 	useDeleteAutomation: () => ({ mutate: vi.fn(), isPending: false, error: null }),
-	useAutomationRuns: () => ({ data: [], isLoading: false, error: mocks.runsError }),
+	useAutomationRuns: () => ({ data: mocks.runs, isLoading: false, error: mocks.runsError }),
 }));
 
 function renderView(ui: ReactNode = <AutomationsView />) {
@@ -47,7 +49,17 @@ function renderView(ui: ReactNode = <AutomationsView />) {
 }
 
 describe("AutomationsView", () => {
-	beforeEach(() => { mocks.automations = []; mocks.runsError = null; mocks.create.mockReset(); mocks.update.mockReset(); });
+	beforeEach(() => { mocks.automations = []; mocks.runs = []; mocks.runsError = null; mocks.create.mockReset(); mocks.update.mockReset(); mocks.navigate.mockReset(); });
+
+	it("opens an authoritative automation Work association after its session is gone", async () => {
+		mocks.automations = [{ id: "automation-1", projectId: "demo", displayName: "Morning triage", rrule: "FREQ=DAILY", timezone: "UTC", enabled: true }];
+		mocks.runs = [{ id: "run-1", workId: "work-stable", status: "completed", scheduledFor: "2026-10-11T10:00:00Z" }];
+		renderView();
+		await userEvent.click(screen.getByRole("button", { name: /show run history/i }));
+		await userEvent.click(screen.getByRole("button", { name: "Open work" }));
+		expect(mocks.navigate).toHaveBeenCalledWith({ to: "/instructor", search: { workId: "work-stable" } });
+		expect(screen.queryByRole("button", { name: "Open session" })).not.toBeInTheDocument();
+	});
 
 	it("shows a discoverable empty state and create action", () => {
 		renderView();

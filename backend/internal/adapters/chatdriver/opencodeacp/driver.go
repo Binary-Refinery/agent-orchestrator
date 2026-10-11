@@ -22,11 +22,12 @@ import (
 // standing instructions and an explicit bypass-permissions choice.
 func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	return nativeacp.New(plugin, nativeacp.Config{
-		Harness:              domain.HarnessOpenCode,
-		Configure:            configure,
-		SessionOptions:       sessionOptions,
-		PermissionPolicy:     permissionPolicy,
-		ValidateTurnSettings: validateTurnSettings,
+		Harness:               domain.HarnessOpenCode,
+		Configure:             configure,
+		SessionOptions:        sessionOptions,
+		RequireSessionOptions: true,
+		PermissionPolicy:      permissionPolicy,
+		ValidateTurnSettings:  validateTurnSettings,
 	}, log)
 }
 

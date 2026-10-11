@@ -29,6 +29,12 @@ type Store interface {
 	ListLatestAutomationRuns(context.Context, []domain.AutomationID) (map[domain.AutomationID]domain.AutomationRun, error)
 }
 
+// InstructorWorkReader is optional, allowing legacy/off installations to serve
+// ordinary automation history without fabricating a work association.
+type InstructorWorkReader interface {
+	InstructorWorkByOrigin(context.Context, domain.ProjectID, string, string) (domain.InstructorWork, bool, error)
+}
+
 // Deps are the automation service's injectable dependencies.
 type Deps struct {
 	Store Store
@@ -46,11 +52,12 @@ type Deps struct {
 
 // Service owns automation validation and scheduling behavior.
 type Service struct {
-	store   Store
-	spawner SessionSpawner
-	clock   func() time.Time
-	newID   func() string
-	policy  domain.AutomationPolicy
+	store      Store
+	spawner    SessionSpawner
+	clock      func() time.Time
+	newID      func() string
+	policy     domain.AutomationPolicy
+	workReader InstructorWorkReader
 }
 
 // New constructs the daemon-owned automation service.
@@ -61,7 +68,8 @@ func New(deps Deps) *Service {
 	if deps.NewID == nil {
 		deps.NewID = uuid.NewString
 	}
-	return &Service{store: deps.Store, spawner: deps.Spawner, clock: deps.Clock, newID: deps.NewID, policy: deps.Policy}
+	reader, _ := deps.Store.(InstructorWorkReader)
+	return &Service{store: deps.Store, spawner: deps.Spawner, clock: deps.Clock, newID: deps.NewID, policy: deps.Policy, workReader: reader}
 }
 
 // CreateInput is the validated user intent for one recurring definition.
@@ -165,6 +173,9 @@ func (s *Service) Get(ctx context.Context, id domain.AutomationID) (domain.Autom
 		return domain.Automation{}, apierr.Internal("AUTOMATION_READ_FAILED", "Failed to read automation")
 	}
 	if run, found := latest[id]; found {
+		if err := s.enrichWork(ctx, rec.ProjectID, &run); err != nil {
+			return domain.Automation{}, err
+		}
 		rec.LatestRun = &run
 	}
 	return rec, nil
@@ -193,6 +204,9 @@ func (s *Service) List(ctx context.Context, filter domain.AutomationFilter) (dom
 	for i := range page.Items {
 		if run, ok := latest[page.Items[i].ID]; ok {
 			latestRun := run
+			if err := s.enrichWork(ctx, page.Items[i].ProjectID, &latestRun); err != nil {
+				return domain.AutomationPage{}, err
+			}
 			page.Items[i].LatestRun = &latestRun
 		}
 	}
@@ -337,7 +351,8 @@ func (s *Service) AssignAutoReviewer(workerDone, optedOut bool, alreadyAssigned 
 
 // Runs returns one definition's newest-first durable run history.
 func (s *Service) Runs(ctx context.Context, filter domain.AutomationRunFilter) (domain.AutomationRunPage, error) {
-	if _, err := s.Get(ctx, filter.AutomationID); err != nil {
+	automation, err := s.Get(ctx, filter.AutomationID)
+	if err != nil {
 		return domain.AutomationRunPage{}, err
 	}
 	if filter.Limit == 0 {
@@ -350,5 +365,25 @@ func (s *Service) Runs(ctx context.Context, filter domain.AutomationRunFilter) (
 	if err != nil {
 		return domain.AutomationRunPage{}, apierr.Internal("AUTOMATION_RUN_LIST_FAILED", "Failed to list automation runs")
 	}
+	for index := range page.Items {
+		if err := s.enrichWork(ctx, automation.ProjectID, &page.Items[index]); err != nil {
+			return domain.AutomationRunPage{}, err
+		}
+	}
 	return page, nil
+}
+
+func (s *Service) enrichWork(ctx context.Context, projectID domain.ProjectID, run *domain.AutomationRun) error {
+	run.WorkID = ""
+	if s.workReader == nil {
+		return nil
+	}
+	work, found, err := s.workReader.InstructorWorkByOrigin(ctx, projectID, "automation", string(run.ID))
+	if err != nil {
+		return apierr.Internal("AUTOMATION_WORK_READ_FAILED", "Failed to read automation work identity")
+	}
+	if found && work.ProjectID == projectID && work.Source == "automation" && work.SourceRef == string(run.ID) {
+		run.WorkID = work.ID
+	}
+	return nil
 }

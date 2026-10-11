@@ -1075,3 +1075,40 @@ func TestLauncherPreflightEnvPrefixWithMissingBinary(t *testing.T) {
 		t.Fatalf("err = %v, want 'not found'", err)
 	}
 }
+
+type capturingReviewerChat struct {
+	sqliteReviewChatController
+	starts []ReviewerChatStart
+}
+
+func (c *capturingReviewerChat) StartReviewChat(_ context.Context, cfg ReviewerChatStart) (string, error) {
+	c.starts = append(c.starts, cfg)
+	return "native-review-id", nil
+}
+func (c *capturingReviewerChat) RestoreReviewChat(_ context.Context, cfg ReviewerChatStart) (string, error) {
+	c.starts = append(c.starts, cfg)
+	return "native-review-id", nil
+}
+
+func TestTypedReviewerLaunchAndRestoreForwardPinnedNativeModelEffort(t *testing.T) {
+	chat := &capturingReviewerChat{}
+	launcher := NewLauncher(singleReviewerResolver{reviewer: chatReviewAdapter{}}, &fakeRuntime{}, t.TempDir(), WithReviewerChat(chat))
+	spec := launchSpec()
+	spec.Harness = domain.ReviewerCodex
+	spec.AgentConfig = domain.AgentConfig{Model: "approved-model", Effort: "high"}
+	if _, err := launcher.Spawn(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.ProviderConversationID = "native-review-id"
+	if _, err := launcher.RestoreTerminal(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.starts) != 2 {
+		t.Fatalf("typed reviewer starts=%d", len(chat.starts))
+	}
+	for _, start := range chat.starts {
+		if start.Model != "approved-model" || start.Effort != "high" {
+			t.Fatalf("reviewer dropped native selection: %+v", start)
+		}
+	}
+}

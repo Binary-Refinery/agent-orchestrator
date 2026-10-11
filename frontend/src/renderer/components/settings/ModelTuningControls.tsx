@@ -34,40 +34,43 @@ export function useModelTuning(props: Omit<ModelTuningControlsProps, "variant" |
 	const selected =
 		(concreteModel ? models?.find((item) => item.id === concreteModel) : undefined) ??
 		(concreteModel === "" ? models?.find((item) => item.isDefault && isConcreteModelID(item.id)) : undefined);
-	const capabilitiesKnown = models !== undefined;
+	const nativeCatalog = Boolean(models?.some((item) => item.effortSupport));
+	const capabilitiesKnown = models !== undefined && selected?.effortSupport !== "unknown";
+	const capabilitiesUnknown = selected?.effortSupport === "unknown";
 	const invalidEffort = Boolean(effort && capabilitiesKnown && !selected?.efforts?.includes(effort));
 
 	useEffect(() => {
 		if (previousModel.current === model) return;
 		if (!capabilitiesKnown) return;
 		previousModel.current = model;
-		if (effort && !selected?.efforts?.includes(effort)) onEffortReset("");
-	}, [capabilitiesKnown, effort, model, onEffortReset, selected]);
+		if (effort && !nativeCatalog && !selected?.efforts?.includes(effort)) onEffortReset("");
+	}, [capabilitiesKnown, effort, model, nativeCatalog, onEffortReset, selected]);
 
 	useEffect(() => {
-		const valid = !invalidEffort;
+		const valid = !invalidEffort && !(Boolean(effort) && capabilitiesUnknown);
 		if (previousValidity.current === valid) return;
 		previousValidity.current = valid;
 		onValidityChange?.(valid);
-	}, [invalidEffort, onValidityChange]);
-	return { selected, invalidEffort };
+	}, [capabilitiesUnknown, effort, invalidEffort, onValidityChange]);
+	return { selected, invalidEffort, capabilitiesUnknown };
 }
 
 export function ModelTuningControls(props: ModelTuningControlsProps) {
 	const { t } = useTranslation();
 	const { effort, onEffortChange, variant, roleLabel, disabled } = props;
-	const { selected, invalidEffort } = useModelTuning(props);
+	const { selected, invalidEffort, capabilitiesUnknown } = useModelTuning(props);
 	const prefix = roleLabel ? `${roleLabel} ` : "";
-	const warning = invalidEffort
-		? t("settings.models.unsupportedTuning", { role: roleLabel ? `${roleLabel} ` : "" })
+	const warning = capabilitiesUnknown
+		? t("settings.models.effortCapabilitiesUnknown", { defaultValue: "Native effort capabilities are unknown. Refresh the model catalog before choosing or starting with a required effort." })
+		: invalidEffort ? t("settings.models.unsupportedTuning", { role: roleLabel ? `${roleLabel} ` : "" })
 		: null;
 	if (!selected) {
 		return warning && variant === "settings" ? (
 			<p role="alert" className="px-1 text-xs leading-row text-warning">{warning}</p>
 		) : null;
 	}
-	const effortOptions = selected.efforts?.filter((value) => value && value.toLowerCase() !== "default") ?? [];
-	const explicitEffort = effort.toLowerCase() === "default" ? "" : effort;
+	const effortOptions = selected.efforts?.filter((value) => value && (selected.effortSupport === "supported" || value.toLowerCase() !== "default")) ?? [];
+	const explicitEffort = selected.effortSupport !== "supported" && effort.toLowerCase() === "default" ? "" : effort;
 	const effectiveEffort = explicitEffort || (effortOptions.includes(selected.defaultEffort ?? "") ? selected.defaultEffort : "") || "";
 	const effortControl = effortOptions.length ? (
 		<SettingsOptionMenu
@@ -80,7 +83,7 @@ export function ModelTuningControls(props: ModelTuningControlsProps) {
 			triggerClassName={variant === "composer" ? "composer-chip composer-toolbar-option" : "justify-end"}
 		/>
 	) : null;
-	if (!effortControl) return null;
+	if (!effortControl) return warning ? <p role="alert" className="px-1 text-xs leading-row text-warning">{warning}</p> : null;
 	if (variant === "composer") {
 		return effortControl;
 	}

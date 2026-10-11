@@ -26,6 +26,10 @@ type SessionSpawner interface {
 	Kill(context.Context, domain.SessionID) (bool, error)
 }
 
+type managedWorkAcceptance interface {
+	AutomationWorkAccepted(context.Context, domain.SessionID) (managed, accepted bool, err error)
+}
+
 // schedulerStore is deliberately separate from CRUD Store so focused CRUD
 // tests and alternate read adapters need not implement daemon-only operations.
 type schedulerStore interface {
@@ -243,7 +247,7 @@ func (s *Service) completeAndAdoptActive(ctx context.Context, store schedulerSto
 				if lookupErr != nil {
 					problems = append(problems, lookupErr)
 				} else if session.IsTerminated {
-					if _, lookupErr = store.CompleteAutomationRun(ctx, run.ID, now); lookupErr != nil {
+					if lookupErr = s.completeAcceptedRun(ctx, store, run.ID, session.ID, now); lookupErr != nil {
 						problems = append(problems, lookupErr)
 					}
 				}
@@ -285,12 +289,26 @@ func (s *Service) completeAndAdoptActive(ctx context.Context, store schedulerSto
 			}
 		}
 		if session.IsTerminated {
-			if _, err := store.CompleteAutomationRun(ctx, run.ID, now); err != nil {
+			if err := s.completeAcceptedRun(ctx, store, run.ID, session.ID, now); err != nil {
 				problems = append(problems, err)
 			}
 		}
 	}
 	return errors.Join(problems...)
+}
+
+func (s *Service) completeAcceptedRun(ctx context.Context, store schedulerStore, runID domain.AutomationRunID, sessionID domain.SessionID, now time.Time) error {
+	if acceptance, ok := s.spawner.(managedWorkAcceptance); ok {
+		managed, accepted, err := acceptance.AutomationWorkAccepted(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if managed && !accepted {
+			return nil
+		}
+	}
+	_, err := store.CompleteAutomationRun(ctx, runID, now)
+	return err
 }
 
 func (s *Service) rollbackIncompleteLaunch(ctx context.Context, store schedulerStore, run domain.AutomationRun, session domain.SessionRecord, now time.Time) error {

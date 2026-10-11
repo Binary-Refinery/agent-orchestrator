@@ -187,14 +187,14 @@ func automationResponse(rec domain.Automation) AutomationResponse {
 	return AutomationResponse{ID: string(rec.ID), ProjectID: string(rec.ProjectID), DisplayName: rec.DisplayName, Prompt: rec.Prompt, Kind: string(rec.Kind), Harness: string(rec.Harness), RRule: rec.RRuleText, Timezone: rec.Timezone, Enabled: rec.Enabled, NextRunAt: rec.NextRunAt, LastRunAt: rec.LastRunAt, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt, LatestRun: latest}
 }
 func automationRunSummaryResponse(run domain.AutomationRun) AutomationRunSummaryResponse {
-	response := AutomationRunSummaryResponse{ID: string(run.ID), Status: string(run.Status), ScheduledFor: run.ScheduledFor, ErrorMessage: run.ErrorMessage, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt}
+	response := AutomationRunSummaryResponse{ID: string(run.ID), WorkID: run.WorkID, Status: string(run.Status), ScheduledFor: run.ScheduledFor, ErrorMessage: run.ErrorMessage, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt}
 	if run.SessionID != nil {
 		response.SessionID = string(*run.SessionID)
 	}
 	return response
 }
 func automationRunResponse(run domain.AutomationRun) AutomationRunResponse {
-	response := AutomationRunResponse{ID: string(run.ID), AutomationID: string(run.AutomationID), ScheduledFor: run.ScheduledFor, Status: string(run.Status), AttemptCount: run.AttemptCount, ClaimedAt: run.ClaimedAt, LeaseExpiresAt: run.LeaseExpiresAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, ErrorMessage: run.ErrorMessage, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}
+	response := AutomationRunResponse{ID: string(run.ID), WorkID: run.WorkID, AutomationID: string(run.AutomationID), ScheduledFor: run.ScheduledFor, Status: string(run.Status), AttemptCount: run.AttemptCount, ClaimedAt: run.ClaimedAt, LeaseExpiresAt: run.LeaseExpiresAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, ErrorMessage: run.ErrorMessage, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}
 	if run.SessionID != nil {
 		response.SessionID = string(*run.SessionID)
 	}

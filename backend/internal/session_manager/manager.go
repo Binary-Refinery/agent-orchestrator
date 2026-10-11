@@ -379,10 +379,12 @@ type conversationSettingsStore interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	semanticDelivery ports.SemanticDeliveryLedger
+	instructor       InstructorGovernance
+	runtime          runtimeController
+	agents           ports.AgentResolver
+	workspace        ports.Workspace
+	store            Store
 	// agentSwitchReporting supplies the exact authorization snapshot immediately
 	// before each failure-aware store transaction. Nil is fail-closed.
 	agentSwitchReporting ports.AgentSwitchReportingPolicy
@@ -880,7 +882,7 @@ func New(d Deps) *Manager {
 // workspace and runtime, then reports completion to the LCM. If workspace
 // materialization fails the still-seed row is deleted outright; a later failure
 // parks the row as terminated and rolls back what was built.
-func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result domain.SessionRecord, promptLen, systemPromptLen int, returnErr error) {
 	project, err := m.loadProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
@@ -979,9 +981,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			}
 			cfg.AgentConfig = resolved
 			cfg.AgentConfigResolved = true
+			agentConfig = resolved
 		}
 	}
-	if mode == domain.SessionModeTUI && cfg.Harness == domain.HarnessClaudeCode {
+	if mode == domain.SessionModeTUI && (cfg.Harness == domain.HarnessClaudeCode || cfg.Harness == domain.HarnessCodex || cfg.Harness == domain.HarnessOpenCode) {
 		resolved, err := m.resolveAgentConfig(ctx, cfg, project.Config)
 		if err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
@@ -996,8 +999,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// their selectable values in AgentConfig.Mode. Normalize a copy for the
 	// adapter so `ao spawn --agent amp --model high` launches Amp with `--mode
 	// high`, while metadata keeps the original resolved Model for the API view.
-	adapterConfig := normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
-
 	// A chat session runs no agent inside a terminal runtime, so the terminal
 	// prerequisites are not its concern.
 	if mode == domain.SessionModeTUI {
@@ -1021,12 +1022,53 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	var floorAudit *opencodeeffort.AuditEntry
 	if floorEnabled := opencodeeffort.Enabled(); floorEnabled {
 		automation := cfg.AutomationRunID != nil
-		if raised, out, audit, err := opencodeeffort.Apply(true, cfg.Harness, string(cfg.ParentSessionID), cfg.AgentConfig.Effort, automation); err != nil {
+		if raised, out, audit, err := m.applyOpenCodeEffortFloor(ctx, cfg, agentConfig, automation); err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 		} else if raised {
 			cfg.AgentConfig.Effort = out
 			agentConfig.Effort = out
 			floorAudit = audit
+		}
+	}
+	// Resolve before copying the adapter config: the same native selection must
+	// reach Chat, Terminal UI and automation launches.
+	adapterConfig := normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
+
+	if m.instructor == nil && (cfg.WorkID != "" || cfg.WorkRole != "") {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("%w: AO_INSTRUCTOR is disabled", ErrInstructorUnavailable)
+	}
+	if m.instructor != nil {
+		launch := cfg
+		launch.AgentConfig = agentConfig
+		launch.AgentConfigResolved = true
+		workID, err := m.instructor.PrepareLaunch(ctx, launch, project)
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: instructor governance: %w", err)
+		}
+		cfg.WorkID = workID
+		cfg.AgentConfig = agentConfig
+		cfg.AgentConfigResolved = true
+		defer func() {
+			if returnErr != nil && workID != "" {
+				failureCtx, cancel := spawnRollbackContext(ctx)
+				defer cancel()
+				if err := m.instructor.SpawnFailed(failureCtx, workID, returnErr); err != nil {
+					m.logger.Error("record managed launch failure", "workID", workID, "error", err)
+				}
+			}
+		}()
+		if workID != "" {
+			systemPrompt += "\n\nThis controller belongs to durable Instructor work " + workID + ". Report progress and evidence through the Instructor API/CLI. Session exit is not work acceptance; required check profiles, independent review, and exact human gates remain mandatory."
+			if guide, ok := m.instructor.(interface {
+				Instructions(context.Context, string) (string, error)
+			}); ok {
+				instructions, err := guide.Instructions(ctx, workID)
+				if err != nil {
+					return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: governance instructions: %w", err)
+				}
+				systemPrompt += "\n\n" + instructions
+			}
+			systemPromptBytes = len(systemPrompt)
 		}
 	}
 
@@ -1060,6 +1102,21 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 	}
 	id := rec.ID
+	if m.instructor != nil && cfg.WorkID != "" {
+		launch := cfg
+		launch.AgentConfig = agentConfig
+		launch.AgentConfigResolved = true
+		if err := m.instructor.AttachSession(ctx, cfg.WorkID, id, launch); err != nil {
+			if prep != nil {
+				cleanupCtx, cancel := spawnRollbackContext(ctx)
+				m.discardClaimedTaskPreparation(cleanupCtx, prep)
+				cancel()
+			} else {
+				m.rollbackSpawnSeedRowAfterFailure(ctx, id)
+			}
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: attach managed work: %w", err)
+		}
+	}
 	if floorAudit != nil {
 		floorAudit.Session = string(id)
 		opencodeeffort.Log(m.logger, floorAudit)
@@ -1221,6 +1278,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 				return domain.SessionRecord{}, 0, 0, err
 			}
 		}
+		if err := m.instructorControllerStarted(ctx, cfg, id); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: record managed controller: %w", err)
+		}
 		return rec, promptBytes, systemPromptBytes, nil
 	}
 
@@ -1373,6 +1433,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, err
 	}
+	if err := m.instructorControllerStarted(ctx, cfg, id); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: record managed controller: %w", err)
+	}
 	return rec, promptBytes, systemPromptBytes, nil
 }
 
@@ -1401,7 +1464,7 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 	if cfg.EffortOverride {
 		resolved.Effort = requested.Effort
 	}
-	if cfg.Harness != domain.HarnessCodex && cfg.Harness != domain.HarnessClaudeCode {
+	if cfg.Harness != domain.HarnessCodex && cfg.Harness != domain.HarnessClaudeCode && cfg.Harness != domain.HarnessOpenCode {
 		resolved.Effort = ""
 		return resolved, nil
 	}
@@ -1411,14 +1474,14 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 		return resolved, nil
 	}
 	if m.modelCatalog == nil {
-		if validateClaudeModel {
+		if validateClaudeModel || (cfg.Harness == domain.HarnessOpenCode && resolved.Effort != "") {
 			return ports.AgentConfig{}, fmt.Errorf("%w: model catalog is unavailable", ports.ErrModelCapabilitiesUnavailable)
 		}
 		return resolved, nil
 	}
 	catalog, err := m.modelCatalog.Models(ctx, string(cfg.Harness), string(cfg.ProjectID), true)
 	if err != nil {
-		if modelChangedWithoutExplicitEffort {
+		if modelChangedWithoutExplicitEffort && cfg.Harness != domain.HarnessOpenCode {
 			resolved.Effort = ""
 		}
 		if validateClaudeModel || resolved.Effort != "" {
@@ -1447,7 +1510,7 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 	if validateClaudeModel && selected == nil {
 		return ports.AgentConfig{}, fmt.Errorf("%w: model %q is not in the active provider catalog", ErrUnsupportedModel, modelID)
 	}
-	if modelChangedWithoutExplicitEffort {
+	if modelChangedWithoutExplicitEffort && cfg.Harness != domain.HarnessOpenCode {
 		if selected == nil || !containsString(selected.Efforts, base.Effort) {
 			resolved.Effort = ""
 		}
@@ -1458,10 +1521,40 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 	if catalog.Stale || selected == nil {
 		return ports.AgentConfig{}, fmt.Errorf("%w for model %q", ports.ErrModelCapabilitiesUnavailable, modelID)
 	}
+	if cfg.Harness == domain.HarnessOpenCode && selected.EffortSupport == "unknown" {
+		return ports.AgentConfig{}, fmt.Errorf("%w for model %q: native variants were not reported", ports.ErrModelCapabilitiesUnavailable, modelID)
+	}
 	if resolved.Effort != "" && !containsString(selected.Efforts, resolved.Effort) {
 		return ports.AgentConfig{}, fmt.Errorf("%w %q for model %q", ports.ErrUnsupportedEffort, resolved.Effort, modelID)
 	}
 	return resolved, nil
+}
+
+func (m *Manager) applyOpenCodeEffortFloor(ctx context.Context, cfg ports.SpawnConfig, config ports.AgentConfig, automation bool) (bool, string, *opencodeeffort.AuditEntry, error) {
+	if !opencodeeffort.IsOpenCodeHarness(cfg.Harness) {
+		return false, config.Effort, nil, nil
+	}
+	if m.modelCatalog == nil {
+		return false, "", nil, ports.ErrModelCapabilitiesUnavailable
+	}
+	catalog, err := m.modelCatalog.Models(ctx, string(cfg.Harness), string(cfg.ProjectID), true)
+	if err != nil || catalog.Stale {
+		return false, "", nil, fmt.Errorf("%w: OpenCode native variants unavailable", ports.ErrModelCapabilitiesUnavailable)
+	}
+	for _, model := range catalog.Models {
+		if model.ID != config.Model && (config.Model != "" || !model.IsDefault) {
+			continue
+		}
+		if model.EffortSupport == "unknown" {
+			return false, "", nil, ports.ErrModelCapabilitiesUnavailable
+		}
+		raised, out, audit, err := opencodeeffort.Apply(true, cfg.Harness, string(cfg.ParentSessionID), config.Effort, automation, model.Efforts)
+		if err != nil {
+			return false, "", nil, fmt.Errorf("%w: %w", ports.ErrUnsupportedEffort, err)
+		}
+		return raised, out, audit, nil
+	}
+	return false, "", nil, fmt.Errorf("%w for OpenCode model %q", ports.ErrModelCapabilitiesUnavailable, config.Model)
 }
 
 func containsString(values []string, value string) bool {
@@ -1943,11 +2036,20 @@ func effectiveAgentConfig(harness domain.AgentHarness, kind domain.SessionKind, 
 
 func restoredAgentConfig(rec domain.SessionRecord, cfg domain.ProjectConfig) ports.AgentConfig {
 	merged := effectiveAgentConfig(rec.Harness, rec.Kind, cfg)
-	if rec.Harness == domain.HarnessClaudeCode {
+	if rec.Harness == domain.HarnessClaudeCode || rec.Harness == domain.HarnessOpenCode || rec.Harness == domain.HarnessCodex {
 		merged.Model = rec.Metadata.Model
 		merged.Effort = rec.Metadata.Effort
 	}
 	return merged
+}
+
+// validateRestoredAgentConfig preserves durable native choices while checking
+// the current provider capabilities before a replacement controller starts.
+func (m *Manager) validateRestoredAgentConfig(ctx context.Context, rec domain.SessionRecord, cfg ports.AgentConfig) (ports.AgentConfig, error) {
+	return m.resolveAgentConfig(ctx, ports.SpawnConfig{
+		ProjectID: rec.ProjectID, Kind: rec.Kind, Harness: rec.Harness,
+		AgentConfig: cfg, EffortOverride: true,
+	}, domain.ProjectConfig{})
 }
 
 func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
@@ -2482,6 +2584,9 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // runs before any durable session write, so a failure never resurrects the row
 // or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if err := m.validateInstructorResume(ctx, id); err != nil {
+		return RestoreResult{}, err
+	}
 	if err := m.beginAgentOperation(ctx, id, agentOperationRestore); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
 			err = ErrSwitchInProgress
@@ -2643,6 +2748,9 @@ func (m *Manager) recordAgentExited(ctx context.Context, rec domain.SessionRecor
 // identity and never changes the durable terminated flag as an intermediate
 // step.
 func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if err := m.validateInstructorResume(ctx, id); err != nil {
+		return RestoreResult{}, err
+	}
 	if err := m.beginAgentResume(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}
@@ -2792,6 +2900,9 @@ func (m *Manager) relaunchSessionWithPolicy(
 }
 
 func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, reservedGeneration string, historyPolicy domain.SessionInterfaceTransitionHistoryPolicy) (RestoreResult, error) {
+	if err := m.validateInstructorResume(ctx, rec.ID); err != nil {
+		return RestoreResult{}, err
+	}
 	requireNativeHistory = requireNativeHistory || domain.NativeHistoryRequired(ctx) || project.Config.GovernanceManaged
 	if requireNativeHistory {
 		if forceFresh {
@@ -2843,6 +2954,10 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	}
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
+	}
+	agentConfig, err = m.validateRestoredAgentConfig(ctx, rec, agentConfig)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: native model configuration: %w", operation, rec.ID, err)
 	}
 	var env map[string]string
 	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
@@ -3031,6 +3146,25 @@ func (m *Manager) PersistChatModel(ctx context.Context, id domain.SessionID, mod
 	}
 	if !updated {
 		return fmt.Errorf("persist chat model %s: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// PersistChatAgentConfig snapshots desired native settings without rewriting
+// lifecycle state or implying that a provider confirmed inference settings.
+func (m *Manager) PersistChatAgentConfig(ctx context.Context, id domain.SessionID, model, effort string) error {
+	store, ok := m.store.(interface {
+		UpdateSessionModelEffort(context.Context, domain.SessionID, string, string) (bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("persist chat model/effort: store does not support atomic selection updates")
+	}
+	updated, err := store.UpdateSessionModelEffort(ctx, id, strings.TrimSpace(model), strings.TrimSpace(effort))
+	if err != nil {
+		return fmt.Errorf("persist chat model/effort %s: %w", id, err)
+	}
+	if !updated {
+		return fmt.Errorf("persist chat model/effort %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -3580,6 +3714,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 // shutdown, acquiring the project workspace gate so cleanup does not tear down
 // its workspace while restore is in progress.
 func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecord) {
+	if err := m.validateInstructorResume(ctx, rec.ID); err != nil {
+		m.logger.Error("restore-all: instructor governance blocked recovery", "sessionID", rec.ID, "error", err)
+		return
+	}
 	releaseWorkspaceGate := m.acquireWorkspaceGate(rec.ProjectID)
 	defer releaseWorkspaceGate()
 
@@ -4067,10 +4205,7 @@ func (m *Manager) SendWithOptions(ctx context.Context, id domain.SessionID, mess
 	return m.send(ctx, id, message, "", options.AuthoredByUser)
 }
 
-// SendSemantic delivers an internal message and returns only after the target
-// agent has accepted that exact message. Chat uses its native accepted-turn
-// boundary. Supported TUIs correlate the durable id through UserPromptSubmit;
-// a successful pane write alone never satisfies this method.
+// SendSemantic delivers a report message using the session's existing native submission boundary.
 func (m *Manager) SendSemantic(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -4119,6 +4254,68 @@ func (m *Manager) SendSemantic(ctx context.Context, id domain.SessionID, message
 		case <-ticker.C:
 		}
 	}
+}
+
+// SendGovernedSemantic fences governed directives across process and runtime
+// restarts and returns only after the target
+// agent has accepted that exact message. Chat uses its native accepted-turn
+// boundary. Supported TUIs correlate the durable id through UserPromptSubmit;
+// a successful pane write alone never satisfies this method.
+func (m *Manager) SendGovernedSemantic(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	var delivery domain.SemanticDelivery
+	var reserved bool
+	if m.semanticDelivery != nil && clientMessageID != "" {
+		delivery, reserved, err = m.semanticDelivery.GetSemanticDelivery(ctx, id, clientMessageID)
+		if err != nil {
+			return err
+		}
+		if reserved {
+			if delivery.State == "accepted" {
+				return nil
+			}
+			if delivery.State == "pending" && delivery.RuntimeLaunchID == rec.Metadata.RuntimeLaunchID && semanticMessageAccepted(rec, clientMessageID) {
+				if err := m.semanticDelivery.AcceptSemanticDelivery(ctx, id, clientMessageID, delivery.RuntimeLaunchID); err != nil {
+					return fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryUncertain, err)
+				}
+				return nil
+			}
+			if delivery.State != "pending" || !strings.HasPrefix(delivery.RuntimeLaunchID, "chat:") || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
+				return ports.ErrSemanticDeliveryUncertain
+			}
+		}
+	}
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		semantic, ok := m.chat.(interface {
+			RelaySemanticChatTurn(context.Context, domain.SessionID, string, string) (domain.SemanticDelivery, error)
+		})
+		if !ok || m.semanticDelivery == nil || clientMessageID == "" {
+			return ErrSemanticAcceptanceUnsupported
+		}
+		if m.semanticDelivery != nil && clientMessageID != "" && !reserved {
+			_, _, err = m.semanticDelivery.BeginSemanticDelivery(ctx, id, clientMessageID, "chat:"+rec.Metadata.ControllerGeneration)
+			if err != nil {
+				return err
+			}
+		}
+		// The host owns queue deduplication, but a queue entry is not native
+		// acceptance. The typed relay waits for the exact persisted receipt.
+		receipt, sendErr := semantic.RelaySemanticChatTurn(ctx, id, message, clientMessageID)
+		if sendErr != nil {
+			return sendErr
+		}
+		if receipt.SessionID != id || receipt.ClientMessageID != clientMessageID || receipt.State != "accepted" {
+			return ports.ErrSemanticDeliveryUncertain
+		}
+		return nil
+	}
+	return m.sendSemanticTUI(ctx, rec, message, clientMessageID)
 }
 
 func (m *Manager) harnessSemanticAcceptance(harness domain.AgentHarness) bool {

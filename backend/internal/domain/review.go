@@ -29,6 +29,10 @@ type Review struct {
 	// ReviewerLaunchID is the AO runtime generation that owns the live reviewer
 	// pane on this row. It fences delayed hooks from an older replaced reviewer.
 	ReviewerLaunchID string `json:"-"`
+	// LaunchAgentConfig is the configuration passed at the last successful
+	// launch. Nil marks legacy unknown; it is not provider confirmation.
+	LaunchAgentConfig *AgentConfig `json:"launchAgentConfig,omitempty"`
+	LaunchScopeKey    string       `json:"launchScopeKey,omitempty"`
 	// ReviewerActivityState is the latest activity hook reported by the review
 	// pane itself. It is separate from ReviewRun.Status so the UI can distinguish
 	// "review pass exists" from "reviewer is actively working right now".
@@ -72,6 +76,9 @@ type ReviewRun struct {
 	// legacy/single-run delivery.
 	BatchID string          `json:"batchId"`
 	Harness ReviewerHarness `json:"harness"`
+	// ScopeKey identifies the governed review phase; empty retains legacy
+	// per-commit idempotency. A delta pass cannot reuse an earlier phase's verdict.
+	ScopeKey string `json:"scopeKey,omitempty"`
 	// TriggerSource records whether this pass was requested by a user or by the
 	// daemon auto-review coordinator.
 	TriggerSource ReviewTriggerSource `json:"triggerSource" enum:"manual,auto"`

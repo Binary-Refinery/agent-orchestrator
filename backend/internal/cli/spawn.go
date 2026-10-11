@@ -20,6 +20,9 @@ import (
 const maxDisplayNameLen = 100
 
 type spawnOptions struct {
+	work            string
+	workRole        string
+	effort          string
 	project         string
 	standalone      bool
 	harness         string
@@ -39,6 +42,9 @@ type spawnOptions struct {
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
 // POST /api/v1/sessions. The CLI keeps its own copy so it need not import httpd.
 type spawnRequest struct {
+	WorkID          string `json:"workId,omitempty"`
+	WorkRole        string `json:"workRole,omitempty"`
+	Effort          string `json:"effort,omitempty"`
 	ProjectID       string `json:"projectId,omitempty"`
 	IssueID         string `json:"issueId,omitempty"`
 	ParentSessionID string `json:"parentSessionId,omitempty"`
@@ -154,6 +160,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 			req := spawnRequest{
+				WorkID:          strings.TrimSpace(opts.work),
+				WorkRole:        strings.TrimSpace(opts.workRole),
+				Effort:          strings.TrimSpace(opts.effort),
 				ProjectID:       opts.project,
 				IssueID:         opts.issue,
 				ParentSessionID: strings.TrimSpace(os.Getenv("AO_SESSION_ID")),
@@ -217,6 +226,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		}
 		return pflag.NormalizedName(name)
 	})
+	f.StringVar(&opts.work, "work", "", "Existing durable Instructor work to delegate (validated by the daemon)")
+	f.StringVar(&opts.workRole, "work-role", "", "Role declared in the work policy (default: session kind)")
+	f.StringVar(&opts.effort, "effort", "", "Native reasoning effort supported by the chosen model")
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or the current registered repo)")
 	f.BoolVar(&opts.standalone, "standalone", false, "Spawn a projectless worker in an AO-managed plain directory (requires --agent)")
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, gemini, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, kimchi, prime-agent, autohand, omp, fx, unreal-agent (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")

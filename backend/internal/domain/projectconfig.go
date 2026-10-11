@@ -23,6 +23,9 @@ type ProjectConfig struct {
 	// GovernanceManaged reserves lifecycle control for an externally enrolled
 	// controller. It does not authenticate callers or isolate worker processes.
 	GovernanceManaged bool `json:"governanceManaged,omitempty"`
+	// GovernanceFile selects a repo-relative structured Instructor policy. Empty
+	// uses the daemon baseline and an optional .ao/governance.json contract.
+	GovernanceFile string `json:"governanceFile,omitempty"`
 	// CanonicalRepoURL explicitly trusts one upstream repository for PR claims.
 	// Numeric PR references use this repository when set; checkout/push stays on origin.
 	CanonicalRepoURL string `json:"canonicalRepoURL,omitempty"`
@@ -263,6 +266,9 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
 		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
+	}
+	if err := validateRepoRelative(c.GovernanceFile); err != nil {
+		return fmt.Errorf("governanceFile %q: %w", c.GovernanceFile, err)
 	}
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {

@@ -82,4 +82,23 @@ describe("ModelTuningControls", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent("Reviewer model tuning is no longer supported");
 		expect(onValidityChange).toHaveBeenCalledWith(false);
 	});
+	it("keeps incompatible model-native selections visible until the operator corrects them", () => {
+		const change = vi.fn();
+		const native: Model[] = [
+			{ id: "custom/first", label: "First", effortSupport: "supported", efforts: ["contributor"] },
+			{ id: "custom/second", label: "Second", effortSupport: "supported", efforts: ["ultra"] },
+		];
+		const view = render(<ModelTuningControls models={native} model="custom/first" effort="contributor" onEffortChange={change} variant="settings" />);
+		view.rerender(<ModelTuningControls models={native} model="custom/second" effort="contributor" onEffortChange={change} variant="settings" />);
+		expect(change).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent("Choose a supported value");
+	});
+
+	it("shows unknown native capabilities and keeps required tuning invalid", () => {
+		const validity = vi.fn();
+		render(<ModelTuningControls models={[{ id: "custom/legacy", label: "Legacy", effortSupport: "unknown" }]} model="custom/legacy" effort="ultra" onEffortChange={vi.fn()} onValidityChange={validity} variant="settings" />);
+		expect(screen.getByRole("alert")).toHaveTextContent("Native effort capabilities are unknown");
+		expect(validity).toHaveBeenCalledWith(false);
+	});
+
 });

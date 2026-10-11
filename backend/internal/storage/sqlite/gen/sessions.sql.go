@@ -1608,3 +1608,23 @@ func (q *Queries) UpdateSessionModel(ctx context.Context, arg UpdateSessionModel
 	}
 	return result.RowsAffected()
 }
+
+const updateSessionModelEffort = `-- name: UpdateSessionModelEffort :execrows
+UPDATE sessions
+SET model = ?1, effort = ?2
+WHERE id = ?3
+`
+
+type UpdateSessionModelEffortParams struct {
+	Model  string
+	Effort string
+	ID     domain.SessionID
+}
+
+func (q *Queries) UpdateSessionModelEffort(ctx context.Context, arg UpdateSessionModelEffortParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSessionModelEffort, arg.Model, arg.Effort, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

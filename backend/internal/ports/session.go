@@ -18,6 +18,11 @@ var ErrActivityProjectionContention = errors.New("activity projection contention
 type SpawnConfig struct {
 	ProjectID domain.ProjectID
 	IssueID   domain.IssueID
+	// WorkID attaches a new controller to an existing durable Instructor work.
+	// The daemon validates project ownership; it is never an authority grant.
+	WorkID string
+	// WorkRole selects a repository-defined role; empty means the session kind.
+	WorkRole string
 	// AutomationRunID makes one scheduled occurrence idempotent across daemon
 	// restarts. Ordinary interactive spawns leave this unset.
 	AutomationRunID *domain.AutomationRunID

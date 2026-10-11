@@ -88,42 +88,43 @@ type conversation struct {
 	log             *slog.Logger
 	providerScopeID string
 
-	mu                 sync.Mutex
-	sessionID          string
-	capabilities       ports.ChatCapabilities
-	prepared           *preparedTurn
-	activeTurn         string
-	settlingTurn       string
-	turnCancel         context.CancelFunc
-	interrupt          *interruptAttempt
-	pending            map[string]*parkedPermission
-	pendingInputs      map[string]*parkedInput
-	accepted           map[string]persistentInteractionCommand
-	messages           map[string]string
-	thoughts           map[string]string
-	nestedMessages     map[string]nestedMessageState
-	tools              map[string]*toolState
-	turnDiffs          *turnDiffAccumulator
-	turnDiffTurnID     string
-	providerFailure    *ports.ChatEvent
-	configOptions      []ports.ChatConfigOption
-	skills             []ports.ChatSkill
-	skillsKnown        bool
-	closed             bool
-	modeFor            func(ports.PermissionMode) string
-	optionsFor         func(ports.ChatTurnSettings) []SessionOption
-	permissionMode     ports.PermissionMode
-	permissionFor      PermissionPolicy
-	initialPermission  ports.PermissionMode
-	validateSettings   TurnSettingsValidator
-	extensionFor       ClientExtensionHandler
-	extensionMethods   map[string]string
-	legacyModel        bool
-	legacyMode         bool
-	liveState          *persistenthost.ACPState
-	detaching          bool
-	terminalEventID    string
-	ignorePromptResult bool
+	mu                    sync.Mutex
+	sessionID             string
+	capabilities          ports.ChatCapabilities
+	prepared              *preparedTurn
+	activeTurn            string
+	settlingTurn          string
+	turnCancel            context.CancelFunc
+	interrupt             *interruptAttempt
+	pending               map[string]*parkedPermission
+	pendingInputs         map[string]*parkedInput
+	accepted              map[string]persistentInteractionCommand
+	messages              map[string]string
+	thoughts              map[string]string
+	nestedMessages        map[string]nestedMessageState
+	tools                 map[string]*toolState
+	turnDiffs             *turnDiffAccumulator
+	turnDiffTurnID        string
+	providerFailure       *ports.ChatEvent
+	configOptions         []ports.ChatConfigOption
+	requireSessionOptions bool
+	skills                []ports.ChatSkill
+	skillsKnown           bool
+	closed                bool
+	modeFor               func(ports.PermissionMode) string
+	optionsFor            func(ports.ChatTurnSettings) []SessionOption
+	permissionMode        ports.PermissionMode
+	permissionFor         PermissionPolicy
+	initialPermission     ports.PermissionMode
+	validateSettings      TurnSettingsValidator
+	extensionFor          ClientExtensionHandler
+	extensionMethods      map[string]string
+	legacyModel           bool
+	legacyMode            bool
+	liveState             *persistenthost.ACPState
+	detaching             bool
+	terminalEventID       string
+	ignorePromptResult    bool
 	// onAuthRejected corrects cached auth state when the provider rejects the
 	// credential mid-turn. Nil when the binding does not supply one.
 	onAuthRejected        func()
@@ -423,6 +424,7 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	legacyModel := c.legacyModel
 	legacyMode := c.legacyMode
 	configOptions := cloneConfigOptions(c.configOptions)
+	requireSessionOptions := c.requireSessionOptions
 	c.mu.Unlock()
 	if sessionID == "" {
 		return errors.New("ACP session is not open")
@@ -482,6 +484,11 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			return fmt.Errorf("set ACP session option %q: %w", option.ID, err)
 		}
 		c.replaceConfigOptions(resp.ConfigOptions)
+		if requireSessionOptions && (option.ID == "model" || option.ID == "effort") {
+			if err := c.validateNativeSelection(option); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	// A model switch may change the modes an ACP agent offers. Apply a modern
@@ -531,7 +538,31 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		c.permissionMode = ports.NormalizePermissionMode(effectiveApproval)
 		c.mu.Unlock()
 	}
+	if requireSessionOptions {
+		for _, option := range options {
+			if (option.ID == "model" || option.ID == "effort") && option.Value != "" {
+				if err := c.validateNativeSelection(option); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
+}
+
+func (c *conversation) validateNativeSelection(wanted SessionOption) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, option := range c.configOptions {
+		if option.ID != wanted.ID {
+			continue
+		}
+		if option.CurrentReported && option.Current.Select == wanted.Value {
+			return nil
+		}
+		return fmt.Errorf("%w: ACP reported %s=%q instead of required %q", ports.ErrChatConfigOptionInvalid, wanted.ID, option.Current.Select, wanted.Value)
+	}
+	return fmt.Errorf("%w: ACP did not report required %s=%q", ports.ErrChatConfigOptionInvalid, wanted.ID, wanted.Value)
 }
 
 func (c *conversation) StartDeferredTurn(providerTurnID string) error {

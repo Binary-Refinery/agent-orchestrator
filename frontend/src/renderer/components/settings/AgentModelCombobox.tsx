@@ -61,6 +61,7 @@ export function AgentModelCombobox({
 	models,
 	allowCustom,
 	customModelEntry,
+	pinSelection = false,
 	agentLabel,
 	onRefresh,
 	refreshing = false,
@@ -84,6 +85,8 @@ export function AgentModelCombobox({
 	models: AgentModel[];
 	allowCustom?: boolean;
 	customModelEntry?: AgentModelCatalog["customModelEntry"];
+	/** Keep an explicit model identity when role governance requires it. */
+	pinSelection?: boolean;
 	agentLabel?: string;
 	onRefresh?: () => void | Promise<void>;
 	refreshing?: boolean;
@@ -117,7 +120,7 @@ export function AgentModelCombobox({
 		[models],
 	);
 	const explicitModel = isConcreteModelID(value) ? value : "";
-	const { selected: effortModel, invalidEffort } = useModelTuning({
+	const { selected: effortModel, invalidEffort, capabilitiesUnknown } = useModelTuning({
 		models: concreteModels,
 		model: explicitModel,
 		effort: tuning?.effort ?? "",
@@ -125,8 +128,8 @@ export function AgentModelCombobox({
 		onEffortReset: tuning?.onEffortReset,
 		onValidityChange: tuning?.onValidityChange,
 	});
-	const effortOptions = effortModel?.efforts?.filter((effort) => effort && effort.toLowerCase() !== "default") ?? [];
-	const explicitEffort = tuning?.effort?.toLowerCase() === "default" ? "" : tuning?.effort;
+	const effortOptions = effortModel?.efforts?.filter((effort) => effort && (effortModel?.effortSupport === "supported" || effort.toLowerCase() !== "default")) ?? [];
+	const explicitEffort = effortModel?.effortSupport !== "supported" && tuning?.effort?.toLowerCase() === "default" ? "" : tuning?.effort;
 	const showEffort = Boolean(tuning && (effortOptions.length || explicitEffort));
 	const providerEffort = effortModel?.defaultEffort;
 	const defaultEffort = providerEffort && effortOptions.includes(providerEffort) ? providerEffort : "";
@@ -208,10 +211,10 @@ export function AgentModelCombobox({
 			const next = rememberRecentModel(recentScope, modelID);
 			setSessionRecentModels((current) => ({ ...current, [recentScope]: next }));
 		}
-		onChange(modelID === defaultModel ? "" : modelID);
+		onChange(!pinSelection && modelID === defaultModel ? "" : modelID);
 	};
 	const selectCatalogModel = (event: Event, item: IndexedModel) => {
-		const openEffort = Boolean(tuning && item.model.efforts?.some((effort) => effort && effort.toLowerCase() !== "default"));
+		const openEffort = Boolean(tuning && item.model.efforts?.some((effort) => effort && (item.model.effortSupport === "supported" || effort.toLowerCase() !== "default")));
 		if (openEffort) event.preventDefault();
 		selectModel(item.id);
 		setSearch("");
@@ -457,7 +460,7 @@ export function AgentModelCombobox({
 								{effortOptions.map((effort) => (
 									<OptionMenuItem key={effort} role="menuitemradio" aria-checked={effort === effectiveEffort}
 										active={effort === effectiveEffort} onSelect={() => {
-											tuning.onEffortChange(effort === defaultEffort ? "" : effort);
+											tuning.onEffortChange(effort);
 											setEffortMenuOpen(false);
 											setAwaitingEffort(false);
 											setMenuOpen(false);
@@ -471,6 +474,9 @@ export function AgentModelCombobox({
 					</div>
 				)}
 			</DropdownMenuContent>
+			{tuning && capabilitiesUnknown && <p role="alert" className="px-1 text-xs leading-row text-warning">
+				{t("settings.models.effortCapabilitiesUnknown", { defaultValue: "Native effort capabilities are unknown. Refresh the model catalog before choosing or starting with a required effort." })}
+			</p>}
 			{tuning && invalidEffort && <p role="alert" className="px-1 text-xs leading-row text-warning">
 				{t("settings.models.unsupportedTuning", { role: tuning.roleLabel ? `${tuning.roleLabel} ` : "" })}
 			</p>}

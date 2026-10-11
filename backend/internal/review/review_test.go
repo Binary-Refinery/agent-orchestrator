@@ -2731,3 +2731,48 @@ func TestTriggerProceedsNormallyAfterSuccessfulPreflight(t *testing.T) {
 		t.Fatalf("expected 1 review run, got %d", len(store.runs))
 	}
 }
+
+func TestChangedProjectNativeEffortStartsFreshReviewerInsteadOfMislabelingReuse(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	first := &fakeLauncher{handle: "review-mer-1", agentSessionID: "native-low"}
+	low := domain.AgentConfig{Model: "native-model", Effort: "low"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerCodex, AgentConfig: low}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, first)
+	if _, err := eng.Trigger(ctx, "mer-1", "", domain.AgentConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if store.review.LaunchAgentConfig == nil || *store.review.LaunchAgentConfig != low {
+		t.Fatalf("missing actual launch selection: %+v", store.review)
+	}
+	for i := range store.runs {
+		store.runs[i].Status = domain.ReviewRunComplete
+	}
+	high := domain.AgentConfig{Model: "native-model", Effort: "high"}
+	projects.cfg.Reviewers[0].AgentConfig = high
+	second := &fakeLauncher{alive: true, handle: "review-mer-2"}
+	eng = newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha2"), projects, second)
+	if _, err := eng.Trigger(ctx, "mer-1", "", domain.AgentConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if !second.spawned || second.notified || second.gotSpec.AgentConfig != high || second.gotSpec.AgentSessionID != "" {
+		t.Fatalf("changed effort reused an old process: %+v", second)
+	}
+	if store.review.LaunchAgentConfig == nil || *store.review.LaunchAgentConfig != high {
+		t.Fatalf("launch snapshot is not actual high config: %+v", store.review)
+	}
+}
+
+func TestRecoveredReviewerUsesDurableNativeSelectionInsteadOfNewProjectDefaults(t *testing.T) {
+	ctx := context.Background()
+	low := domain.AgentConfig{Model: "native-model", Effort: "contributor"}
+	store := &fakeStore{review: &domain.Review{ID: "review-1", SessionID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerCodex, AgentSessionID: "native-id", ReviewerHandleID: "review-mer-1", LaunchAgentConfig: &low}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerCodex, AgentConfig: domain.AgentConfig{Model: "new-model", Effort: "minimal"}}}}}, launcher)
+	if _, err := eng.RestoreReviewer(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if launcher.gotSpec.AgentConfig != low {
+		t.Fatalf("restore silently changed native selection: %+v", launcher.gotSpec)
+	}
+}

@@ -131,6 +131,13 @@ describe("AgentModelCombobox", () => {
 		expect(onChange).toHaveBeenCalledWith("");
 	});
 
+	it("retains the default model identity when policy requires a concrete selection", async () => {
+		const { onChange } = renderCombobox([{ id: "custom/reasoner", label: "Reasoner", isDefault: true }], { pinSelection: true });
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoner/ }));
+		expect(onChange).toHaveBeenCalledWith("custom/reasoner");
+	});
+
 	it("can clear an override when the agent does not report its model", async () => {
 		const { onChange } = renderCombobox([
 			{ id: "default", label: "Default (recommended)", isDefault: true },
@@ -141,7 +148,7 @@ describe("AgentModelCombobox", () => {
 		expect(onChange).toHaveBeenCalledWith("");
 	});
 
-	it("clears an effort override when the reported agent effort is selected", async () => {
+	it("pins the selected native effort even when it equals the reported default", async () => {
 		const onEffortChange = vi.fn();
 		renderCombobox([
 			{ id: "capable", label: "Capable", isDefault: true, efforts: ["low", "high"], defaultEffort: "low" },
@@ -150,7 +157,7 @@ describe("AgentModelCombobox", () => {
 		act(() => screen.getByRole("menuitem", { name: /Reasoning effort/ }).focus());
 		await userEvent.keyboard("{ArrowRight}");
 		await userEvent.click(screen.getByRole("menuitemradio", { name: "Low" }));
-		expect(onEffortChange).toHaveBeenCalledWith("");
+		expect(onEffortChange).toHaveBeenCalledWith("low");
 	});
 
 	it("does not invent a concrete model for an opaque provider choice", async () => {

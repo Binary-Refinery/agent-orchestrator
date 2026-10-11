@@ -49,9 +49,13 @@ type Service struct {
 	onCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 	// onModelChanged syncs ChatUI's model override (including clearing it) to
 	// session metadata before the next prompt routes or a later TUI rebuild.
-	onModelChanged   func(domain.SessionID, string)
-	stopProviderHost func(context.Context, domain.SessionID) error
-	reports          *reportsvc.Coordinator
+	onModelChanged           func(domain.SessionID, string)
+	onAgentConfigChanged     func(domain.SessionID, string, string) error
+	observeAgentConfig       func(context.Context, domain.SessionID, string, string, string) error
+	validateAgentConfig      func(context.Context, domain.SessionID, string, string) error
+	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
+	stopProviderHost         func(context.Context, domain.SessionID) error
+	reports                  *reportsvc.Coordinator
 
 	mu               sync.RWMutex
 	controllers      map[domain.SessionID]*Controller
@@ -117,6 +121,9 @@ type Options struct {
 	// OnModelChanged syncs ChatUI's model override to session metadata before
 	// the next prompt routes. Nil leaves session metadata unchanged.
 	OnModelChanged func(domain.SessionID, string)
+	// OnAgentConfigChanged atomically records desired model/effort for rebuilds.
+	// It does not mark them provider-confirmed.
+	OnAgentConfigChanged func(domain.SessionID, string, string) error
 	// StopProviderHost destroys current session ownership on explicit teardown,
 	// even if its daemon attachment already failed. Never used by StopAll.
 	StopProviderHost func(context.Context, domain.SessionID) error
@@ -145,6 +152,7 @@ func New(opts Options) *Service {
 		onAccountChanged:       opts.OnAccountChanged,
 		onCodexCapacityChanged: opts.OnCodexCapacityChanged,
 		onModelChanged:         opts.OnModelChanged,
+		onAgentConfigChanged:   opts.OnAgentConfigChanged,
 		stopProviderHost:       opts.StopProviderHost,
 		controllers:            make(map[domain.SessionID]*Controller),
 		ownerControllers:       make(map[domain.ConversationOwner]*Controller),
@@ -573,11 +581,18 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// Conversation settings are durable user choices. Restore the selected
 	// model when rebuilding a controller after a daemon restart; the caller's
 	// session default must not silently replace it.
-	if cfg.ProviderConversationID != "" && conversation.Settings.Model != "" {
+	if cfg.ProviderConversationID != "" && !cfg.PinModelSettings && conversation.Settings.Model != "" {
 		cfg.Model = conversation.Settings.Model
 	}
-	if cfg.ProviderConversationID != "" {
+	if cfg.ProviderConversationID != "" && !cfg.PinModelSettings {
 		cfg.Effort = conversation.Settings.ReasoningEffort
+	}
+	if cfg.ProviderConversationID != "" && cfg.PinModelSettings {
+		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ReasoningEffort = cfg.Effort
+		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
+			return nil, fmt.Errorf("persist pinned native model settings: %w", err)
+		}
 	}
 	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
 		cfg.Permissions = conversation.Settings.ApprovalMode
@@ -761,6 +776,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, owner, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
+	s.mu.RLock()
+	controller.validateSemanticDispatch = s.validateSemanticDispatch
+	s.mu.RUnlock()
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
 		providerTurnID := controller.restoreLiveTurnOwnership(liveRows.Turns)
@@ -1792,10 +1810,7 @@ var ErrConfigOptionsUnsupported = errors.New("chat driver has no session config 
 // Read from the live conversation rather than a table in AO: models are added,
 // renamed, hidden per account and gated by entitlement the provider knows about.
 func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error) {
-	if _, err := s.requireChatSession(ctx, id); err != nil {
-		return nil, domain.ConversationSettings{}, err
-	}
-	controller, err := s.Controller(id)
+	_, controller, err := s.configController(ctx, id)
 	if err != nil {
 		return nil, domain.ConversationSettings{}, err
 	}
@@ -1815,11 +1830,7 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 // the connected conversation so model entitlements and model-dependent choices
 // cannot go stale in an AO table.
 func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]ports.ChatConfigOption, error) {
-	record, err := s.requireChatSession(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	controller, err := s.Controller(id)
+	record, controller, err := s.configController(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1840,11 +1851,7 @@ func (s *Service) SetConfigOption(
 	configID string,
 	value ports.ChatConfigOptionValue,
 ) ([]ports.ChatConfigOption, error) {
-	record, err := s.requireChatSession(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	controller, err := s.Controller(id)
+	record, controller, err := s.configController(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1855,12 +1862,35 @@ func (s *Service) SetConfigOption(
 	controller.configMu.Lock()
 	defer controller.configMu.Unlock()
 	previous := controller.Settings()
+	if s.validateAgentConfig != nil {
+		advertised, err := configurer.ListConfigOptions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for i := range advertised {
+			if advertised[i].ID == configID {
+				advertised[i].Current = value
+			}
+		}
+		candidate, _ := settingsFromConfigOptions(previous, advertised)
+		if err := s.validateAgentConfig(ctx, id, candidate.Model, candidate.ReasoningEffort); err != nil {
+			return nil, err
+		}
+	}
 	options, err := configurer.SetConfigOption(ctx, configID, value)
 	if err != nil {
+		if s.validateAgentConfig != nil {
+			return nil, s.blockAfterConfigFailure(ctx, controller, fmt.Errorf("native configuration outcome is unknown: %w", err))
+		}
 		return nil, err
 	}
 	options = permissionConfigOptions(record.Harness, options)
 	settings, _ := settingsFromConfigOptions(previous, options)
+	if s.validateAgentConfig != nil {
+		if err := s.validateAgentConfig(ctx, id, settings.Model, settings.ReasoningEffort); err != nil {
+			return nil, s.blockAfterConfigFailure(ctx, controller, err)
+		}
+	}
 	if record.Harness == domain.HarnessClaudeCode {
 		// Provider-owned defaults stay implicit so future Claude defaults still apply.
 		if settings.Model == "default" {
@@ -1879,12 +1909,23 @@ func (s *Service) SetConfigOption(
 	}
 	if settings != previous {
 		if err := controller.SetSettings(ctx, settings); err != nil {
-			return nil, err
+			return nil, s.blockAfterConfigFailure(ctx, controller, err)
 		}
 		// The config-options route is how provider-owned pickers (e.g. Claude
 		// Code's model menu) change the model; it must persist the pick the same
 		// way the turn-settings route does.
-		s.persistPickedModel(id, previous, settings)
+		if err := s.persistPickedModel(id, previous, settings); err != nil {
+			return nil, s.blockAfterConfigFailure(ctx, controller, err)
+		}
+	}
+	if s.observeAgentConfig != nil {
+		stage := "native-config-partial"
+		if nativeModelAndEffortReported(options) {
+			stage = "native-config-reported"
+		}
+		if err := s.observeAgentConfig(ctx, id, settings.Model, settings.ReasoningEffort, stage); err != nil {
+			return nil, s.blockAfterConfigFailure(ctx, controller, err)
+		}
 	}
 	return options, nil
 }
@@ -1934,6 +1975,51 @@ func settingsFromConfigOptions(
 		next.ReasoningEffort = ""
 	}
 	return next, next != settings
+}
+
+// A partial native readback may retain requested defaults for persistence, but
+// those retained fields cannot become provider-reported configuration facts.
+func nativeModelAndEffortReported(options []ports.ChatConfigOption) bool {
+	model, effort := false, false
+	for _, option := range options {
+		if !option.CurrentReported || option.Current.Select == "" {
+			continue
+		}
+		model = model || ((option.ID == "model" || option.Category == "model") && option.Current.Select != "default")
+		effort = effort || option.ID == "effort" || option.Category == "thought_level"
+	}
+	return model && effort
+}
+
+// Config menus share session and reviewer routes while preserving their typed
+// controller owners. A review identity must never select its worker controller.
+func (s *Service) configController(ctx context.Context, id domain.SessionID) (domain.SessionRecord, *Controller, error) {
+	record, err := s.requireChatSession(ctx, id)
+	if err == nil {
+		controller, err := s.Controller(id)
+		return record, controller, err
+	}
+	if !errors.Is(err, ports.ErrSessionNotFound) {
+		return domain.SessionRecord{}, nil, err
+	}
+	store, ok := s.store.(interface {
+		GetReviewByID(context.Context, string) (domain.Review, bool, error)
+	})
+	if !ok {
+		return domain.SessionRecord{}, nil, err
+	}
+	review, found, readErr := store.GetReviewByID(ctx, string(id))
+	if readErr != nil {
+		return domain.SessionRecord{}, nil, readErr
+	}
+	if !found {
+		return domain.SessionRecord{}, nil, err
+	}
+	if review.InterfaceMode != domain.ReviewerInterfaceChat {
+		return domain.SessionRecord{}, nil, ErrNotChatMode
+	}
+	controller, readErr := s.ControllerForOwner(domain.ReviewConversationOwner(review.ID))
+	return domain.SessionRecord{ID: id, ProjectID: review.ProjectID, Kind: domain.KindWorker, Harness: domain.AgentHarness(review.Harness), Mode: domain.SessionModeChat}, controller, readErr
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.
@@ -2005,6 +2091,31 @@ func (s *Service) RetryTurn(
 	return result, nil
 }
 
+// SetAgentConfigValidator installs the managed-work guard before provider
+// model/effort mutations. Wire it once during daemon startup before recovery.
+func (s *Service) SetAgentConfigValidator(validator func(context.Context, domain.SessionID, string, string) error) {
+	s.validateAgentConfig = validator
+}
+
+// SetAgentConfigObserver observes successful requested-setting mutations. Stage
+// "desired" means next-turn intent; "native-config-reported" means a provider
+// RPC returned its config state. Neither proves actual inference settings.
+func (s *Service) SetAgentConfigObserver(observer func(context.Context, domain.SessionID, string, string, string) error) {
+	s.observeAgentConfig = observer
+}
+
+// blockAfterConfigFailure refuses all further local dispatches before retiring
+// the exact controller generation. A failed termination is not proof it died.
+func (s *Service) blockAfterConfigFailure(ctx context.Context, controller *Controller, cause error) error {
+	blocked := fmt.Errorf("chat controller blocked after configuration failure; restart required: %w", cause)
+	controller.mu.Lock()
+	controller.configFailure = blocked
+	controller.mu.Unlock()
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return errors.Join(blocked, controller.Terminate(stopCtx))
+}
+
 // SetTurnSettings records the provider choices for this session's next turn.
 //
 // Applied per turn, so nothing restarts: the running turn keeps whatever it was
@@ -2014,10 +2125,7 @@ func (s *Service) SetTurnSettings(
 	id domain.SessionID,
 	settings domain.ConversationSettings,
 ) (domain.ConversationSettings, error) {
-	if _, err := s.requireChatSession(ctx, id); err != nil {
-		return domain.ConversationSettings{}, err
-	}
-	controller, err := s.Controller(id)
+	_, controller, err := s.configController(ctx, id)
 	if err != nil {
 		return domain.ConversationSettings{}, err
 	}
@@ -2026,21 +2134,38 @@ func (s *Service) SetTurnSettings(
 	// The turn-settings endpoint does not own provider session mode choices.
 	previous := controller.Settings()
 	settings.OpenCodeMode = previous.OpenCodeMode
+	if s.validateAgentConfig != nil {
+		if err := s.validateAgentConfig(ctx, id, settings.Model, settings.ReasoningEffort); err != nil {
+			return domain.ConversationSettings{}, err
+		}
+	}
 	if err := controller.SetSettings(ctx, settings); err != nil {
 		return domain.ConversationSettings{}, err
 	}
-	s.persistPickedModel(id, previous, settings)
+	if err := s.persistPickedModel(id, previous, settings); err != nil {
+		return domain.ConversationSettings{}, s.blockAfterConfigFailure(ctx, controller, err)
+	}
+	if s.observeAgentConfig != nil {
+		if err := s.observeAgentConfig(ctx, id, settings.Model, settings.ReasoningEffort, "desired"); err != nil {
+			return domain.ConversationSettings{}, s.blockAfterConfigFailure(ctx, controller, err)
+		}
+	}
 	return controller.Settings(), nil
 }
 
 // persistPickedModel keeps session metadata in sync with the Chat model choice,
 // including clearing an override before a later TUI rebuild.
-func (s *Service) persistPickedModel(id domain.SessionID, previous, next domain.ConversationSettings) {
-	model := strings.TrimSpace(next.Model)
-	if model == strings.TrimSpace(previous.Model) || s.onModelChanged == nil {
-		return
+func (s *Service) persistPickedModel(id domain.SessionID, previous, next domain.ConversationSettings) error {
+	model, effort := strings.TrimSpace(next.Model), strings.TrimSpace(next.ReasoningEffort)
+	if s.onAgentConfigChanged != nil && (model != strings.TrimSpace(previous.Model) || effort != strings.TrimSpace(previous.ReasoningEffort)) {
+		if err := s.onAgentConfigChanged(id, model, effort); err != nil {
+			return fmt.Errorf("persist native model/effort: %w", err)
+		}
 	}
-	s.onModelChanged(id, model)
+	if model != strings.TrimSpace(previous.Model) && s.onModelChanged != nil {
+		s.onModelChanged(id, model)
+	}
+	return nil
 }
 
 // RelayChatTurn delivers a message AO is carrying for someone else.

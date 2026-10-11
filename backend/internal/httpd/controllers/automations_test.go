@@ -77,3 +77,17 @@ func TestAutomationsDeleteReturnsNoContent(t *testing.T) {
 		t.Fatalf("status=%d deleted=%q body=%s", rec.Code, service.deleted, rec.Body.String())
 	}
 }
+
+func TestAutomationRunResponsesExposeAuthoritativeOptionalWorkIdentity(t *testing.T) {
+	run := domain.AutomationRun{ID: "run", WorkID: "work"}
+	if got := automationRunResponse(run); got.WorkID != "work" || got.SessionID != "" {
+		t.Fatalf("run response=%+v", got)
+	}
+	if got := automationRunSummaryResponse(run); got.WorkID != "work" || got.SessionID != "" {
+		t.Fatalf("summary response=%+v", got)
+	}
+	body, err := json.Marshal(automationRunResponse(domain.AutomationRun{ID: "legacy"}))
+	if err != nil || strings.Contains(string(body), "workId") {
+		t.Fatalf("fabricated legacy association=%s err=%v", body, err)
+	}
+}

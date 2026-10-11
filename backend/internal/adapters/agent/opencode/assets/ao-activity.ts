@@ -11,8 +11,8 @@
 //
 // The opencode-native session id (and prompt/model where known) is piped to the
 // hook command as JSON on stdin, run with cwd set to the worktree so AO can
-// correlate the opencode session to its AO session. Every invocation is
-// best-effort and must never crash the user's opencode session: a missing `ao`
+// correlate the opencode session to its AO session.
+// Activity reporting is best-effort and must never crash the user's opencode session: a missing `ao`
 // binary is a guarded no-op (`Bun.which`), and spawn exceptions, non-zero
 // exit codes, and malformed event payloads are caught and surfaced through
 // opencode's structured logger (client.app.log) for diagnosis — never rethrown.
@@ -38,6 +38,13 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
   // trimmed by the host runtime.
   const launchID: string = (process.env.AO_RUNTIME_LAUNCH_ID ?? "").trim()
   const messageStore = new Map<string, any>()
+  // V1 TUI's persisted per-model memory can shadow agent.variant. These values
+  // are session-local launch arguments, not a universal provider enum. Native
+  // chat.params runs after variant options are assembled and before inference
+  // (packages/plugin/src/index.ts and packages/opencode/src/session/llm.ts).
+  const requiredEffort = (process.env.AO_OPENCODE_EFFORT ?? "").trim()
+  const requiredModel = (process.env.AO_OPENCODE_MODEL ?? "").trim()
+  const requiredAgent = (process.env.AO_OPENCODE_AGENT ?? "").trim()
 
   // Resolve AO through Bun so the same command works on Unix and Windows. A
   // missing binary remains a silent no-op rather than a per-event error.
@@ -118,7 +125,46 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
     callHookSync("user-prompt-submit", { session_id: sessionID, prompt, model: currentModel ?? "" })
   }
 
+  async function enforcesRequiredVariant(agentName: string): Promise<boolean> {
+    if (!requiredEffort) return false
+    if (agentName === requiredAgent) return true
+    // The native SDK advertises agent mode and visibility. Custom primary/all
+    // agents are selectable too; checking only literal build/plan is a bypass.
+    // See opencode.ai/docs/sdk/#app and opencode.ai/docs/agents/#mode.
+    const response = await client.app.agents()
+    // V1's native Agent schema includes hidden, while older generated SDK
+    // declarations omit it. Missing native visibility stays fail-closed.
+    const agent = response.data?.find((item) => item.name === agentName) as { name: string; mode?: string; hidden?: boolean } | undefined
+    if (agent?.mode === "subagent") return false
+    if (agent?.hidden === true && ["title", "compaction", "summary"].includes(agentName)) return false
+    throw new Error(`AO requires configured role agent ${requiredAgent}; native agent ${agentName} would bypass its model and variant`)
+  }
+
   return {
+    "chat.message": async (input, output) => {
+      if (!(await enforcesRequiredVariant(input.agent ?? requiredAgent))) return
+      // Record the same native selection as the inference request. Title and
+      // compaction agents keep their own model-specific defaults.
+      output.message.variant = requiredEffort
+    },
+    "chat.params": async (input, output) => {
+      if (!(await enforcesRequiredVariant(input.agent))) return
+      const actualModel = `${input.model.providerID}/${input.model.id}`
+      if (requiredModel && actualModel !== requiredModel) {
+        throw new Error(`AO configured model ${requiredModel}, but OpenCode selected ${actualModel}`)
+      }
+      const variants = input.model.variants
+      if (!variants || !Object.prototype.hasOwnProperty.call(variants, requiredEffort)) {
+        throw new Error(`AO configured variant ${requiredEffort} is unavailable for ${actualModel}`)
+      }
+      const selected = variants[requiredEffort]
+      if (!selected || typeof selected !== "object" || selected.disabled === true) {
+        throw new Error(`AO configured variant ${requiredEffort} is disabled for ${actualModel}`)
+      }
+      // Deliberately let validation errors abort this inference; silently
+      // falling back here would violate the explicit role configuration.
+      Object.assign(output.options, selected)
+    },
     event: async ({ event }) => {
       try {
         switch (event.type) {

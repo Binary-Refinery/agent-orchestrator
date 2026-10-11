@@ -17,6 +17,7 @@ import {
 	AlertTriangle,
 	Archive,
 	CalendarClock,
+	Compass,
 	ChevronRight,
 	Download,
 	Folder,
@@ -454,6 +455,7 @@ function useSelection() {
 	});
 	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
 	const goAutomations = useCallback(() => void navigate({ to: "/automations" }), [navigate]);
+	const goInstructor = useCallback(() => void navigate({ to: "/instructor" }), [navigate]);
 	const goStandaloneBoard = useCallback(() => void navigate({ to: "/sessions" }), [navigate]);
 	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
 	const goConnectMobile = useCallback(() => openGlobalSettings("mobile"), [openGlobalSettings]);
@@ -478,10 +480,12 @@ function useSelection() {
 	return useMemo(() => ({
 		isHome: pathname === "/",
 		isAutomations: pathname === "/automations",
+		isInstructor: pathname === "/instructor",
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome,
 		goAutomations,
+		goInstructor,
 		goStandaloneBoard,
 		// Settings is a modal — open it in place so the current page (session
 		// terminal, board, etc.) stays underneath.
@@ -490,7 +494,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goAutomations, goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, goStandaloneBoard, params.projectId, params.sessionId, pathname]);
+	}), [goAutomations, goInstructor, goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, goStandaloneBoard, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -903,6 +907,18 @@ export function Sidebar({
 					</SidebarGroup>
 				) : null}
 				<SidebarMenu className="mb-3 gap-0.5 group-data-[collapsible=icon]:gap-1">
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							aria-label={t("instructor.title")}
+							className={NAV_ROW_CLASS}
+							isActive={selection.isInstructor}
+							onClick={selection.goInstructor}
+							tooltip={isCollapsed ? t("instructor.title") : undefined}
+						>
+							<Compass aria-hidden="true" />
+							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">{t("instructor.title")}</span>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
 					<SidebarMenuItem>
 						<SidebarMenuButton
 							aria-label={t("automations.title")}

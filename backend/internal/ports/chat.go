@@ -506,7 +506,10 @@ type ChatConfigOption struct {
 	Category    string
 	Type        ChatConfigOptionType
 	Current     ChatConfigOptionValue
-	Choices     []ChatConfigOptionChoice
+	// CurrentReported distinguishes provider readback from a locally retained
+	// or acknowledged request. It is transport provenance, never inference proof.
+	CurrentReported bool `json:"-"`
+	Choices         []ChatConfigOptionChoice
 }
 
 // ChatConfigOptionController is implemented by conversations whose provider
@@ -1087,6 +1090,20 @@ type ChatProviderPreserver interface {
 // destruction must do more than detach the controller.
 type ChatProviderTerminator interface {
 	Terminate() error
+}
+
+// ChatExternalToolIsolationValidator proves the effective native thread has no
+// external MCP or connector tools before a portfolio planning turn is sent.
+// Unsupported or incomplete native inventory must return an error.
+type ChatExternalToolIsolationValidator interface {
+	ValidateNoExternalTools(context.Context) error
+}
+
+// ChatNativeAgentSelectionReader reports only choices observed in a native
+// thread-open response. Empty fields remain unknown; catalog defaults or sent
+// configuration cannot fill them.
+type ChatNativeAgentSelectionReader interface {
+	ReadNativeAgentSelection(context.Context) (model, effort string, err error)
 }
 
 // ChatLiveReconnector identifies attachment to the same initialized provider

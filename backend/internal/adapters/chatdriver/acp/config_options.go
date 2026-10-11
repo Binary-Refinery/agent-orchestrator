@@ -157,6 +157,7 @@ func (c *conversation) applyAcceptedConfigOption(id string, value ports.ChatConf
 		if c.configOptions[i].ID != id {
 			continue
 		}
+		c.configOptions[i].CurrentReported = false
 		switch c.configOptions[i].Type {
 		case ports.ChatConfigOptionSelect:
 			c.configOptions[i].Current = ports.ChatConfigOptionValue{Select: value.Select}
@@ -193,11 +194,12 @@ func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatCo
 		case option.Select != nil:
 			selectOption := option.Select
 			out = append(out, ports.ChatConfigOption{
-				ID:          string(selectOption.Id),
-				Name:        selectOption.Name,
-				Description: stringValue(selectOption.Description),
-				Category:    configCategory(selectOption.Category),
-				Type:        ports.ChatConfigOptionSelect,
+				ID:              string(selectOption.Id),
+				CurrentReported: true,
+				Name:            selectOption.Name,
+				Description:     stringValue(selectOption.Description),
+				Category:        configCategory(selectOption.Category),
+				Type:            ports.ChatConfigOptionSelect,
 				Current: ports.ChatConfigOptionValue{
 					Select: string(selectOption.CurrentValue),
 				},
@@ -207,11 +209,12 @@ func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatCo
 			booleanOption := option.Boolean
 			current := booleanOption.CurrentValue
 			out = append(out, ports.ChatConfigOption{
-				ID:          string(booleanOption.Id),
-				Name:        booleanOption.Name,
-				Description: stringValue(booleanOption.Description),
-				Category:    configCategory(booleanOption.Category),
-				Type:        ports.ChatConfigOptionBoolean,
+				ID:              string(booleanOption.Id),
+				CurrentReported: true,
+				Name:            booleanOption.Name,
+				Description:     stringValue(booleanOption.Description),
+				Category:        configCategory(booleanOption.Category),
+				Type:            ports.ChatConfigOptionBoolean,
 				Current: ports.ChatConfigOptionValue{
 					Boolean: &current,
 				},
@@ -240,7 +243,8 @@ func normalizeSessionOptions(
 		}
 		out = append(out, ports.ChatConfigOption{
 			ID: "model", Name: "Model", Category: "model", Type: ports.ChatConfigOptionSelect,
-			Current: ports.ChatConfigOptionValue{Select: models.CurrentModelID}, Choices: choices,
+			CurrentReported: true,
+			Current:         ports.ChatConfigOptionValue{Select: models.CurrentModelID}, Choices: choices,
 		})
 	}
 	if modes != nil && !seen["mode"] {
@@ -252,7 +256,8 @@ func normalizeSessionOptions(
 		}
 		out = append(out, ports.ChatConfigOption{
 			ID: "mode", Name: "Mode", Category: "mode", Type: ports.ChatConfigOptionSelect,
-			Current: ports.ChatConfigOptionValue{Select: string(modes.CurrentModeId)}, Choices: choices,
+			CurrentReported: true,
+			Current:         ports.ChatConfigOptionValue{Select: string(modes.CurrentModeId)}, Choices: choices,
 		})
 	}
 	return out

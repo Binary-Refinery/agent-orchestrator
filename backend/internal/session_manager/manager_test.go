@@ -9717,6 +9717,7 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 		Runtime: rt, Agents: singleAgent{agent}, Workspace: ws, Store: st,
 		Messenger: messenger, Lifecycle: lcm, LookPath: lookPath,
 	})
+	m.SetSemanticDeliveryLedger(&memorySemanticLedger{})
 	// Shrink the confirmation budget so the loop runs in milliseconds, not
 	// seconds. m.sendConfirm is unexported; tests live in this package.
 	m.sendConfirm = sendConfirmConfig{
@@ -10571,5 +10572,20 @@ func TestRestoreRetainsSpawnPermissionsAfterProjectChange(t *testing.T) {
 		if agent.lastRestore.Permissions != want || agent.lastRestore.Config.Permissions != want {
 			t.Fatalf("restore=%#v want %q", agent.lastRestore, want)
 		}
+	}
+}
+
+func TestOpenCodeNativeFloorReachesFinalTUIAdapterConfig(t *testing.T) {
+	t.Setenv("AO_OPENCODE_EFFORT_FLOOR", "1")
+	manager, _, _, _ := newManager()
+	agent := &recordingAgent{}
+	manager.agents = singleAgent{agent: agent}
+	manager.SetModelCatalog(tuningCatalog{catalog: ports.AgentModelCatalog{Models: []ports.AgentModelInfo{{ID: "custom/legacy", Efforts: []string{"low", "max"}, EffortSupport: "supported"}}}})
+	rec, _, _, err := manager.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, RequestedMode: domain.SessionModeTUI, AgentConfig: ports.AgentConfig{Model: "custom/legacy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastLaunch.Config.Effort != "max" || rec.Metadata.Effort != "max" {
+		t.Fatalf("native floor copied too early: adapter=%+v metadata=%+v", agent.lastLaunch.Config, rec.Metadata)
 	}
 }
