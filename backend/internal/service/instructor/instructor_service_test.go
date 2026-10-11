@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -1201,6 +1202,62 @@ func TestInstructorRepeatedOriginCannotRelaunchAClosedOrGatedWork(t *testing.T) 
 			})
 			if err == nil {
 				t.Fatalf("same stable origin reopened %s work without an explicit permitted transition", state)
+			}
+		})
+	}
+}
+
+func TestInstructorRecurringAutomationNamesRemainDistinctAcrossOccurrences(t *testing.T) {
+	for _, name := range []string{"Nightly issue check", "🔬🔬" + strings.Repeat("夜", 38)} {
+		t.Run(name, func(t *testing.T) {
+			f := newInstructorFixture(t)
+			f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, RoleValidator: permissiveNativeValidator{}, Clock: func() time.Time { return f.now }})
+			policy := instructorsvc.DefaultPolicy()
+			role := policy.Roles["worker"]
+			role.EffortByModel = map[string]string{"provider/worker": "high"}
+			policy.Roles["worker"] = role
+			if _, err := f.service.SetPolicy(context.Background(), policy); err != nil {
+				t.Fatal(err)
+			}
+			input := instructorsvc.SpawnInput{ProjectID: "governed", Source: "automation", SourceRef: "scheduled-occurrence-one", Name: name, Goal: "Check the same issue every night", Role: "worker", Harness: "opencode", Model: "provider/worker", Effort: "high"}
+			firstID, err := f.service.PrepareSpawn(context.Background(), input)
+			if err != nil {
+				t.Fatalf("first scheduled occurrence: %v", err)
+			}
+			retryID, err := f.service.PrepareSpawn(context.Background(), input)
+			if err != nil || retryID != firstID {
+				t.Fatalf("same occurrence lost its stable identity: first=%s retry=%s err=%v", firstID, retryID, err)
+			}
+			f.trustedFacts(t, firstID, func(w *domain.InstructorWork) { w.State = "done" })
+			input.SourceRef = "scheduled-occurrence-two"
+			secondID, err := f.service.PrepareSpawn(context.Background(), input)
+			if err != nil || secondID == firstID {
+				t.Fatalf("next occurrence of a fixed automation definition cannot create independent work: first=%s second=%s err=%v", firstID, secondID, err)
+			}
+			secondRetryID, err := f.service.PrepareSpawn(context.Background(), input)
+			if err != nil || secondRetryID != secondID {
+				t.Fatalf("next occurrence retry lost its stable identity: first=%s retry=%s err=%v", secondID, secondRetryID, err)
+			}
+			input.SourceRef = "scheduled-occurrence-one"
+			closedRetryID, err := f.service.PrepareSpawn(context.Background(), input)
+			if err == nil || closedRetryID != firstID {
+				t.Fatalf("retry of a closed earlier occurrence relaunched or changed its identity: want=%s got=%s err=%v", firstID, closedRetryID, err)
+			}
+			first, err := f.service.Details(context.Background(), firstID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := f.service.Details(context.Background(), secondID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.EqualFold(first.Work.Name, second.Work.Name) || first.Work.SourceRef != "scheduled-occurrence-one" || second.Work.SourceRef != "scheduled-occurrence-two" {
+				t.Fatalf("occurrences are not independently named and bound: first=%+v second=%+v", first.Work, second.Work)
+			}
+			for _, work := range []domain.InstructorWork{first.Work, second.Work} {
+				if len(work.Name) > 120 || !utf8.ValidString(work.Name) {
+					t.Fatalf("automatic work name exceeds its byte limit or splits a Unicode character: %q", work.Name)
+				}
 			}
 		})
 	}

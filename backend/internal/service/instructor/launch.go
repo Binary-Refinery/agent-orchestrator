@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -79,12 +80,24 @@ func (s *Service) PrepareSpawn(ctx context.Context, in SpawnInput) (string, erro
 				return "", e
 			}
 		}
-		if in.Name == "" {
+		if in.Name == "" || in.Source == "automation" {
 			if in.SourceRef == "" {
 				in.SourceRef = s.deps.NewID()
 			}
 			digest := sha256.Sum256([]byte(string(in.ProjectID) + "\x00" + in.Source + "\x00" + in.SourceRef))
-			in.Name = "Auftrag " + hex.EncodeToString(digest[:])[:10]
+			suffix := " " + hex.EncodeToString(digest[:])[:10]
+			prefix := strings.TrimSpace(in.Name)
+			if prefix == "" {
+				prefix = "Auftrag"
+			}
+			// A definition's display name repeats for every scheduled run.
+			// Keep readable work names distinct by durable occurrence origin,
+			// within the registration byte limit and on a Unicode boundary.
+			for len(prefix)+len(suffix) > 120 {
+				_, size := utf8.DecodeLastRuneInString(prefix)
+				prefix = prefix[:len(prefix)-size]
+			}
+			in.Name = strings.TrimSpace(prefix) + suffix
 		}
 		if in.Goal == "" {
 			in.Goal = "Manuell gestartete Arbeit"
