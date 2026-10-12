@@ -20,6 +20,7 @@ Separate reviewers examined configuration, the Board/API and cancellation. Confi
 2. Never-admitted target-bound directives prevented cancellation completion: fixed with an atomic negative-admission receipt; uncertain/admitted effects still require native proof.
 3. A narrow project settings label broke across lines: fixed and checked in eight viewport/theme combinations.
 4. A lint correction made malformed YAML mappings look like tolerated partial decoding: corrected and the full legacy import regression suite passed.
+5. GitHub review found labeled open issues were treated as closed by the UI: intake now matches the backend open/in_progress/review states; terminal unlinked issues remain blocked and linked history remains accessible.
 
 No confirmed review findings remain open. Typecheck and plural-form failures discovered by integration checks were also corrected and their affected tests passed.
 

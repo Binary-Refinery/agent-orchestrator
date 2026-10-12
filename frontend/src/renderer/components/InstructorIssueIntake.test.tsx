@@ -22,6 +22,31 @@ describe("Instructor GitHub intake", () => {
 		await waitFor(() => expect(imported).toHaveBeenCalledWith({ id: "actual-work", projectId: "project-one" }));
 		expect(mocks.post).toHaveBeenCalledExactlyOnceWith("/api/v1/instructor/projects/{projectId}/issues/intake", { params: { path: { projectId: "project-one" } }, body: { repository: "example/repo", number: 12 } });
 	});
+	it.each(["open", "in_progress", "review"])("imports normalized open state %s", async (state) => {
+		mocks.get.mockResolvedValue({ data: { ...response, issues: [{ ...issue, state }] } });
+		const imported = vi.fn().mockResolvedValue(undefined); mount(imported);
+		await userEvent.selectOptions(await screen.findByLabelText("Issue reference"), "12");
+		expect(screen.getByText("Open issue")).toBeVisible();
+		expect(screen.queryByText("Closed issue")).not.toBeInTheDocument();
+		expect(mocks.post).not.toHaveBeenCalled();
+		await userEvent.click(screen.getByRole("button", { name: "Import selected issue" }));
+		await waitFor(() => expect(imported).toHaveBeenCalledWith({ id: "actual-work", projectId: "project-one" }));
+		expect(mocks.post).toHaveBeenCalledExactlyOnceWith("/api/v1/instructor/projects/{projectId}/issues/intake", { params: { path: { projectId: "project-one" } }, body: { repository: "example/repo", number: 12 } });
+	});
+	it.each(["closed", "done", "cancelled"])("keeps unlinked terminal state %s blocked", async (state) => {
+		mocks.get.mockResolvedValue({ data: { ...response, issues: [{ ...issue, state }] } });
+		mount();
+		await userEvent.selectOptions(await screen.findByLabelText("Issue reference"), "12");
+		expect(screen.getByText("Closed issue")).toBeVisible();
+		expect(screen.getByRole("button", { name: "Import selected issue" })).toBeDisabled();
+		expect(mocks.post).not.toHaveBeenCalled();
+	});
+	it("keeps a closed linked issue available for opening its existing work", async () => {
+		mocks.get.mockResolvedValue({ data: { ...response, issues: [{ ...issue, state: "closed", linkedWorkId: "existing-work" }] } });
+		mount();
+		await userEvent.selectOptions(await screen.findByLabelText("Issue reference"), "12");
+		expect(screen.getByRole("button", { name: "Open existing work" })).toBeEnabled();
+	});
 	it("looks up an older issue by exact number and refuses a new closed issue", async () => {
 		mocks.get.mockImplementation((_path, options) => Promise.resolve({ data: options.params.query ? { ...response, truncated: false, issues: [{ ...issue, number: 200, title: "Old closed issue", state: "closed" }] } : response }));
 		mount(); await userEvent.type(screen.getByLabelText("Issue number"), "200");
