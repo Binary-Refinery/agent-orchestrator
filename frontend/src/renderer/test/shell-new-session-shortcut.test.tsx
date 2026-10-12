@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeybindingOverrides } from "../../shared/shortcuts";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
+import type { ShellContextValue } from "../lib/shell-context";
 
 const shellMocks = vi.hoisted(() => {
 	const state = {
@@ -31,18 +32,7 @@ const shellMocks = vi.hoisted(() => {
 			port?: number;
 			code?: "not_ready";
 		},
-		shellValue: undefined as
-				| {
-						workspaceStartupState?: string;
-						createProject?: (input: {
-							path: string;
-							defaultBranch?: string;
-							workerAgent: string;
-							orchestratorAgent: string;
-							asWorkspace?: boolean;
-						}) => Promise<void>;
-				  }
-			| undefined,
+		shellValue: undefined as Partial<ShellContextValue> | undefined,
 	};
 	return {
 		navigate: vi.fn(),
@@ -232,7 +222,7 @@ vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
 vi.mock("../lib/shell-context", () => ({
-	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
+	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: Partial<ShellContextValue> }>) => {
 		shellMocks.state.shellValue = value;
 		return children;
 	},
@@ -380,6 +370,51 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it.each(["create", "clone"] as const)("persists new-project orchestrator config before the %s path launches", async (operation) => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		const post = vi.mocked(apiClient.POST);
+		post.mockReset();
+		let completeRegistration!: () => void;
+		post.mockImplementationOnce(() => new Promise((resolve) => {
+			completeRegistration = () => resolve({ data: { project: {
+				id: "new-project", name: "New Project", kind: "single_repo", path: "/repo/new", workspaceRepos: [],
+			} } });
+		}));
+		post.mockResolvedValueOnce({ data: { session: { id: "new-orchestrator" } }, response: { status: 200 } });
+		await renderShell();
+		const selection = {
+			workerAgent: "codex", orchestratorAgent: "opencode",
+			orchestratorAgentConfig: { model: "provider/model", effort: "native-high", nativeEffortDefaults: { opencode: { "provider/model": "native-high" } } },
+			orchestratorRules: "Keep review gates.", orchestratorRulesFile: ".ao/orchestrator.md", orchestratorPrompt: "Inspect assigned work.",
+		};
+		const registration = operation === "create"
+			? shellMocks.state.shellValue?.createProject?.({ path: "/repo/new", ...selection })
+			: shellMocks.state.shellValue?.cloneProject?.({ remoteUrl: "https://github.com/test/new.git", destinationParent: "/repo", ...selection });
+		await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+		expect(post.mock.calls[0][0]).toBe(operation === "create" ? "/api/v1/projects" : "/api/v1/projects/clone");
+		expect((post.mock.calls[0] as unknown as [string, { body?: unknown }])[1]?.body).toMatchObject({ config: {
+			orchestrator: { agent: "opencode", agentConfig: selection.orchestratorAgentConfig },
+			orchestratorRules: selection.orchestratorRules, orchestratorRulesFile: selection.orchestratorRulesFile, orchestratorPrompt: selection.orchestratorPrompt,
+		} });
+		await act(async () => { completeRegistration(); await registration; });
+		await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+		expect(post.mock.calls[1]).toEqual(["/api/v1/sessions", { body: { projectId: "new-project", kind: "orchestrator", harness: "opencode" } }]);
+	});
+
+	it.each(["create", "clone"] as const)("does not launch an orchestrator when %s registration rejects config", async (operation) => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		const post = vi.mocked(apiClient.POST);
+		post.mockReset().mockResolvedValueOnce({ error: { code: "INVALID_PROJECT_CONFIG", message: "orchestratorRulesFile must be repository-relative" } });
+		await renderShell();
+		const selection = { workerAgent: "codex", orchestratorAgent: "opencode", orchestratorRulesFile: "../outside.md" };
+		const registration = operation === "create"
+			? shellMocks.state.shellValue?.createProject?.({ path: "/repo/new", ...selection })
+			: shellMocks.state.shellValue?.cloneProject?.({ remoteUrl: "https://github.com/test/new.git", destinationParent: "/repo", ...selection });
+		await expect(registration).rejects.toThrow("orchestratorRulesFile must be repository-relative");
+		expect(post).toHaveBeenCalledTimes(1);
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
+	});
+
 	it("routes duplicate-path project adds to the registered project and shows a toast", async () => {
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
 		vi.mocked(apiClient.POST).mockResolvedValueOnce({

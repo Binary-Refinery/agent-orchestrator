@@ -145,7 +145,7 @@ func ValidatePolicy(p domain.InstructorPolicy) error {
 			if c.Mutates {
 				return invalid("read command cannot mutate")
 			}
-		case "weiter", "go", "pruefen", "stopp":
+		case "weiter", "go", "pruefen", "stopp", "abbrechen":
 			if !c.Mutates || !c.SnapshotRequired {
 				return invalid("mutation command must require snapshot")
 			}

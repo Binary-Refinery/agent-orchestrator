@@ -558,7 +558,8 @@ func Run() error {
 		return errors.New("wire Instructor: session manager implementation is unavailable")
 	}
 	concreteManager.SetSemanticDeliveryLedger(store)
-	instructorSvc, instructorBridge, instructorInventorySource := newInstructorRuntime(store, concreteManager, instructorEvidenceVerifier{store: store})
+	instructorSvc, instructorBridge, instructorInventorySource := newInstructorRuntime(store, concreteManager, instructorEvidenceVerifier{store: store}, instructorReviewControl(reviewSvc))
+	instructorSvc.SetIssueTracker(tracker)
 	if instructorEnabled {
 		instructorSvc.SetPlanner(instructorNativePlanner{drivers: chatDrivers, dataDir: cfg.StateDir, projects: store})
 		concreteManager.SetInstructorGovernance(instructorBridge)

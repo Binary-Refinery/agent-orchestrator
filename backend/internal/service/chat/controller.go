@@ -3747,3 +3747,28 @@ func (c *Controller) reportActivity(
 			"session", c.sessionID, "event", event, "error", err)
 	}
 }
+
+func (c *Controller) instructorQuiescent(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !c.sendMu.TryLock() {
+		return false, nil
+	}
+	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	quiet := c.state == ports.ChatControllerReady && c.pendingTurnID == ""
+	c.mu.Unlock()
+	if !quiet {
+		return false, nil
+	}
+	running, err := c.store.ListVisibleRunningTurnProviderIDs(ctx, c.conversation.ID)
+	if err != nil || len(running) != 0 {
+		return false, err
+	}
+	_, err = c.store.NextQueuedTurn(ctx, c.conversation.ID)
+	if errors.Is(err, domain.ErrNoQueuedTurn) {
+		return true, nil
+	}
+	return false, err
+}

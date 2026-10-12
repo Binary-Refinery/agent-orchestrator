@@ -782,11 +782,13 @@ func TestManager_UpdateSettings(t *testing.T) {
 	}
 
 	cfg := domain.ProjectConfig{
-		DefaultBranch:     "develop",
-		Env:               map[string]string{"FOO": "bar"},
-		AgentRules:        "Run focused tests.",
-		OrchestratorRules: "Delegate implementation.",
-		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5"},
+		DefaultBranch:         "develop",
+		Env:                   map[string]string{"FOO": "bar"},
+		AgentRules:            "Run focused tests.",
+		OrchestratorRules:     "Delegate implementation.",
+		OrchestratorRulesFile: ".ao/orchestrator.md",
+		OrchestratorPrompt:    "Inspect pending work and report next steps.",
+		AgentConfig:           domain.AgentConfig{Model: "claude-opus-4-5"},
 	}
 	proj, err := m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
 		DisplayName: "  AO Project  ",
@@ -810,7 +812,7 @@ func TestManager_UpdateSettings(t *testing.T) {
 	if got.Project == nil || got.Project.Name != "AO Project" || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
 		t.Fatalf("Get project = %#v", got.Project)
 	}
-	if got.Project.Config.AgentRules != "Run focused tests." || got.Project.Config.OrchestratorRules != "Delegate implementation." {
+	if got.Project.Config.AgentRules != "Run focused tests." || got.Project.Config.OrchestratorRules != "Delegate implementation." || got.Project.Config.OrchestratorRulesFile != cfg.OrchestratorRulesFile || got.Project.Config.OrchestratorPrompt != cfg.OrchestratorPrompt {
 		t.Fatalf("Get rules config = %#v", got.Project.Config)
 	}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrConflict indicates that a frozen operator snapshot no longer matches live work.
@@ -116,6 +117,7 @@ type Deps struct {
 	Clock         func() time.Time
 	NewID         func() string
 	Publication   PublicationBoundary
+	Tracker       ports.Tracker
 }
 
 // Service owns the global Instructor control plane above project orchestrators.
@@ -156,6 +158,8 @@ type RegisterInput struct {
 	IssueID   domain.IssueID          `json:"issueId,omitempty"`
 	Branch    string                  `json:"branch,omitempty"`
 	Policy    domain.InstructorPolicy `json:"policy,omitempty"`
+	// issueProject is a trusted registered-project observation, never client input.
+	issueProject *domain.ProjectRecord
 }
 
 // ReportInput carries an attached producer claim or an exact bound-target receipt.
@@ -252,12 +256,14 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 		if err != nil {
 			return domain.InstructorWork{}, err
 		}
-		if found {
+		if found && in.issueProject == nil {
 			return existing, nil
 		}
 	}
-	if err := s.uniqueWorkName(ctx, in.Name); err != nil {
-		return domain.InstructorWork{}, err
+	if in.issueProject == nil {
+		if err := s.uniqueWorkName(ctx, in.Name); err != nil {
+			return domain.InstructorWork{}, err
+		}
 	}
 	now := s.now()
 	w := domain.InstructorWork{ID: "work-" + s.deps.NewID(), ProjectID: in.ProjectID, Name: strings.TrimSpace(in.Name), Goal: strings.TrimSpace(in.Goal), Source: in.Source, SourceRef: in.SourceRef, IssueID: in.IssueID, Branch: in.Branch, State: "ready", Phase: p.InitialPhase, Summary: "Auftrag registriert", Policy: p, PolicyVersion: p.Version, SessionIDs: []domain.SessionID{}, Evidence: []domain.InstructorEvidence{}, Revision: 1, CreatedAt: now, UpdatedAt: now, ProgressAt: now, Actions: []string{}}
@@ -270,7 +276,22 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 	if w.Phase == "delta" {
 		w.DeltaPhaseSequence = 1
 	}
-	created, err := s.deps.Store.CreateInstructorWork(ctx, w, s.event(w, "registered", in.Source+":"+in.SourceRef))
+	var created domain.InstructorWork
+	var err error
+	if in.issueProject != nil {
+		store, ok := s.deps.Store.(interface {
+			CreateInstructorIssueWork(context.Context, domain.InstructorWork, domain.InstructorEvent, domain.ProjectRecord) (domain.InstructorWork, error)
+		})
+		if !ok {
+			return w, invalid("atomic issue intake storage unavailable")
+		}
+		created, err = store.CreateInstructorIssueWork(ctx, w, s.event(w, "registered", in.Source+":"+in.SourceRef), *in.issueProject)
+		if errors.Is(err, domain.ErrInstructorIntakeChanged) {
+			return w, fmt.Errorf("%w: %w", ErrConflict, err)
+		}
+	} else {
+		created, err = s.deps.Store.CreateInstructorWork(ctx, w, s.event(w, "registered", in.Source+":"+in.SourceRef))
+	}
 	if err != nil {
 		if nameErr := s.uniqueWorkName(ctx, in.Name); nameErr != nil {
 			return w, nameErr
@@ -352,6 +373,9 @@ func (s *Service) attachSession(ctx context.Context, workID string, id, parent d
 	w, err := s.get(ctx, workID)
 	if err != nil {
 		return err
+	}
+	if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" {
+		return invalid("terminal or cancelling work cannot acquire sessions")
 	}
 	if id == "" {
 		return invalid("session id required")
@@ -500,7 +524,11 @@ func (s *Service) actions(w *domain.InstructorWork) {
 	if w.State == "done" || w.State == "cancelled" {
 		return
 	}
-	w.Actions = append(w.Actions, "pruefen", "stopp")
+	if w.Cancellation != nil {
+		w.Actions = append(w.Actions, "abbrechen")
+		return
+	}
+	w.Actions = append(w.Actions, "pruefen", "stopp", "abbrechen")
 	if validateWorkExceptions(*w, s.now()) != nil {
 		return
 	}
@@ -525,6 +553,7 @@ func (s *Service) Commands() []domain.InstructorCommandSpec {
 		{Name: "Details", Aliases: []string{"details"}, Action: "details", Description: "Belege und Ereignisse"},
 		{Name: "Prüfen", Aliases: []string{"pruefen", "prüfen"}, Action: "pruefen", Description: "Projekt-Orchestrator zur Prüfung beauftragen", Mutates: true, SnapshotRequired: true},
 		{Name: "Stopp", Aliases: []string{"stopp", "stop"}, Action: "stopp", Description: "Weitere geplante Schritte anhalten", Mutates: true, SnapshotRequired: true},
+		{Name: "Abbrechen", Aliases: []string{"abbrechen", "cancel"}, Action: "abbrechen", Description: "Arbeit dauerhaft abbrechen; native Unterbrechung getrennt bestätigen", Mutates: true, SnapshotRequired: true},
 		{Name: "Neu", Aliases: []string{"neu"}, Action: "neu", Description: "Neuen Auftrag registrieren", Mutates: true},
 	}
 	for i := range commands {
@@ -863,6 +892,24 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 			updates = append(updates, w)
 			events = append(events, s.event(w, "human_approved", gate.ID+" snapshot="+snap.ID))
 		}
+		if action == "abbrechen" {
+			dispatchID := batchID + fmt.Sprintf("-%d", len(dispatches))
+			if w.Cancellation == nil {
+				w.Cancellation = &domain.InstructorCancellation{RequestedAt: s.now()}
+			}
+			w.Cancellation.DispatchID = dispatchID
+			w.State, w.Summary, w.WaitCondition = "parked", "Abbruch angefordert; native Wirkung wird geprüft", "Abbruch ist dauerhaft; keine Wiederaufnahme. Native Unterbrechung noch nicht bestätigt."
+			w.WaitUntil, w.NudgedAt = nil, nil
+			w.ApprovedTransitions, w.ApprovalDispatchID = nil, ""
+			for i := range w.PublicationGrants {
+				w.PublicationGrants[i].Revoked = true
+			}
+			w.Revision++
+			w.UpdatedAt = s.now()
+			updates = append(updates, w)
+			events = append(events, s.event(w, "operator_cancel_requested", "snapshot="+snap.ID+" dispatch="+dispatchID))
+			cancelWorks = append(cancelWorks, w.ID)
+		}
 		if action == "stopp" {
 			w.State = "parked"
 			w.WaitCondition = "Operator-Stopp; Weiter nach erneuter Entscheidung"
@@ -908,7 +955,7 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 	// A Stop must cancel already queued native messages as well as the local
 	// outbox. Validate the whole frozen cohort before crossing that boundary.
 	for i := range updates {
-		if updates[i].State != "parked" || spec.Action != "stopp" {
+		if updates[i].State != "parked" || spec.Action != "stopp" && spec.Action != "abbrechen" {
 			continue
 		}
 		if err := s.cancelNativePending(ctx, &updates[i], &events); err != nil {
@@ -917,6 +964,11 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 	}
 	if err := s.deps.Store.CommitInstructorBatch(ctx, dispatches, updates, events, cancelWorks); err != nil {
 		return domain.InstructorCommandResult{}, err
+	}
+	for _, w := range updates {
+		if w.Cancellation != nil {
+			s.cancelWorkPhaseActions(w)
+		}
 	}
 	return domain.InstructorCommandResult{BatchID: batchID, Dispatches: dispatches, Skipped: skipped}, nil
 }
@@ -928,6 +980,9 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 	w, err := s.get(ctx, in.WorkID)
 	if err != nil {
 		return w, err
+	}
+	if w.Cancellation != nil && in.Kind != "heartbeat" {
+		return w, invalid("cancelled work intent rejects further execution reports; native receipts remain independently auditable")
 	}
 	if w.ApprovalDispatchID != "" && (in.Kind == "done" || in.Phase != "" && in.Phase != w.Phase) {
 		ready, err := s.approvalCohortReady(ctx, w.ApprovalDispatchID)
@@ -1281,10 +1336,10 @@ func (s *Service) Tick(ctx context.Context) error {
 		if err == nil && d.Action == "worker_result" && (w.Phase != d.Phase || w.PhaseSequence != d.PhaseSequence || d.PolicyVersion != w.PolicyVersion) {
 			err = ErrConflict
 		}
-		if err == nil && d.Action != "worker_result" && d.Action != "stopp" && w.Revision != d.WorkRevision {
+		if err == nil && d.Action != "worker_result" && d.Action != "stopp" && d.Action != "abbrechen" && w.Revision != d.WorkRevision {
 			err = ErrConflict
 		}
-		if err == nil && d.Action != "pruefen" && d.Action != "stopp" && d.Action != "worker_result" {
+		if err == nil && d.Action != "pruefen" && d.Action != "stopp" && d.Action != "abbrechen" && d.Action != "worker_result" {
 			err = validateWorkExceptions(w, s.now())
 			if err == nil {
 				err = s.CurrentEvidence(ctx, w)
@@ -1298,7 +1353,7 @@ func (s *Service) Tick(ctx context.Context) error {
 			break
 		}
 		if err == nil {
-			if d.Action == "stopp" {
+			if d.Action == "stopp" || d.Action == "abbrechen" {
 				d, err = s.deliverNativeStop(ctx, d)
 			} else {
 				err = s.deps.Delivery.Deliver(ctx, d)
@@ -1326,7 +1381,7 @@ func (s *Service) Tick(ctx context.Context) error {
 		}
 		state := "delivered"
 		detail := ""
-		stopSuperseded := d.Action == "stopp" && errors.Is(err, ErrStopSuperseded) && !errors.Is(err, ErrDeliveryUncertain)
+		stopSuperseded := (d.Action == "stopp" || d.Action == "abbrechen") && errors.Is(err, ErrStopSuperseded) && !errors.Is(err, ErrDeliveryUncertain)
 		if err != nil {
 			state = "failed"
 			detail = err.Error()
@@ -1351,6 +1406,12 @@ func (s *Service) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, w := range works {
+		if w.Cancellation != nil {
+			if err := s.observeCancellation(ctx, w); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := s.observeWorkerWakeups(ctx, w); err != nil {
 			return err
 		}

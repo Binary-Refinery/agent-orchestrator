@@ -2363,6 +2363,128 @@ paths:
       summary: Validate and persist governance policy for future work
       tags:
       - instructor
+  /api/v1/instructor/projects/{projectId}/issues:
+    get:
+      operationId: instructorIssueCandidates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: number
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorIssueCandidates'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Browse actual open GitHub issues or preview an exact issue number for
+        a registered project
+      tags:
+      - instructor
+  /api/v1/instructor/projects/{projectId}/issues/intake:
+    post:
+      operationId: intakeInstructorIssue
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorIssueIntakeRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Register one real GitHub issue as durable work without launching agents
+        or modifying GitHub
+      tags:
+      - instructor
   /api/v1/instructor/reconcile:
     post:
       operationId: reconcileInstructorDelivery
@@ -12770,6 +12892,24 @@ components:
       - maxTurns
       - maxDelegations
       type: object
+    InstructorCancellation:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        dispatchId:
+          type: string
+        observation:
+          type: string
+        requestedAt:
+          format: date-time
+          type: string
+      required:
+      - dispatchId
+      - requestedAt
+      type: object
     InstructorCapabilitiesResponse:
       properties:
         commands:
@@ -13374,6 +13514,74 @@ components:
       - unassignedResourceCount
       - enabled
       - cached
+      type: object
+    InstructorIssueCandidate:
+      properties:
+        assignees:
+          items:
+            type: string
+          type: array
+        body:
+          type: string
+        bodyTruncated:
+          type: boolean
+        labels:
+          items:
+            type: string
+          type: array
+        linkedWorkId:
+          type: string
+        number:
+          type: integer
+        state:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+      required:
+      - number
+      - title
+      - body
+      - url
+      - state
+      - labels
+      - assignees
+      - bodyTruncated
+      type: object
+    InstructorIssueCandidates:
+      properties:
+        capturedAt:
+          format: date-time
+          type: string
+        issues:
+          items:
+            $ref: '#/components/schemas/InstructorIssueCandidate'
+          type: array
+        projectId:
+          type: string
+        repository:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - projectId
+      - repository
+      - capturedAt
+      - issues
+      - truncated
+      type: object
+    InstructorIssueIntakeRequest:
+      properties:
+        name:
+          type: string
+        number:
+          type: integer
+        repository:
+          type: string
+      required:
+      - repository
+      - number
       type: object
     InstructorLaunch:
       properties:
@@ -14186,6 +14394,8 @@ components:
           type: array
         branch:
           type: string
+        cancellation:
+          $ref: '#/components/schemas/InstructorCancellation'
         createdAt:
           format: date-time
           type: string
@@ -15140,7 +15350,11 @@ components:
           type: boolean
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
+        orchestratorPrompt:
+          type: string
         orchestratorRules:
+          type: string
+        orchestratorRulesFile:
           type: string
         planReviewer:
           $ref: '#/components/schemas/RoleOverride'

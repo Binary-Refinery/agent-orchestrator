@@ -58,6 +58,8 @@ func (c *InstructorController) Register(r chi.Router) {
 	r.Get("/instructor/inventory", c.inventory)
 	r.Post("/instructor/inventory/reconcile", c.reconcileInventory)
 	r.Get("/instructor/commands", c.commands)
+	r.Get("/instructor/projects/{projectId}/issues", c.issues)
+	r.Post("/instructor/projects/{projectId}/issues/intake", c.intakeIssue)
 	r.Get("/instructor/policy", c.getPolicy)
 	r.Put("/instructor/policy", c.setPolicy)
 	r.Post("/instructor/commands", c.command)

@@ -57,7 +57,7 @@ describe("AutomationsView", () => {
 		renderView();
 		await userEvent.click(screen.getByRole("button", { name: /show run history/i }));
 		await userEvent.click(screen.getByRole("button", { name: "Open work" }));
-		expect(mocks.navigate).toHaveBeenCalledWith({ to: "/instructor", search: { workId: "work-stable" } });
+		expect(mocks.navigate).toHaveBeenCalledWith({ to: "/instructor-board", search: { workId: "work-stable" } });
 		expect(screen.queryByRole("button", { name: "Open session" })).not.toBeInTheDocument();
 	});
 

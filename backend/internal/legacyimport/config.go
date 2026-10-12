@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -26,18 +27,20 @@ type legacyProjectConfig struct {
 	Name string `yaml:"name"`
 	// Repo is captured as a raw YAML node but never consumed; the origin URL is
 	// re-resolved from the repo path at import time.
-	Repo             *yaml.Node         `yaml:"repo"`
-	DefaultBranch    string             `yaml:"defaultBranch"`
-	SessionPrefix    string             `yaml:"sessionPrefix"`
-	Env              map[string]string  `yaml:"env"`
-	Symlinks         []string           `yaml:"symlinks"`
-	PostCreate       []string           `yaml:"postCreate"`
-	AgentConfig      *legacyAgentConfig `yaml:"agentConfig"`
-	Worker           *legacyRole        `yaml:"worker"`
-	Orchestrator     *legacyRole        `yaml:"orchestrator"`
-	AgentRules       *yaml.Node         `yaml:"agentRules"`
-	AgentRulesFile   *yaml.Node         `yaml:"agentRulesFile"`
-	OrchestratorRule *yaml.Node         `yaml:"orchestratorRules"`
+	Repo                  *yaml.Node         `yaml:"repo"`
+	DefaultBranch         string             `yaml:"defaultBranch"`
+	SessionPrefix         string             `yaml:"sessionPrefix"`
+	Env                   map[string]string  `yaml:"env"`
+	Symlinks              []string           `yaml:"symlinks"`
+	PostCreate            []string           `yaml:"postCreate"`
+	AgentConfig           *legacyAgentConfig `yaml:"agentConfig"`
+	Worker                *legacyRole        `yaml:"worker"`
+	Orchestrator          *legacyRole        `yaml:"orchestrator"`
+	AgentRules            *yaml.Node         `yaml:"agentRules"`
+	AgentRulesFile        *yaml.Node         `yaml:"agentRulesFile"`
+	OrchestratorRule      *yaml.Node         `yaml:"orchestratorRules"`
+	OrchestratorRulesFile *yaml.Node         `yaml:"orchestratorRulesFile"`
+	OrchestratorPrompt    *yaml.Node         `yaml:"orchestratorPrompt"`
 
 	// Captured only to surface as dropped in the report (no rewrite home).
 	Tracker   *yaml.Node `yaml:"tracker"`
@@ -45,6 +48,51 @@ type legacyProjectConfig struct {
 	Runtime   *yaml.Node `yaml:"runtime"`
 	Workspace *yaml.Node `yaml:"workspace"`
 	Reactions *yaml.Node `yaml:"reactions"`
+}
+
+// UnmarshalYAML preserves effective raw values before decoding typed settings.
+// Decode Node values through a map so yaml.v3 applies aliases and merge-key
+// precedence before *yaml.Node fields are separated from the typed settings.
+func (pc *legacyProjectConfig) UnmarshalYAML(node *yaml.Node) error {
+	type plain legacyProjectConfig
+	var decoded plain
+	rawFields := map[string]**yaml.Node{
+		"repo":                  &decoded.Repo,
+		"agentRules":            &decoded.AgentRules,
+		"agentRulesFile":        &decoded.AgentRulesFile,
+		"orchestratorRules":     &decoded.OrchestratorRule,
+		"orchestratorRulesFile": &decoded.OrchestratorRulesFile,
+		"orchestratorPrompt":    &decoded.OrchestratorPrompt,
+		"tracker":               &decoded.Tracker,
+		"scm":                   &decoded.SCM,
+		"runtime":               &decoded.Runtime,
+		"workspace":             &decoded.Workspace,
+		"reactions":             &decoded.Reactions,
+	}
+	var fields map[string]yaml.Node
+	if err := node.Decode(&fields); err != nil {
+		// Structural mapping errors (including duplicate keys and invalid
+		// merges) must not be mistaken for a tolerated typed-field mismatch by
+		// loadLegacyConfig's historical partial-decode behavior.
+		return fmt.Errorf("parse project mapping: %s", err.Error())
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	filtered := yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, key := range keys {
+		value := fields[key]
+		if target, ok := rawFields[key]; ok {
+			*target = &value
+			continue
+		}
+		filtered.Content = append(filtered.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, &value)
+	}
+	err := filtered.Decode(&decoded)
+	*pc = legacyProjectConfig(decoded)
+	return err
 }
 
 type legacyAgentConfig struct {

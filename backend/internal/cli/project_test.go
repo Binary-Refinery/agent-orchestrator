@@ -249,6 +249,8 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 		"--agent-rules", "Run tests.",
 		"--agent-rules-file", "docs/rules.md",
 		"--orchestrator-rules", "Delegate.",
+		"--orchestrator-rules-file", ".ao/orchestrator.md",
+		"--orchestrator-prompt", "Inspect pending work.",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
@@ -260,11 +262,55 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	if err := json.Unmarshal(capture.body, &got); err != nil {
 		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
 	}
-	if got.Config.AgentRules != "Run tests." || got.Config.AgentRulesFile != "docs/rules.md" || got.Config.OrchestratorRules != "Delegate." {
+	if got.Config.AgentRules != "Run tests." || got.Config.AgentRulesFile != "docs/rules.md" || got.Config.OrchestratorRules != "Delegate." || got.Config.OrchestratorRulesFile != ".ao/orchestrator.md" || got.Config.OrchestratorPrompt != "Inspect pending work." {
 		t.Fatalf("rules config = %#v", got.Config)
 	}
 	if !strings.Contains(out, "updated config for project demo") {
 		t.Fatalf("output missing update message:\n%s", out)
+	}
+}
+
+func TestProjectAddIncludesInitialOrchestratorConfiguration(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusCreated, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "add", "--path", "/repo/demo", "--orchestrator-agent", "codex", "--orchestrator-rules", "Delegate.", "--orchestrator-rules-file", ".ao/orchestrator.md", "--orchestrator-prompt", "Inspect pending work.")
+	if err != nil {
+		t.Fatalf("add failed: %v; stderr=%s", err, errOut)
+	}
+	var got addProjectRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if capture.method != http.MethodPost || got.Config == nil || got.Config.Orchestrator.Agent != "codex" || got.Config.OrchestratorRules != "Delegate." || got.Config.OrchestratorRulesFile != ".ao/orchestrator.md" || got.Config.OrchestratorPrompt != "Inspect pending work." {
+		t.Fatalf("initial project configuration not sent: method=%s request=%s", capture.method, capture.body)
+	}
+}
+
+func TestProjectGetJSONPreservesOrchestratorConfiguration(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","config":{"orchestratorRulesFile":".ao/orchestrator.md","orchestratorPrompt":"Inspect pending work."}}}`)
+	writeRunFileFor(t, cfg, srv)
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "get", "demo", "--json")
+	if err != nil {
+		t.Fatalf("get failed: %v; stderr=%s", err, errOut)
+	}
+	var got projectGetResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Project.Config == nil || got.Project.Config.OrchestratorRulesFile != ".ao/orchestrator.md" || got.Project.Config.OrchestratorPrompt != "Inspect pending work." {
+		t.Fatalf("new config fields dropped from CLI JSON: %s", out)
+	}
+}
+
+func TestBuildProjectConfigPreservesOrchestratorJSON(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{configJSON: `{"orchestratorRulesFile":".ao/orchestrator.md","orchestratorPrompt":"Inspect pending work."}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OrchestratorRulesFile != ".ao/orchestrator.md" || got.OrchestratorPrompt != "Inspect pending work." {
+		t.Fatalf("new config fields dropped from config JSON: %#v", got)
 	}
 }
 

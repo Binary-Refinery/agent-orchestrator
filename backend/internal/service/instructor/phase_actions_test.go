@@ -148,12 +148,16 @@ func TestInstructorMechanicalRestartRecoversCompletedChecksBeforePhaseDirective(
 	worker := f.attachWorker(t, w.ID)
 	w = f.trustedFacts(t, w.ID, func(w *domain.InstructorWork) {
 		w.State, w.Phase, w.PhaseSequence = "ready", "implement", 1
-		w.PhaseActions = []domain.InstructorPhaseAction{{ID: "checks-before-restart", Kind: "checks", PhaseSequence: 1, Producer: worker, State: "running", StartedAt: f.now}}
 	})
 	f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Workspace: fixedWorkspace(path), Clock: func() time.Time { return f.now }})
 	if _, err := f.service.RunChecks(ctx, w.ID, worker, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Simulate a crash before the native action completion audit, retaining
+	// real profile evidence. A second live check must not supersede a running action.
+	f.trustedFacts(t, w.ID, func(w *domain.InstructorWork) {
+		w.PhaseActions = []domain.InstructorPhaseAction{{ID: "checks-before-restart", Kind: "checks", PhaseSequence: 1, Producer: worker, State: "running", StartedAt: f.now}}
+	})
 	// The native profiles committed successfully, but their completion audit was interrupted.
 	f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Workspace: fixedWorkspace(path), Clock: func() time.Time { return f.now }})
 	reviews := mechanicalReview{started: make(chan domain.InstructorWork, 1), release: make(chan struct{})}
@@ -206,11 +210,17 @@ func TestInstructorMechanicalRestartKeepsPartiallyCompletedChecksBlocked(t *test
 	worker := f.attachWorker(t, w.ID)
 	w = f.trustedFacts(t, w.ID, func(w *domain.InstructorWork) {
 		w.State, w.Phase, w.PhaseSequence = "ready", "implement", 1
-		w.PhaseActions = []domain.InstructorPhaseAction{{ID: "partial-checks-before-restart", Kind: "checks", PhaseSequence: 1, Producer: worker, State: "running", StartedAt: f.now}}
 	})
 	f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Workspace: fixedWorkspace(path), Clock: func() time.Time { return f.now }})
 	if _, err := f.service.RunChecks(ctx, w.ID, worker, []string{"push"}); err != nil {
 		t.Fatal(err)
+	}
+	// Native push completed before a crash; full has no positive proof.
+	f.trustedFacts(t, w.ID, func(w *domain.InstructorWork) {
+		w.PhaseActions = []domain.InstructorPhaseAction{{ID: "partial-checks-before-restart", Kind: "checks", PhaseSequence: 1, Producer: worker, State: "running", StartedAt: f.now}}
+	})
+	if _, err := f.service.RunChecks(ctx, w.ID, worker, []string{"full"}); err == nil {
+		t.Fatal("direct check superseded unknown mechanical effect")
 	}
 	f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Workspace: fixedWorkspace(path), Clock: func() time.Time { return f.now }})
 	reviews := mechanicalReview{started: make(chan domain.InstructorWork, 1), release: make(chan struct{})}

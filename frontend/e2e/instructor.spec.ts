@@ -66,7 +66,8 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 	await page.route("http://127.0.0.1:8080/api/v1/**", async (route) => {
 		const request = route.request();
 		const pathname = new URL(request.url()).pathname;
-		if (pathname === "/api/v1/instructor/capabilities") { await route.fulfill({ json: { schema: "ao.instructor.v1", enabled, reason: enabled ? undefined : "Enable AO_INSTRUCTOR in daemon configuration", commands: registry } }); return; }
+		if (pathname === "/api/v1/projects/instructor-demo") { await route.fulfill({ json: { status: "ok", project: { id: "instructor-demo", name: "Instructor demo", config: { orchestrator: { agent: "opencode", agentConfig: { model: "provider/model-a", effort: "native-high" } } } } } }); return; }
+		if (pathname === "/api/v1/instructor/capabilities") { await route.fulfill({ json: { schema: "ao.instructor.v1", enabled, publication: { available: true }, reason: enabled ? undefined : "Enable AO_INSTRUCTOR in daemon configuration", commands: registry } }); return; }
 		if (pathname === "/api/v1/instructor/plans") {
 			if (request.method() === "POST") {
 				const input = request.postDataJSON(); planRequests.push(input);
@@ -81,6 +82,9 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 		if (pathname === "/api/v1/instructor/exceptions") { exceptions.push(request.postDataJSON()); await route.fulfill({ json: currentSnapshot().works[0] }); return; }
 		if (pathname === "/api/v1/instructor/inventory") {
 			await route.fulfill({ json: { capturedAt: at, atomic: false, enabled: true, cached: true, scanError: "", projects: [{ id: "instructor-demo", name: "Instructor demo", path: "/demo", kind: "repository" }], sessions: [{ id: "session-orphan", projectId: "instructor-demo", kind: "worker", harness: "codex", mode: "tui", displayName: "Unassigned review", activityState: "idle", isTerminated: false, branch: "review/orphan", workIds: [], assignment: "unassigned", createdAt: at, updatedAt: at }], resources: [{ id: "branch-orphan", kind: "branch", projectId: "instructor-demo", repositoryPath: "/demo", path: "/demo", branch: "feature/orphan", dirty: false, status: "discovered", sessionIds: [], workIds: [], assignment: "unassigned", firstSeenAt: at, lastSeenAt: at }, { id: "probe-failed", kind: "repository", projectId: "instructor-demo", repositoryPath: "/missing", path: "/missing", dirty: false, status: "probe_failed", sessionIds: [], workIds: [], assignment: "unknown", error: "Repository unavailable", firstSeenAt: at, lastSeenAt: at }], unassignedCount: 1, unassignedResourceCount: 2 } }); return;
+		}
+		if (pathname.endsWith("/members")) {
+			await route.fulfill({ json: { capturedAt: at, workRevision: 1, coordinator: {}, members: [{ id: "member-one", name: "Login worker", role: "worker", association: "current", status: "running", requested: { harness: "opencode", model: "provider/model-a", effort: "native-ultra" }, sent: { harness: "opencode", model: "provider/model-a", effort: "native-high" } }] } }); return;
 		}
 		if (pathname.startsWith("/api/v1/instructor/works/")) {
 			const id = pathname.split("/").at(-1);
@@ -107,68 +111,40 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 	return { commands, savedPolicies, reconciliations, previews, exceptions, planRequests, statusReads: () => statusReads };
 }
 
-test("renderer: Instructor sits above projects and shows disabled capability honestly @T0 @INSTRUCTOR", async ({ page }) => {
-	await fixture(page, false);
-	await page.goto("/", { waitUntil: "domcontentloaded" });
-	const nav = page.locator('[data-sidebar="menu-button"][aria-label="Instructor"]');
-	await nav.click();
-	await expect(nav).toBeVisible();
-	const projects = page.getByText("Projects", { exact: true });
-	expect((await nav.boundingBox())!.y).toBeLessThan((await projects.boundingBox())!.y);
-	await expect(page).toHaveURL(/\/instructor$/);
+test("renderer: one board navigation and disabled capability @T0 @INSTRUCTOR", async ({ page }) => {
+	await fixture(page, false); await page.goto("/");
+	const nav = page.locator('[data-sidebar="menu-button"][aria-label="Instructor board"]');
+	await nav.click(); await expect(nav).toBeVisible();
+	await expect(page.locator('[data-sidebar="menu-button"][aria-label="Instructor"]')).toHaveCount(0);
+	await expect(page).toHaveURL(/\/instructor-board$/);
 	await expect(page.getByText("Instructor is disabled")).toBeVisible();
 	await expect(page.getByText("Login flow", { exact: true })).toHaveCount(0);
 });
 
-test("renderer: frozen Work snapshot, inventory, exact publication and honest launch readback @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
-	const state = await fixture(page);
-	await page.setViewportSize({ width: 1600, height: 1000 });
-	await page.goto("/");
-	await page.locator('[data-sidebar="menu-button"][aria-label="Instructor"]').click();
-	await expect(page.getByRole("heading", { name: "Instructor", exact: true })).toBeVisible();
-	await expect(page.getByTestId("instructor-topbar-label")).toHaveText("Instructor");
-	await expect(page.getByText("work-login", { exact: true })).toBeVisible();
-	await expect(page.getByText("Login flow", { exact: true })).toHaveCount(1);
-	await expect(page.getByText("Closed · last 7 days")).toBeVisible();
-	await expect(page.getByText("feature/orphan", { exact: false })).toBeVisible();
-	await expect(page.getByText("Repository unavailable", { exact: true })).toBeVisible();
-	await page.screenshot({ path: testInfo.outputPath("instructor-overview.png"), fullPage: true });
-	await page.getByRole("tab", { name: /History/ }).click();
-	await expect(page.getByText("Closed cleanup", { exact: true })).toBeVisible();
-	await page.getByRole("tab", { name: /Parked/ }).click();
-	await expect(page.getByText("Wait for database window", { exact: true })).toBeVisible();
-	await page.getByRole("tab", { name: /Active/ }).click();
-	await page.getByRole("button", { name: "Go all", exact: true }).click();
-	await expect.poll(() => state.commands.length).toBe(1);
-	expect(state.commands[0]).toMatchObject({ command: "go all", snapshotId: "snapshot-renderer-v1" });
-	expect(state.commands[0]).not.toHaveProperty("workIds");
-	expect(state.statusReads()).toBe(1);
-	await expect(page.getByText("Skipped: work-publish: exact publication approval required")).toBeVisible();
-	const publication = page.getByRole("row").filter({ hasText: "Publish upgrade" });
-	await publication.getByRole("button", { name: "Go", exact: true }).click();
-	const gate = page.getByRole("dialog", { name: "Go", exact: true });
-	await expect(gate.getByRole("textbox")).toHaveValue("");
-	await expect(gate.getByRole("button", { name: "Go", exact: true })).toBeDisabled();
-	expect(state.commands).toHaveLength(1);
-	await gate.getByRole("textbox").fill("PUBLISH-GO feature/upgrade");
-	await gate.getByRole("button", { name: "Go", exact: true }).click();
-	await expect.poll(() => state.commands.length).toBe(2);
-	expect(state.commands[1]).toMatchObject({ command: "go", snapshotId: "snapshot-renderer-v1", workIds: ["work-publish"], approval: "PUBLISH-GO feature/upgrade" });
-	await expect(gate).not.toBeVisible();
-	await page.getByRole("row").filter({ hasText: "Login flow" }).getByRole("button", { name: "Details", exact: true }).click();
+test("renderer: legacy links retain work selection and members without diagnostic inventory @T0 @INSTRUCTOR", async ({ page }) => {
+	await fixture(page); await page.goto("/#/instructor?workId=work-login");
+	await expect(page).toHaveURL(/instructor-board\?workId=work-login$/);
 	const details = page.getByRole("dialog", { name: "Login flow" });
+	await details.getByRole("tab", { name: "Event history", exact: true }).click();
+	await expect(details.getByText("Operator intake", { exact: false })).toBeVisible();
+	await details.getByRole("tab", { name: "Agents", exact: true }).click();
 	await expect(details.getByText("opencode · provider/model-a · native-ultra", { exact: true })).toBeVisible();
 	await expect(details.getByText("opencode · provider/model-a · native-high", { exact: true })).toBeVisible();
-	await expect(details.getByRole("row").filter({ hasText: "native-ultra" }).getByRole("cell", { name: "Unknown", exact: true })).toBeVisible();
+	await expect(details.getByText("Unknown", { exact: true })).toBeVisible();
+	await details.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "Instructor board", exact: true })).toBeVisible();
+	await expect(page.getByText("feature/orphan", { exact: false })).toHaveCount(0);
+	await expect(page.getByText("Repository unavailable", { exact: true })).toHaveCount(0);
+	await page.getByRole("tab", { name: "History", exact: true }).click();
+	await expect(page.getByText("Closed cleanup", { exact: true })).toBeVisible();
+	await page.getByRole("tab", { name: "Parked", exact: true }).click();
+	await expect(page.getByText("Wait for database window", { exact: true })).toBeVisible();
 });
 
-test("renderer: policy editor pins provider-native model effort without weakening workflow gates @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
-	const state = await fixture(page);
-	await page.setViewportSize({ width: 1400, height: 1600 });
-	await page.goto("/#/instructor");
+test("renderer: policy editor keeps native effort and gates @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
+	const state = await fixture(page); await page.setViewportSize({ width: 1400, height: 1600 }); await page.goto("/#/instructor-board");
 	await page.getByRole("button", { name: "Policy settings", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Instructor policy settings" });
-	await expect(dialog.getByRole("button", { name: "Save policy" })).toBeEnabled();
 	await dialog.getByRole("button", { name: "worker Requested model / effort", exact: true }).click();
 	await page.getByRole("menuitem", { name: /Reasoning effort/ }).hover();
 	await page.getByRole("menuitemradio", { name: "Native-ultra", exact: true }).click();
@@ -176,89 +152,60 @@ test("renderer: policy editor pins provider-native model effort without weakenin
 	await expect.poll(() => state.savedPolicies.length).toBe(1);
 	const saved = state.savedPolicies[0] as typeof policy;
 	expect(saved.roles.worker).toMatchObject({ model: "provider/model-a", effort: "maximum", effortByModel: { "provider/model-a": "native-ultra" } });
-	expect(saved.transitions).toEqual(policy.transitions);
-	expect(saved.closeoutRequires).toEqual(policy.closeoutRequires);
-	expect(saved.profiles).toEqual(policy.profiles);
+	expect(saved.transitions).toEqual(policy.transitions); expect(saved.closeoutRequires).toEqual(policy.closeoutRequires); expect(saved.profiles).toEqual(policy.profiles);
 	await expect(dialog.getByText("Policy saved. Existing work keeps its pinned version.")).toBeVisible();
-	await dialog.evaluate((element) => { element.scrollTop = 0; });
-	await page.screenshot({ path: testInfo.outputPath("instructor-policy.png"), fullPage: true });
+	await dialog.evaluate((element) => { element.scrollTop = 0; }); await page.screenshot({ path: testInfo.outputPath("instructor-policy.png"), fullPage: true });
 });
 
-test("renderer: exact delivery observation restores the pending publication gate @T0 @INSTRUCTOR", async ({ page }) => {
-	const state = await fixture(page, true, true);
-	await page.setViewportSize({ width: 1400, height: 1100 });
-	await page.goto("/#/instructor?workId=work-login");
-	const details = page.getByRole("dialog", { name: "Login flow", exact: true });
-	await details.getByRole("combobox", { name: "Observed delivery" }).selectOption("absent");
-	await expect(details.getByText("Verification: waiting · passes 2 / 2")).toBeVisible();
-	await expect(details.getByText("Original Human gate remains pending: Publish login")).toBeVisible();
-	await expect(details.getByText("dispatch-exact · orch-exact")).toBeVisible();
-	await details.getByRole("textbox", { name: "Observation note" }).fill("Inspected this exact target conversation; the dispatch is absent.");
-	await details.getByRole("button", { name: "Record observation" }).click();
-	await expect.poll(() => state.reconciliations.length).toBe(1);
+test("renderer: delivery observation restores captured pending publication @T0 @INSTRUCTOR", async ({ page }) => {
+	const state = await fixture(page, true, true); await page.goto("/#/instructor-board");
+	await page.getByRole("article", { name: "Login flow" }).getByRole("button", { name: "Review gate", exact: true }).click();
+	const gate = page.getByRole("dialog", { name: "Review approvals", exact: true });
+	await gate.getByRole("combobox", { name: "Observed delivery" }).selectOption("absent");
+	await expect(gate.getByText("Original Human gate remains pending: Publish login")).toBeVisible();
+	await expect(gate.getByText("dispatch-exact · orch-exact")).toBeVisible();
+	await gate.getByRole("textbox", { name: "Observation note" }).fill("Inspected this exact target conversation; the dispatch is absent.");
+	await gate.getByRole("button", { name: "Record observation" }).click(); await expect.poll(() => state.reconciliations.length).toBe(1);
 	expect(state.reconciliations[0]).toMatchObject({ snapshotId: "snapshot-renderer-v1", workId: "work-login", dispatchId: "dispatch-exact", accepted: false });
-	await expect(details.getByRole("button", { name: "Record observation" })).toHaveCount(0);
-	await details.getByRole("button", { name: "Close", exact: true }).click();
-	await page.getByRole("button", { name: "Status", exact: true }).click();
-	await expect(page.getByText(/Snapshot snapshot-renderer-v2/)).toBeVisible();
-	await expect(page.getByRole("row").filter({ hasText: "Login flow" }).getByText("Publish login", { exact: true })).toBeVisible();
-	expect(state.commands.filter((command) => command.command !== "status")).toHaveLength(0);
+	await expect(gate).not.toBeVisible(); await page.getByRole("article", { name: "Login flow" }).getByRole("button", { name: "Review gate", exact: true }).click();
+	await expect(gate.getByText("Publish login", { exact: true })).toBeVisible(); expect(state.commands).toHaveLength(0);
 });
 
-test("renderer: scoped work exception uses a reviewed exact approval without publishing @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
-	const state = await fixture(page, true, false, true);
-	await page.setViewportSize({ width: 1400, height: 1100 });
-	await page.goto("/#/instructor?workId=work-login");
+test("renderer: captured work exception click approval @T0 @INSTRUCTOR", async ({ page }) => {
+	const state = await fixture(page, true, false, true); await page.goto("/#/instructor?workId=work-login");
 	const details = page.getByRole("dialog", { name: "Login flow", exact: true });
-	await details.getByRole("button", { name: "Work exception", exact: true }).click();
+	await details.getByRole("button", { name: "Work models / budgets", exact: true }).click();
 	const exception = page.getByRole("dialog", { name: "Work exception", exact: true });
-	await exception.getByRole("spinbutton").fill("4");
+	await exception.getByRole("spinbutton").first().fill("4");
 	await exception.getByRole("textbox", { name: "Reason for this exception" }).fill("One bounded extra review cycle for this work.");
 	await exception.getByRole("button", { name: "Preview exception" }).click();
 	await expect(exception.getByText("Effective fix-round budget: 4")).toBeVisible();
-	await expect(exception.getByRole("textbox", { name: "Type the exact exception approval above" })).toHaveValue("");
-	await expect(exception.getByRole("button", { name: "Grant this work exception" })).toBeDisabled();
-	expect(state.exceptions).toHaveLength(0);
-	await page.screenshot({ path: testInfo.outputPath("instructor-exception-preview.png"), fullPage: true });
-	await exception.getByRole("textbox", { name: "Type the exact exception approval above" }).fill("EXCEPTION-GO work-login reviewed-proposal");
-	await exception.getByRole("button", { name: "Grant this work exception" }).click();
+	await expect(exception.getByRole("button", { name: "Grant this work exception" })).toBeDisabled(); expect(state.exceptions).toHaveLength(0);
+	await exception.getByRole("checkbox", { name: /I approve this captured work/ }).check(); await exception.getByRole("button", { name: "Grant this work exception" }).click();
 	await expect.poll(() => state.exceptions.length).toBe(1);
-	expect(state.exceptions[0]).toMatchObject({ ...state.previews[0], snapshotId: "snapshot-renderer-v1", workId: "work-login", approval: "EXCEPTION-GO work-login reviewed-proposal" });
-	expect(state.commands.filter((command) => command.command !== "status")).toHaveLength(0);
+	expect(state.exceptions[0]).toMatchObject({ ...state.previews[0], snapshotId: "snapshot-renderer-v1", workId: "work-login", approval: "EXCEPTION-GO work-login reviewed-proposal" }); expect(state.commands).toHaveLength(0);
 });
 
-test("renderer: strategic Instructor advice stays advisory and uses frozen gate admission @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
-	const state = await fixture(page);
-	await page.setViewportSize({ width: 1600, height: 1100 });
-	await page.goto("/#/instructor");
-	await page.getByRole("textbox", { name: "Strategic request" }).fill("Continue ready work and explain publication gates");
+test("renderer: questions give advice and explicit captured actions @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
+	const state = await fixture(page); await page.setViewportSize({ width: 1600, height: 1100 }); await page.goto("/#/instructor-board");
 	await page.getByRole("button", { name: "Ask Instructor", exact: true }).click();
-	await expect(page.getByText("Ready work can continue; publication needs the operator.")).toBeVisible();
-	expect(state.planRequests).toHaveLength(1);
-	expect(state.planRequests[0]).toMatchObject({ request: "Continue ready work and explain publication gates", snapshotId: "snapshot-renderer-v1", idempotencyKey: expect.any(String) });
-	expect(state.commands).toHaveLength(0);
-	await expect(page.getByText("opencode · provider/model-a · Unknown", { exact: true })).toBeVisible();
+	const conversation = page.getByRole("dialog", { name: "Ask Instructor", exact: true });
+	await conversation.getByRole("textbox", { name: "Strategic request" }).fill("Continue ready work and explain publication gates");
+	await conversation.getByRole("button", { name: "Ask Instructor", exact: true }).click();
+	await expect(conversation.getByText("Ready work can continue; publication needs the operator.")).toBeVisible();
+	expect(state.planRequests[0]).toMatchObject({ request: "Continue ready work and explain publication gates", snapshotId: "snapshot-renderer-v1", idempotencyKey: expect.any(String) }); expect(state.commands).toHaveLength(0);
+	await conversation.getByText("Model and request details", { exact: true }).click();
+	await expect(conversation.getByText("opencode · provider/model-a · Unknown", { exact: true })).toBeVisible();
 	await page.screenshot({ path: testInfo.outputPath("instructor-strategy.png"), fullPage: true });
-	await page.getByRole("button", { name: "Apply proposed command", exact: true }).click();
-	const gate = page.getByRole("dialog", { name: "Go", exact: true });
-	await expect(gate.getByRole("textbox")).toHaveValue("");
-	expect(state.commands).toHaveLength(0);
-	await gate.getByRole("textbox").fill("PUBLISH-GO feature/upgrade");
-	await gate.getByRole("button", { name: "Go", exact: true }).click();
+	await conversation.getByRole("button", { name: "Apply proposed command", exact: true }).click();
+	const gate = page.getByRole("dialog", { name: "Review approvals", exact: true });
+	await expect(gate.getByRole("button", { name: "Sign and continue" })).toBeDisabled(); expect(state.commands).toHaveLength(0);
+	await gate.getByRole("checkbox", { name: "Approve Publish upgrade" }).check(); await gate.getByRole("button", { name: "Sign and continue", exact: true }).click();
 	await expect.poll(() => state.commands.length).toBe(1);
-	expect(state.commands[0]).toMatchObject({ command: "go", snapshotId: "snapshot-renderer-v1", workIds: ["work-publish"], approval: "PUBLISH-GO feature/upgrade" });
-	await page.getByRole("button", { name: "Review intake draft", exact: true }).nth(0).click();
+	expect(state.commands[0]).toMatchObject({ command: "go", snapshotId: "snapshot-renderer-v1", workIds: ["work-publish"], approvals: [{ workId: "work-publish", approval: "PUBLISH-GO feature/upgrade" }] });
+	await page.getByRole("button", { name: "Ask Instructor", exact: true }).click(); await conversation.getByRole("button", { name: "Review intake draft", exact: true }).first().click();
 	const intake = page.getByRole("dialog", { name: "New work", exact: true });
 	await expect(intake.getByRole("textbox", { name: "Short work name" })).toHaveValue("Investigate retry");
 	await expect(intake.getByRole("textbox", { name: "Issue reference", exact: true })).toHaveValue("456");
-	await expect(intake.getByRole("textbox", { name: "Source / issue reference", exact: true })).toHaveValue("plan:plan-renderer:0");
-	await intake.getByRole("button", { name: "Close", exact: true }).click();
-	await page.getByRole("button", { name: "Review intake draft", exact: true }).nth(1).click();
-	await expect(intake.getByRole("textbox", { name: "Short work name", exact: true })).toHaveValue("Improve retry visibility");
-	await expect(intake.getByRole("textbox", { name: "Source / issue reference", exact: true })).toHaveValue("plan:plan-renderer:1");
-	await intake.getByRole("button", { name: "Close", exact: true }).click();
-	expect(state.commands).toHaveLength(1);
-	await page.getByRole("button", { name: "Status", exact: true }).click();
-	await expect(page.getByRole("button", { name: "Apply proposed command", exact: true })).toBeDisabled();
-	await expect(page.getByText("This advice refers to an earlier snapshot. Ask again for the current portfolio before applying it.")).toBeVisible();
+	await expect(intake.getByRole("textbox", { name: "Source / issue reference", exact: true })).toHaveValue("plan:plan-renderer:0"); expect(state.commands).toHaveLength(1);
 });

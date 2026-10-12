@@ -17,7 +17,6 @@ import {
 	AlertTriangle,
 	Archive,
 	CalendarClock,
-	Compass,
 	ChevronRight,
 	Download,
 	Folder,
@@ -456,7 +455,6 @@ function useSelection() {
 	});
 	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
 	const goAutomations = useCallback(() => void navigate({ to: "/automations" }), [navigate]);
-	const goInstructor = useCallback(() => void navigate({ to: "/instructor" }), [navigate]);
 	const goInstructorBoard = useCallback(() => void navigate({ to: "/instructor-board" }), [navigate]);
 	const goStandaloneBoard = useCallback(() => void navigate({ to: "/sessions" }), [navigate]);
 	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
@@ -482,13 +480,11 @@ function useSelection() {
 	return useMemo(() => ({
 		isHome: pathname === "/",
 		isAutomations: pathname === "/automations",
-		isInstructor: pathname === "/instructor",
 		isInstructorBoard: pathname === "/instructor-board",
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome,
 		goAutomations,
-		goInstructor,
 		goInstructorBoard,
 		goStandaloneBoard,
 		// Settings is a modal — open it in place so the current page (session
@@ -498,7 +494,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goAutomations, goInstructor, goInstructorBoard, goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, goStandaloneBoard, params.projectId, params.sessionId, pathname]);
+	}), [goAutomations, goInstructorBoard, goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, goStandaloneBoard, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -915,18 +911,6 @@ export function Sidebar({
 						<SidebarMenuButton aria-label={t("instructor.board.title")} className={NAV_ROW_CLASS} isActive={selection.isInstructorBoard} onClick={selection.goInstructorBoard} tooltip={isCollapsed ? t("instructor.board.title") : undefined}>
 							<LayoutDashboard aria-hidden="true" />
 							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">{t("instructor.board.title")}</span>
-						</SidebarMenuButton>
-					</SidebarMenuItem>
-					<SidebarMenuItem>
-						<SidebarMenuButton
-							aria-label={t("instructor.title")}
-							className={NAV_ROW_CLASS}
-							isActive={selection.isInstructor}
-							onClick={selection.goInstructor}
-							tooltip={isCollapsed ? t("instructor.title") : undefined}
-						>
-							<Compass aria-hidden="true" />
-							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">{t("instructor.title")}</span>
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 					<SidebarMenuItem>

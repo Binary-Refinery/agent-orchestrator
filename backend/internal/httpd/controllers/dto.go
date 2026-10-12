@@ -44,6 +44,25 @@ type InstructorWorkIDParam struct {
 	WorkID string `path:"workId"`
 }
 
+// InstructorProjectIDParam identifies one registered project in the URL.
+type InstructorProjectIDParam struct {
+	ProjectID string `path:"projectId"`
+}
+
+// InstructorIssueCandidatesQuery optionally previews any exact issue number,
+// including issues outside the bounded first-page backlog observation.
+type InstructorIssueCandidatesQuery struct {
+	Number int `query:"number,omitempty"`
+}
+
+// InstructorIssueIntakeRequest selects a real issue in the observed project repo.
+// Omitting Name uses the current external title as the short work name.
+type InstructorIssueIntakeRequest struct {
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	Name       string `json:"name,omitempty"`
+}
+
 // InstructorPlanIDParam identifies a durable global planning job in the URL.
 type InstructorPlanIDParam struct {
 	PlanID string `path:"planId"`

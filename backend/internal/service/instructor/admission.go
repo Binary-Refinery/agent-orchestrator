@@ -42,7 +42,7 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 		if err != nil {
 			return err
 		}
-		if w.State == "done" || w.State == "cancelled" {
+		if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" {
 			return invalid("native submission work is already closed")
 		}
 		if w.PolicyVersion != PolicyVersion(w.Policy) {

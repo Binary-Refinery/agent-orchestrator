@@ -2306,3 +2306,26 @@ func openCodeApprovalTier(value string) (domain.PermissionMode, string, bool) {
 		return "", "", false
 	}
 }
+
+// InstructorQuiescent observes the live provider queue seam under its dispatch
+// lock. A missing, stopped or recovering controller cannot establish quiet.
+func (s *Service) InstructorQuiescent(ctx context.Context, id domain.SessionID) (bool, error) {
+	controller, err := s.Controller(id)
+	if err != nil {
+		return false, err
+	}
+	return controller.instructorQuiescent(ctx)
+}
+
+// InstructorReviewQuiescent rejects a recovering or replacement controller;
+// ready plus settled durable queue establishes the captured provider is quiet.
+func (s *Service) InstructorReviewQuiescent(ctx context.Context, id, generation string) (bool, error) {
+	controller, err := s.ControllerForOwner(domain.ReviewConversationOwner(id))
+	if err != nil {
+		return false, err
+	}
+	if generation == "" || controller.generation != generation {
+		return false, domain.ErrInstructorProducerChanged
+	}
+	return controller.instructorQuiescent(ctx)
+}

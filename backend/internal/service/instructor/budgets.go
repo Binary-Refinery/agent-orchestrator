@@ -20,6 +20,9 @@ func (s *Service) ReserveBudget(ctx context.Context, workID, kind, resourceKey s
 	if err != nil {
 		return domain.InstructorBudgetEntry{}, err
 	}
+	if work.Cancellation != nil || work.State == "done" || work.State == "cancelled" {
+		return domain.InstructorBudgetEntry{}, invalid("terminal or cancelling work cannot reserve new execution")
+	}
 	if err := validateWorkExceptions(work, s.now()); err != nil {
 		return domain.InstructorBudgetEntry{}, err
 	}

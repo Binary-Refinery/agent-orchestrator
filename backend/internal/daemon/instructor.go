@@ -37,6 +37,7 @@ type instructorDelivery struct {
 	}
 	sessions reportSemanticSession
 	binder   instructorDispatchBinder
+	reviews  instructorReviewerControl
 }
 
 // Deliver targets the real project orchestrator conversation. A durable dispatch
@@ -45,7 +46,7 @@ func (d instructorDelivery) Deliver(ctx context.Context, dispatch domain.Instruc
 	if dispatch.ID == "" || dispatch.ProjectID == "" || dispatch.WorkID == "" {
 		return errors.New("instructor dispatch identity is incomplete")
 	}
-	if dispatch.Action == "stopp" {
+	if dispatch.Action == "stopp" || dispatch.Action == "abbrechen" {
 		return d.stopManagedWork(ctx, dispatch)
 	}
 	var target domain.SessionRecord
@@ -613,8 +614,11 @@ func (g instructorGovernance) RecordReviewerLaunch(ctx context.Context, spec rev
 	return g.svc.RecordLaunch(ctx, work.ID, domain.InstructorLaunch{ReviewID: id, ReviewRunID: spec.RunID, RuntimeGeneration: spec.LaunchID, SHA: spec.TargetSHA, Role: "reviewer", Requested: selection, Sent: &selection, Status: "launched"})
 }
 
-func newInstructorRuntime(store instructorRuntimeStore, manager *sessionmanager.Manager, verifier instructorsvc.EvidenceVerifier) (*instructorsvc.Service, instructorGovernance, instructorInventory) {
+func newInstructorRuntime(store instructorRuntimeStore, manager *sessionmanager.Manager, verifier instructorsvc.EvidenceVerifier, reviews ...instructorReviewerControl) (*instructorsvc.Service, instructorGovernance, instructorInventory) {
 	delivery := &instructorDelivery{store: store, sessions: manager}
+	if len(reviews) > 0 {
+		delivery.reviews = reviews[0]
+	}
 	service := instructorsvc.New(instructorsvc.Deps{Store: store, Delivery: delivery, Workspace: instructorWorkspace{store: store, sessions: manager}, Verifier: verifier, RoleValidator: manager, PolicyPath: os.Getenv("AO_INSTRUCTOR_POLICY"), Publication: hostPublicationBoundary{}})
 	delivery.binder = service
 	inventory := instructorInventory{store: store}

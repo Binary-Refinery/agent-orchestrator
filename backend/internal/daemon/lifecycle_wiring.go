@@ -591,6 +591,10 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 // translation in the wiring rather than in either domain.
 type chatLauncher struct{ svc *chatsvc.Service }
 
+func (c chatLauncher) InstructorChatQuiescent(ctx context.Context, id domain.SessionID) (bool, error) {
+	return c.svc.InstructorQuiescent(ctx, id)
+}
+
 func (c chatLauncher) InterruptChat(ctx context.Context, id domain.SessionID) error {
 	err := c.svc.Interrupt(ctx, id)
 	if errors.Is(err, chatsvc.ErrNoActiveTurn) {
@@ -658,6 +662,10 @@ func (c chatLauncher) SendReviewChat(ctx context.Context, reviewID, message stri
 
 func (c chatLauncher) ReviewChatAlive(reviewID string) bool {
 	return c.svc.HasLiveControllerForOwner(domain.ReviewConversationOwner(reviewID))
+}
+
+func (c chatLauncher) InstructorReviewChatQuiescent(ctx context.Context, id, generation string) (bool, error) {
+	return c.svc.InstructorReviewQuiescent(ctx, id, generation)
 }
 
 func (c chatLauncher) InterruptReviewChat(ctx context.Context, reviewID string) error {

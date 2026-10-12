@@ -51,7 +51,7 @@ func (s *Service) exceptionProposal(ctx context.Context, in ExceptionInput) (dom
 	if err != nil {
 		return w, ExceptionPreview{}, err
 	}
-	if w.State == "done" || w.State == "cancelled" {
+	if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" {
 		return w, ExceptionPreview{}, invalid("terminal work cannot receive an exception")
 	}
 	if hasPublicationHistory(w) {

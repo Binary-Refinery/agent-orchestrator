@@ -5,12 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InstructorBoard } from "./InstructorBoard";
 
 const mocks = vi.hoisted(() => ({
-	enabled: true, publication: { available: true, reason: "" }, snapshot: {} as Record<string, unknown>,
-	command: vi.fn(), refetch: vi.fn(), inventoryRefetch: vi.fn(), navigate: vi.fn(), projectSettings: vi.fn(),
+	orchestrator: undefined as Record<string, unknown> | undefined, enabled: true, publication: { available: true, reason: "" }, snapshot: {} as Record<string, unknown>,
+	command: vi.fn(), refetch: vi.fn(), inventoryRefetch: vi.fn(), navigate: vi.fn(), projectSettings: vi.fn(), createProject: vi.fn(), startProject: vi.fn(),
 	membersRead: vi.fn(), members: null as Record<string, unknown> | null,
 	details: null as Record<string, unknown> | null,
 }));
 const commands = [
+	{ action: "abbrechen", name: "Cancel", mutates: true, snapshotRequired: true },
 	{ action: "weiter", name: "Weiter", mutates: true, snapshotRequired: true },
 	{ action: "go", name: "Go", mutates: true, snapshotRequired: true },
 	{ action: "pruefen", name: "Prüfen", mutates: true, snapshotRequired: true },
@@ -22,8 +23,13 @@ function gate(patch: Record<string, unknown> = {}) {
 	return work({ state: "waiting_human", actions: ["go"], sha: "commit-a", branch: "feature/a", gate: { id: "gate-a", title: "Publish login", kind: "publication", exactApproval: "PUBLISH-GO feature/a" }, ...patch });
 }
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => mocks.navigate }));
-vi.mock("../stores/ui-store", () => ({ useUiStore: (select: (value: unknown) => unknown) => select({ openProjectSettings: mocks.projectSettings }) }));
-vi.mock("./InstructorView", () => ({ InstructorNewDialog: () => null, InstructorWorkDetails: () => null, InstructorDeliveryReconcile: () => null }));
+vi.mock("../stores/ui-store", () => ({ useUiStore: (select: (value: unknown) => unknown) => select({ openProjectSettings: mocks.projectSettings, requestCreateProject: mocks.createProject }) }));
+vi.mock("../hooks/useWorkspaceQuery", () => ({ useWorkspaceQuery: () => ({ data: [], refetch: vi.fn() }), useWorkspaceScope: () => ({ data: { project: { id: "project-a" }, orchestrator: mocks.orchestrator } }) }));
+vi.mock("../hooks/useProjectOrchestratorAction", () => ({ useProjectOrchestratorAction: () => ({ isSpawning: false, isProjectRestarting: false, isProvisioning: false, spawnError: null, openOrchestrator: mocks.startProject }) }));
+vi.mock("../lib/api-client", () => ({ apiClient: { GET: vi.fn().mockResolvedValue({ data: { status: "ok", project: { config: { orchestrator: { agent: "codex", agentConfig: { model: "project-native", effort: "project-high" } } } } } }) }, apiErrorMessage: () => "Failed" }));
+vi.mock("./InstructorNewDialog", () => ({ InstructorNewDialog: () => null }));
+vi.mock("./InstructorWorkDetails", () => ({ InstructorWorkDetails: () => null }));
+vi.mock("./InstructorDeliveryReconcile", () => ({ InstructorDeliveryReconcile: () => null }));
 vi.mock("./InstructorPolicyDialog", () => ({ InstructorPolicyDialog: () => null }));
 vi.mock("./InstructorModelDialog", () => ({ InstructorModelDialog: () => null }));
 vi.mock("./InstructorExceptionDialog", () => ({ InstructorExceptionDialog: () => null }));
@@ -46,16 +52,31 @@ function mount() {
 }
 describe("Instructor board", () => {
 	beforeEach(() => {
-		vi.clearAllMocks(); mocks.enabled = true; mocks.publication = { available: true, reason: "" };
+		vi.clearAllMocks(); mocks.orchestrator = undefined; mocks.enabled = true; mocks.publication = { available: true, reason: "" };
 		mocks.snapshot = { id: "snapshot-a", createdAt: "2026-10-12T08:00:00Z", works: [work()], commands };
 		mocks.command.mockResolvedValue({ dispatches: [] }); mocks.refetch.mockResolvedValue({ data: mocks.snapshot }); mocks.inventoryRefetch.mockResolvedValue({});
 		mocks.members = null; mocks.details = null;
 	});
+	it.each([
+		["waiting_input", "waiting for input"],
+		["blocked", "blocked"],
+		["exited", "exited"],
+	])("shows known orchestrator activity %s", (state, label) => {
+		mocks.orchestrator = { id: "coordinator-1", provider: "codex", statusReadiness: "ready", isTerminated: false, activity: { state } };
+		mount();
+		expect(screen.getAllByText(new RegExp(`Project orchestrator · ${label}`))).toHaveLength(2);
+	});
+	it("keeps uncertain orchestrator status unknown", () => {
+		mocks.orchestrator = { id: "coordinator-1", statusReadiness: "degraded", activity: { state: "running" } };
+		mount();
+		expect(screen.getAllByText(/Project orchestrator · unknown/)).toHaveLength(2);
+	});
+
 	it("groups durable works by project without an always-mounted agent inventory", () => {
 		mocks.snapshot = { ...mocks.snapshot, works: [work(), work({ id: "work-2", projectId: "project-b", name: "Release" })] };
 		mount();
-		expect(screen.getByRole("heading", { name: "Project A" })).toBeVisible();
-		expect(screen.getByRole("heading", { name: "Project B" })).toBeVisible();
+		expect(screen.getByRole("heading", { name: /Project A/ })).toBeVisible();
+		expect(screen.getByRole("heading", { name: /Project B/ })).toBeVisible();
 		expect(screen.getAllByRole("article")).toHaveLength(2);
 		expect(mocks.membersRead).toHaveBeenCalledWith(null);
 		expect(screen.queryByText("Runtime resource inventory")).not.toBeInTheDocument();
@@ -63,8 +84,30 @@ describe("Instructor board", () => {
 	});
 	it("opens the actual project agent configuration directly", async () => {
 		mount();
-		await userEvent.click(screen.getByRole("button", { name: "Project orchestrator · Model settings" }));
+		await userEvent.click(screen.getByRole("button", { name: "Project A orchestrator model settings" }));
 		expect(mocks.projectSettings).toHaveBeenCalledExactlyOnceWith("project-a", "agents");
+	});
+	it("creates projects through the existing global project flow", async () => {
+		mount(); await userEvent.click(screen.getByRole("button", { name: "Add project" }));
+		expect(mocks.createProject).toHaveBeenCalledOnce();
+	});
+	it("captures cancellation and requires explicit confirmation before sending", async () => {
+		mocks.snapshot = { ...mocks.snapshot, works: [work({ actions: ["abbrechen"] })] };
+		const app = mount(); await userEvent.click(screen.getByRole("button", { name: "Cancel work" }));
+		const dialog = screen.getByRole("dialog", { name: "Cancel work" });
+		expect(within(dialog).getByRole("button", { name: "Cancel work" })).toBeDisabled();
+		expect(mocks.command).not.toHaveBeenCalled();
+		mocks.snapshot = { ...mocks.snapshot, id: "snapshot-new", works: [work({ revision: 3, actions: [] })] }; app.redraw();
+		await userEvent.click(within(dialog).getByRole("checkbox"));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Cancel work" }));
+		expect(mocks.command).toHaveBeenCalledWith({ command: "abbrechen", snapshotId: "snapshot-a", workIds: ["work-1"], idempotencyKey: expect.any(String) });
+	});
+	it("shows pending cancellation in the active view and cannot resume it", () => {
+		mocks.snapshot = { ...mocks.snapshot, works: [work({ state: "parked", actions: [], cancellation: { dispatchId: "cancel-one", requestedAt: "2026-10-12T08:00:00Z" } })] };
+		mount(); expect(screen.getByRole("article", { name: "Login" })).toBeVisible();
+		expect(screen.getByText("Cancelling", { exact: true })).toBeVisible();
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(mocks.command).not.toHaveBeenCalled();
 	});
 	it("only runs daemon-admitted actions and refreshes live state after a command", async () => {
 		mount();

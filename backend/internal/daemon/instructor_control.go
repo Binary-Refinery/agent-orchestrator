@@ -28,7 +28,7 @@ func (d instructorDelivery) stopManagedWork(ctx context.Context, dispatch domain
 	if !found || w.ProjectID != dispatch.ProjectID {
 		return instructorsvc.ErrConflict
 	}
-	if w.State != "parked" {
+	if w.State != "parked" || dispatch.Action == "abbrechen" && (w.Cancellation == nil || w.Cancellation.DispatchID != dispatch.ID) || dispatch.Action == "stopp" && w.Cancellation != nil {
 		if w.Revision != dispatch.WorkRevision {
 			// Work changed after protected reload, before any member/interrupt
 			// operation. Discard only this superseded attempt, not the new intent.
@@ -45,7 +45,7 @@ func (d instructorDelivery) stopManagedWork(ctx context.Context, dispatch domain
 				return err
 			}
 			for _, current := range rows {
-				if current.ID == dispatch.ID && current.Action == "stopp" && current.State == "leased" && current.ProjectID == w.ProjectID && current.WorkRevision == w.Revision {
+				if current.ID == dispatch.ID && current.Action == dispatch.Action && current.State == "leased" && current.ProjectID == w.ProjectID && current.WorkRevision == w.Revision {
 					return fmt.Errorf("%w: same stop was preserved across its terminal action audit; no interrupt attempted", instructorsvc.ErrDeliveryRetryable)
 				}
 			}
@@ -72,6 +72,11 @@ func (d instructorDelivery) stopManagedWork(ctx context.Context, dispatch domain
 		}
 		if err := control.InterruptInstructorProducer(ctx, rec.ID, instance); err != nil {
 			failures = append(failures, fmt.Errorf("native pause %s: %w", rec.ID, err))
+		}
+	}
+	if dispatch.Action == "abbrechen" {
+		if err := d.interruptWorkReviewers(ctx, w); err != nil {
+			failures = append(failures, err)
 		}
 	}
 	if err := errors.Join(failures...); err != nil {

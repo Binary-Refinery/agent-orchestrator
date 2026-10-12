@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { components } from "../../api/schema";
 import type { useDaemonStatus } from "../hooks/useDaemonStatus";
+import type { CreateProjectAgentSelection } from "../components/CreateProjectAgentSheet";
 
 // Shared state the persistent _shell layout owns and route content reads. The
 // daemon status effect (IPC poll + event transport) must run exactly once, so
@@ -8,19 +9,15 @@ import type { useDaemonStatus } from "../hooks/useDaemonStatus";
 export type ShellContextValue = {
 	daemonStatus: ReturnType<typeof useDaemonStatus>;
 	workspaceStartupState: "loading" | "ready" | "error";
-	createProject: (input: {
+	createProject: (input: CreateProjectAgentSelection & {
 		path: string;
-		workerAgent: string;
-		orchestratorAgent: string;
-		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		defaultBranch?: string;
+		clonePreparationId?: string;
 		asWorkspace?: boolean;
 	}) => Promise<void>;
-	cloneProject: (input: {
+	cloneProject: (input: CreateProjectAgentSelection & {
 		remoteUrl: string;
 		destinationParent: string;
-		workerAgent: string;
-		orchestratorAgent: string;
-		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 	}) => Promise<void>;
 	initializeProjectRepository: (path: string) => Promise<void>;
 	validateImport?: (input: {

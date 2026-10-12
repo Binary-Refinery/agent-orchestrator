@@ -46,3 +46,22 @@ func TestInstructorNativeStopUsesControlAndRejectsReusedIdentity(t *testing.T) {
 	}
 	m.endAgentOperation("worker", agentOperationSwitch)
 }
+
+func TestInstructorCancellationQuiescenceDoesNotInferTUIDeathOrReplacement(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["worker"] = domain.SessionRecord{ID: "worker", Kind: domain.KindWorker, Mode: domain.SessionModeTUI, Activity: domain.Activity{State: domain.ActivityIdle}}
+	m := New(Deps{Store: controlIdentityStore{fakeStore: st, instance: "original"}})
+	if quiet, err := m.InstructorProducerQuiescent(ctx, "worker", "original"); err != nil || quiet {
+		t.Fatalf("idle TUI was native termination: %v %v", quiet, err)
+	}
+	if quiet, err := m.InstructorProducerQuiescent(ctx, "worker", "replaced"); quiet || !errors.Is(err, domain.ErrInstructorProducerChanged) {
+		t.Fatalf("replacement inherited native proof: %v %v", quiet, err)
+	}
+	rec := st.sessions["worker"]
+	rec.Activity.State = domain.ActivityExited
+	st.sessions["worker"] = rec
+	if quiet, err := m.InstructorProducerQuiescent(ctx, "worker", "original"); err != nil || !quiet {
+		t.Fatalf("positive native exit missing: %v %v", quiet, err)
+	}
+}

@@ -12,12 +12,10 @@ import type { TFunction } from "i18next";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Info, Pencil } from "lucide-react";
 import type { components } from "../../api/schema";
-import { agentModelsQueryKey, agentModelsQueryOptions, refreshAgentModels, revalidateAgentModels, type AgentModelCatalog } from "../hooks/useAgentModelsQuery";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { initialNativeRoleSelection, rememberNativeEffort, savedNativeEffort, type NativeEffortDefaults } from "../lib/native-effort-defaults";
-import { isConcreteModelID, modelChoiceLabel } from "../lib/agent-model-choices";
 import { WORKER_DEFAULT_REVIEWERS } from "../lib/reviewer-harnesses";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { OrchestratorSpawnError, spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -28,7 +26,8 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveRepoPath, deriveRepoHost, IntakeFields, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
-import { AgentModelCombobox } from "./settings/AgentModelCombobox";
+import { ProjectAgentModelField } from "./settings/ProjectAgentModelField";
+import { OrchestratorInstructionsFields } from "./OrchestratorInstructionsFields";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -138,6 +137,9 @@ function SettingsBody({
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
+		orchestratorRules: config.orchestratorRules ?? "",
+		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
+		orchestratorPrompt: config.orchestratorPrompt ?? "",
 		workerModel: workerInitial.model,
 		workerEffort: workerInitial.effort,
 		workerNativeEffortDefaults: workerInitial.defaults,
@@ -282,6 +284,9 @@ function SettingsBody({
 						),
 						autoReview: values.autoReview,
 					};
+			next.orchestratorRules = values.orchestratorRules.trim() ? values.orchestratorRules : undefined;
+			next.orchestratorRulesFile = values.orchestratorRulesFile.trim() || undefined;
+			next.orchestratorPrompt = values.orchestratorPrompt.trim() ? values.orchestratorPrompt : undefined;
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 				body: { displayName, config: next },
@@ -605,7 +610,7 @@ function SettingsBody({
 							/>
 						}
 						model={
-							<AgentModelField
+							<ProjectAgentModelField
 								role="worker"
 								agentId={form.workerAgent}
 								projectId={projectId}
@@ -643,7 +648,7 @@ function SettingsBody({
 							/>
 						}
 						model={
-							<AgentModelField
+							<ProjectAgentModelField
 								role="orchestrator"
 								agentId={form.orchestratorAgent}
 								projectId={projectId}
@@ -694,7 +699,7 @@ function SettingsBody({
 								/>
 							}
 							model={
-								<AgentModelField
+								<ProjectAgentModelField
 									role="reviewer"
 									agentId={form.reviewerHarness || defaultReviewerHarness}
 									projectId={projectId}
@@ -740,157 +745,16 @@ function SettingsBody({
 							{reviewerWarning}
 						</p>
 					)}
+					<OrchestratorInstructionsFields
+						idPrefix="project-settings-orchestrator"
+						rules={form.orchestratorRules}
+						rulesFile={form.orchestratorRulesFile}
+						prompt={form.orchestratorPrompt}
+						onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+					/>
 				</ProjectSettingsSection>
 			)}
 		</ProjectSettingsFormView>
-	);
-}
-
-function AgentModelField({
-	role,
-	agentId,
-	projectId,
-	model,
-	mode,
-	effort,
-	onModelChange,
-	onModeChange,
-	onEffortChange,
-	onValidityChange,
-}: {
-	role: "worker" | "orchestrator" | "reviewer";
-	agentId: string;
-	projectId: string;
-	model: string;
-	mode: string;
-	effort: string;
-	onModelChange: (value: string) => void;
-	onModeChange: (value: string) => void;
-	onEffortChange: (value: string) => void;
-	onValidityChange: (valid: boolean) => void;
-}) {
-	const { t } = useTranslation();
-	const queryClient = useQueryClient();
-	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
-	const catalog: AgentModelCatalog | undefined = query.data;
-	const [tuningValid, setTuningValid] = useState(true);
-	const validityCallback = useRef(onValidityChange);
-	validityCallback.current = onValidityChange;
-	const nativeModel = (catalog?.models ?? []).find((item) => item.id === model) ?? (!model ? catalog?.models?.find((item) => item.isDefault && isConcreteModelID(item.id)) : undefined);
-	const needsExplicitEffort = Boolean(nativeModel?.efforts?.some((value) => value && (nativeModel.effortSupport === "supported" || value.toLowerCase() !== "default")));
-	const nativeValid = tuningValid && !(needsExplicitEffort && Boolean(model) && !effort) && !(nativeModel?.effortSupport === "unknown" && Boolean(model || effort)) && !(catalog?.stale && Boolean(effort));
-	useEffect(() => { validityCallback.current(nativeValid); }, [nativeValid]);
-	const revalidationQuery = useQuery({
-		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
-		queryFn: () => revalidateAgentModels(agentId, projectId),
-		enabled: agentId !== "" && catalog?.refreshRecommended === true,
-		staleTime: Number.POSITIVE_INFINITY,
-		retry: false,
-	});
-	useEffect(() => {
-		if (revalidationQuery.data) {
-			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
-		}
-	}, [agentId, projectId, queryClient, revalidationQuery.data]);
-	const isMode = catalog?.selectionMode === "mode";
-	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
-	const warning =
-		(revalidationQuery.isError ? (revalidationQuery.error instanceof Error ? revalidationQuery.error.message : t("settings.models.validateFailed")) : undefined) ??
-		catalog?.warning ??
-		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
-
-	if (agentId !== "" && query.isFetching && catalog === undefined) {
-		return (
-			<div className="min-w-0">
-				<span className="text-xs text-settings-muted" role="status" aria-label={t("settings.models.loading")}>
-					{t("settings.models.loading")}
-				</span>
-			</div>
-		);
-	}
-
-	if (isMode) {
-		const defaultMode = catalog.models?.find((item) => item.isDefault && isConcreteModelID(item.id))?.id;
-		const selectedMode = isConcreteModelID(mode) ? mode : "";
-		const options = (catalog.models ?? []).filter((item) => isConcreteModelID(item.id)).map((item) => ({
-			value: item.id,
-			label: modelChoiceLabel(item),
-		}));
-		return (
-			<>
-				<div className="min-w-0">
-					<div className="flex min-w-0 items-center gap-2">
-						<SettingsOptionMenu
-							aria-label={label}
-							value={selectedMode || defaultMode || ""}
-							options={options}
-							placeholder={t("settings.models.modeNotReported")}
-							action={selectedMode && !defaultMode ? { label: t("settings.models.useAgentMode"), onSelect: () => onModeChange("") } : undefined}
-							triggerClassName="w-full justify-between"
-							disabled={options.length === 0 && !(selectedMode && !defaultMode)}
-							onChange={(value) => {
-								onModeChange(value === defaultMode ? "" : value);
-								onModelChange("");
-							}}
-						/>
-					</div>
-				</div>
-				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
-			</>
-		);
-	}
-
-	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
-	const refreshCatalog = async () => {
-		const refreshed = await refreshAgentModels(agentId, projectId);
-		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
-	};
-	const selectCatalogModel = (value: string) => {
-		onModelChange(value || catalog?.models?.find((item) => item.isDefault && isConcreteModelID(item.id))?.id || "");
-		onModeChange("");
-	};
-	const selectCustomModel = (value: string) => {
-		onModelChange(value);
-		onModeChange("");
-	};
-	const chooseNativeEffort = (value: string) => {
-		if (!model && nativeModel?.id && value) onModelChange(nativeModel.id);
-		onEffortChange(value);
-	};
-	return (
-		<>
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-center gap-2">
-					<AgentModelCombobox
-						aria-label={label}
-						value={model}
-						pinSelection
-						models={catalog?.models ?? []}
-						allowCustom={catalog?.allowCustom}
-						customModelEntry={customModelEntry}
-						agentLabel={agentId}
-						onRefresh={refreshCatalog}
-						refreshing={catalog?.refreshState === "queued" || catalog?.refreshState === "refreshing"}
-						refreshError={catalog?.refreshError}
-						retryAt={catalog?.retryAt}
-						disabled={(query.isFetching && !catalog) || agentId === ""}
-						onChange={selectCatalogModel}
-						onCustom={selectCustomModel}
-						triggerClassName="w-full justify-between"
-						compact={agentId === "codex"}
-						tuning={{
-							effort,
-							requireExplicitEffort: true,
-							onEffortChange: chooseNativeEffort,
-							onValidityChange: setTuningValid,
-							roleLabel: t(`settings.models.${role}Role`),
-						}}
-					/>
-				</div>
-			</div>
-			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
-			{needsExplicitEffort && Boolean(model) && !effort ? <p className="px-1 text-xs leading-row text-warning">{t("settings.models.nativeDefaultRequired")}</p> : null}
-		</>
 	);
 }
 

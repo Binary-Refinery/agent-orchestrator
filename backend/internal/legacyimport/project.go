@@ -126,6 +126,16 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 	} else if pc.OrchestratorRule != nil {
 		droppedRules = true
 	}
+	if v, ok := legacyStringValue(pc.OrchestratorRulesFile); ok {
+		cfg.OrchestratorRulesFile = strings.TrimSpace(v)
+	} else if pc.OrchestratorRulesFile != nil {
+		droppedRules = true
+	}
+	if v, ok := legacyStringValue(pc.OrchestratorPrompt); ok {
+		cfg.OrchestratorPrompt = v
+	} else if pc.OrchestratorPrompt != nil {
+		*notes = append(*notes, "dropped: orchestratorPrompt must be a string")
+	}
 
 	// Surface project-level fields the rewrite has no home for (#247 §4).
 	var dropped []string
@@ -154,6 +164,14 @@ func buildProjectConfig(pc legacyProjectConfig, notes *[]string) domain.ProjectC
 }
 
 func legacyStringValue(node *yaml.Node) (string, bool) {
+	seen := map[*yaml.Node]bool{}
+	for node != nil && node.Kind == yaml.AliasNode {
+		if seen[node] {
+			return "", false
+		}
+		seen[node] = true
+		node = node.Alias
+	}
 	if node == nil || node.Kind != yaml.ScalarNode {
 		return "", false
 	}

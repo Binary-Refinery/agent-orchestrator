@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -220,9 +221,10 @@ func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := buildProjectRules(projectRulesConfig{
-		ProjectPath:    dir,
-		AgentRules:     "Inline rule.",
-		AgentRulesFile: "rules.md",
+		ProjectPath: dir,
+		Rules:       "Inline rule.",
+		RulesFile:   "rules.md",
+		FieldName:   "agentRulesFile",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +239,65 @@ func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
 func TestProjectRelativeFileRejectsTraversal(t *testing.T) {
 	if _, err := projectRelativeFile(t.TempDir(), "../rules.md"); err == nil {
 		t.Fatal("expected traversal path to be rejected")
+	}
+}
+
+func TestBuildProjectRulesFailsClearlyForInvalidFile(t *testing.T) {
+	for _, field := range []string{"agentRulesFile", "orchestratorRulesFile"} {
+		for _, rel := range []string{"missing.md", "dir", "../rules.md", `..\rules.md`, `C:\rules.md`, `C:rules.md`, "docs/../rules.md"} {
+			t.Run(field+"/"+rel, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.Mkdir(filepath.Join(dir, "dir"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				got, err := buildProjectRules(projectRulesConfig{ProjectPath: dir, Rules: "Inline must not mask error.", RulesFile: rel, FieldName: field})
+				if err == nil || got != "" || !strings.Contains(err.Error(), field) || !strings.Contains(err.Error(), fmt.Sprintf("%q", rel)) {
+					t.Fatalf("rules = %q, err = %v; want named file error and no fallback", got, err)
+				}
+			})
+		}
+	}
+}
+
+func TestBuildProjectRulesConfinesSymlinksToRepository(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("Inside rule."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "rules.md"), []byte("Outside secret."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("rules.md", filepath.Join(dir, "inside.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "outside")); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"agentRulesFile", "orchestratorRulesFile"} {
+		cfg := projectRulesConfig{ProjectPath: dir, RulesFile: "inside.md", FieldName: field}
+		got, err := buildProjectRules(cfg)
+		if err != nil || got != "Inside rule." {
+			t.Fatalf("in-repo symlink: rules = %q, err = %v", got, err)
+		}
+		cfg.RulesFile = "outside/rules.md"
+		got, err = buildProjectRules(cfg)
+		if err == nil || got != "" || !strings.Contains(err.Error(), field) {
+			t.Fatalf("escaping symlink: rules = %q, err = %v", got, err)
+		}
+	}
+}
+
+func TestBuildProjectRulesNormalizesPortableFileSeparators(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "rules.md"), []byte("Portable rule."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildProjectRules(projectRulesConfig{ProjectPath: dir, RulesFile: `docs\rules.md`, FieldName: "orchestratorRulesFile"})
+	if err != nil || got != "Portable rule." {
+		t.Fatalf("portable file: rules = %q, err = %v", got, err)
 	}
 }
 

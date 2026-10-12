@@ -207,6 +207,85 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
+	it("saves launch instructions without restarting or sending the initial task to a live orchestrator", async () => {
+		mockProject({
+			id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", repo: "",
+			config: {
+				worker: { agent: "codex" }, orchestrator: { agent: "claude-code" },
+				sessionPrefix: "keep-prefix", agentRulesFile: ".ao/worker.md",
+				orchestratorRules: "Keep original rules.", orchestratorRulesFile: ".ao/original.md", orchestratorPrompt: "Original initial task.",
+			},
+		});
+		renderSettings("proj-1", undefined, "agents");
+		await userEvent.click(await screen.findByText("Orchestrator instructions"));
+		fireEvent.change(screen.getByLabelText("Standing instructions"), { target: { value: "Keep review gates." } });
+		fireEvent.change(screen.getByLabelText("Rules file in repository"), { target: { value: " .ao/new-orchestrator.md " } });
+		fireEvent.change(screen.getByLabelText("Initial task for new launches"), { target: { value: "Inspect new work." } });
+		expect(screen.getByText(/Changes apply to future launches/)).toBeVisible();
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1].body.config).toMatchObject({
+			sessionPrefix: "keep-prefix", agentRulesFile: ".ao/worker.md",
+			orchestratorRules: "Keep review gates.", orchestratorRulesFile: ".ao/new-orchestrator.md", orchestratorPrompt: "Inspect new work.",
+		});
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("clears optional launch instructions while retaining unrelated project config", async () => {
+		mockProject({
+			id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", repo: "",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" },
+				orchestratorRules: "Original rules.", orchestratorRulesFile: ".ao/rules.md", orchestratorPrompt: "Original task.",
+				sessionPrefix: "keep-prefix" },
+		});
+		renderSettings("proj-1", undefined, "agents");
+		await userEvent.click(await screen.findByText("Orchestrator instructions"));
+		for (const label of ["Standing instructions", "Rules file in repository", "Initial task for new launches"]) {
+			fireEvent.change(screen.getByLabelText(label), { target: { value: " " } });
+		}
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const config = putMock.mock.calls[0][1].body.config;
+		expect(config).toMatchObject({ sessionPrefix: "keep-prefix" });
+		expect(config.orchestratorRules).toBeUndefined();
+		expect(config.orchestratorRulesFile).toBeUndefined();
+		expect(config.orchestratorPrompt).toBeUndefined();
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("persists instructions and provider configuration before launching a replacement orchestrator", async () => {
+		mockProject({ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", repo: "",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" }, orchestratorRulesFile: ".ao/original.md" } });
+		let completeSave!: () => void;
+		putMock.mockImplementation(() => new Promise((resolve) => { completeSave = () => resolve({ data: { project: {} }, error: undefined }); }));
+		renderSettings("proj-1", undefined, "agents");
+		await userEvent.click(await screen.findByText("Orchestrator instructions"));
+		fireEvent.change(screen.getByLabelText("Initial task for new launches"), { target: { value: "Apply the new initial task." } });
+		await chooseOption(screen.getByRole("button", { name: "Orchestrator agent" }), "OpenCode");
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1].body.config).toMatchObject({
+			orchestrator: { agent: "opencode" }, orchestratorRulesFile: ".ao/original.md", orchestratorPrompt: "Apply the new initial task.",
+		});
+		expect(postMock).not.toHaveBeenCalled();
+		completeSave();
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", { body: { projectId: "proj-1", clean: true } }));
+	});
+
+	it("never launches a replacement if saving its configuration fails", async () => {
+		mockProject({ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", repo: "",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } } });
+		putMock.mockResolvedValue({ error: { message: "orchestratorRulesFile must be repository-relative" } });
+		renderSettings("proj-1", undefined, "agents");
+		await userEvent.click(await screen.findByText("Orchestrator instructions"));
+		fireEvent.change(screen.getByLabelText("Rules file in repository"), { target: { value: "../outside.md" } });
+		await chooseOption(screen.getByRole("button", { name: "Orchestrator agent" }), "OpenCode");
+		submitSettings();
+		await screen.findByText("orchestratorRulesFile must be repository-relative");
+		expect(putMock).toHaveBeenCalledTimes(1);
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
 	it("saves a changed project setting without a submit action", async () => {
 		mockProject({
 			id: "proj-1",
