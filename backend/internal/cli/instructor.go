@@ -15,12 +15,13 @@ import (
 // CLI DTOs intentionally mirror the HTTP boundary. Raw response JSON preserves
 // policy and evidence details without importing daemon/controller packages.
 type instructorCommandDTO struct {
-	Command        string          `json:"command"`
-	SnapshotID     string          `json:"snapshotId,omitempty"`
-	WorkIDs        []string        `json:"workIds,omitempty"`
-	Approval       string          `json:"approval,omitempty"`
-	IdempotencyKey string          `json:"idempotencyKey,omitempty"`
-	New            json.RawMessage `json:"new,omitempty"`
+	Command              string          `json:"command"`
+	SnapshotID           string          `json:"snapshotId,omitempty"`
+	WorkIDs              []string        `json:"workIds,omitempty"`
+	Approval             string          `json:"approval,omitempty"`
+	IdempotencyKey       string          `json:"idempotencyKey,omitempty"`
+	New                  json.RawMessage `json:"new,omitempty"`
+	PublicationOperation string          `json:"publicationOperation,omitempty"`
 }
 type instructorSnapshotDTO struct {
 	ID    string `json:"id"`
@@ -117,6 +118,9 @@ func newInstructorActionCommand(ctx *commandContext) *cobra.Command {
 	var newFile string
 	cmd := &cobra.Command{Use: "command <name>", Aliases: []string{"run"}, Short: "Execute a registry command against an observed snapshot", Args: usageArgs(cobra.ExactArgs(1)), RunE: func(cmd *cobra.Command, args []string) error {
 		body.Command = args[0]
+		if os.Getenv("AO_SESSION_ID") != "" && strings.HasPrefix(body.Approval, "PUBLISH-GO ") {
+			return usageError{errors.New("native sessions cannot authorize publication; a protected operator decision is required")}
+		}
 		if newFile != "" {
 			data, err := os.ReadFile(newFile)
 			if err != nil {
@@ -136,6 +140,7 @@ func newInstructorActionCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&body.SnapshotID, "snapshot", "", "Exact snapshot identifier returned by instructor status")
 	cmd.Flags().StringSliceVar(&body.WorkIDs, "work", nil, "Work identifiers within that snapshot (omit to select its displayed eligible work)")
 	cmd.Flags().StringVar(&body.Approval, "approval", "", "Exact approval phrase required by the displayed gate")
+	cmd.Flags().StringVar(&body.PublicationOperation, "publication-operation", "", "Bind publication approval to publish or merge (default publish)")
 	cmd.Flags().StringVar(&body.IdempotencyKey, "key", "", "Stable caller key for safely retrying the same command")
 	cmd.Flags().StringVar(&newFile, "new-file", "", "Registration JSON for a new-work registry command")
 	cmd.Flags().Bool("json", false, "Print JSON (command outcomes are always structured)")

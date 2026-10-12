@@ -153,6 +153,21 @@ func TestActionServiceMerge_GuardsAndSquashMergesExactHead(t *testing.T) {
 	}
 }
 
+func TestActionServiceMerge_GovernedAdmissionCannotFallBackToHostSCM(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	called := false
+	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm, MergeAdmission: func(_ context.Context, candidate domain.PullRequest) error {
+		called = true
+		if candidate.URL != pr.URL || candidate.HeadSHA != pr.HeadSHA {
+			t.Fatalf("admission did not inspect tracked facts: %+v", candidate)
+		}
+		return errors.New("controlled publisher required")
+	}})
+	if _, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA}); !errors.Is(err, ErrPRPreconditions) || !called || scm.mergeCalls != 0 {
+		t.Fatalf("governed merge bypassed publication admission: err=%v called=%v merges=%d", err, called, scm.mergeCalls)
+	}
+}
+
 func TestActionServiceMerge_MergesAPRThatNeedsNoReview(t *testing.T) {
 	pr, scm := mergeableActionFixture()
 	scm.review = ports.SCMReviewObservation{

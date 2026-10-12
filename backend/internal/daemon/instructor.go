@@ -45,6 +45,9 @@ func (d instructorDelivery) Deliver(ctx context.Context, dispatch domain.Instruc
 	if dispatch.ID == "" || dispatch.ProjectID == "" || dispatch.WorkID == "" {
 		return errors.New("instructor dispatch identity is incomplete")
 	}
+	if dispatch.Action == "stopp" {
+		return d.stopManagedWork(ctx, dispatch)
+	}
 	var target domain.SessionRecord
 	if dispatch.TargetSessionID != "" {
 		record, found, err := d.store.GetSession(ctx, dispatch.TargetSessionID)
@@ -70,19 +73,26 @@ func (d instructorDelivery) Deliver(ctx context.Context, dispatch domain.Instruc
 		}
 	}
 	if target.ID == "" {
-		return errors.New("no live project orchestrator; start one explicitly")
+		return fmt.Errorf("%w: no live project orchestrator; start one explicitly", instructorsvc.ErrDeliveryRetryable)
 	}
 	if target.ProjectID != dispatch.ProjectID || target.Kind != domain.KindOrchestrator || target.IsTerminated || target.Activity.State == domain.ActivityExited {
 		return errors.New("dispatch target is not a live orchestrator for this project")
 	}
 	if target.Activity.State == domain.ActivityBlocked {
-		return errors.New("project orchestrator is blocked on a human decision")
+		return fmt.Errorf("%w: project orchestrator is blocked on a human decision", instructorsvc.ErrDeliveryRetryable)
 	}
 	if d.binder == nil || d.sessions == nil {
 		return errors.New("instructor delivery is unavailable")
 	}
 	if err := d.binder.BindDispatchTarget(ctx, dispatch.ID, target.ID); err != nil {
 		return err
+	}
+	if binder, ok := d.binder.(interface {
+		BindDispatchRuntime(context.Context, string, domain.SessionRecord) error
+	}); ok {
+		if err := binder.BindDispatchRuntime(ctx, dispatch.ID, target); err != nil {
+			return fmt.Errorf("%w: %w", instructorsvc.ErrDeliveryUncertain, err)
+		}
 	}
 	reader, ok := d.store.(interface {
 		GetInstructorWork(context.Context, string) (domain.InstructorWork, bool, error)
@@ -134,16 +144,17 @@ func (i instructorInventory) collectInventoryMetadata(ctx context.Context) (cont
 	if err != nil {
 		return controllers.InstructorInventoryResponse{}, err
 	}
-	works, err := i.store.ListInstructorWorks(ctx)
-	if err != nil {
-		return controllers.InstructorInventoryResponse{}, err
-	}
 	links := map[domain.SessionID][]string{}
-	for _, work := range works {
-		for _, id := range work.SessionIDs {
-			links[id] = append(links[id], work.ID)
+	for _, session := range sessions {
+		work, assigned, e := i.store.InstructorWorkForSession(ctx, session.ID)
+		if e != nil {
+			return controllers.InstructorInventoryResponse{}, e
+		}
+		if assigned {
+			links[session.ID] = []string{work.ID}
 		}
 	}
+
 	result := controllers.InstructorInventoryResponse{CapturedAt: time.Now().UTC(), Atomic: false, Projects: []controllers.InstructorProjectInventory{}, Sessions: []controllers.InstructorSessionInventory{}}
 	for _, project := range projects {
 		result.Projects = append(result.Projects, controllers.InstructorProjectInventory{ID: project.ID, Name: project.DisplayName, Path: project.Path, Kind: string(project.Kind.WithDefault())})
@@ -168,6 +179,35 @@ type instructorWorkspace struct {
 	store interface {
 		GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
 	}
+	sessions interface {
+		AcquireSessionInput(domain.SessionID) (func(), bool)
+	}
+}
+
+func (w instructorWorkspace) LeaseInstructorProducer(ctx context.Context, id domain.SessionID, instance string) (func(), error) {
+	if w.sessions == nil {
+		return nil, errors.New("native check session operation lease unavailable")
+	}
+	release, ok := w.sessions.AcquireSessionInput(id)
+	if !ok {
+		return nil, errors.New("native check producer has an exclusive runtime operation")
+	}
+	reader, ok := w.store.(interface {
+		InstructorSessionInstance(context.Context, domain.SessionID) (string, bool, error)
+	})
+	if !ok {
+		release()
+		return nil, errors.New("native check incarnation lookup unavailable")
+	}
+	current, found, err := reader.InstructorSessionInstance(ctx, id)
+	if err != nil || !found || current != instance {
+		release()
+		if err != nil {
+			return nil, err
+		}
+		return nil, domain.ErrInstructorProducerChanged
+	}
+	return release, nil
 }
 
 func (w instructorWorkspace) WorkspaceForSession(ctx context.Context, id domain.SessionID) (string, error) {
@@ -178,6 +218,10 @@ func (w instructorWorkspace) WorkspaceForSession(ctx context.Context, id domain.
 	if !found {
 		return "", errors.New("session workspace does not exist")
 	}
+	return w.WorkspaceForInstructorProducer(ctx, session)
+}
+
+func (w instructorWorkspace) WorkspaceForInstructorProducer(_ context.Context, session domain.SessionRecord) (string, error) {
 	path := session.Metadata.WorkspaceRepoPath
 	if path == "" {
 		path = session.Metadata.WorkspacePath
@@ -247,7 +291,7 @@ func (g instructorGovernance) PrepareLaunch(ctx context.Context, cfg ports.Spawn
 }
 
 func (g instructorGovernance) AttachSession(ctx context.Context, workID string, id domain.SessionID, cfg ports.SpawnConfig) error {
-	if err := g.svc.AttachSession(ctx, workID, id); err != nil {
+	if err := g.svc.AttachLaunchingSession(ctx, workID, id, cfg.ParentSessionID); err != nil {
 		return err
 	}
 	// The manager attaches before controller creation; this is requested launch
@@ -287,24 +331,54 @@ func (g instructorGovernance) ValidateResume(ctx context.Context, id domain.Sess
 	if err := g.svc.ValidateResume(ctx, id); err != nil {
 		return err
 	}
-	session, found, err := g.store.GetSession(ctx, id)
+	session, roleName, _, err := g.managedSessionRole(ctx, work, id)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return errors.New("managed session no longer exists")
-	}
-	roleName := string(session.Kind)
-	for _, launch := range work.Launches {
-		if launch.SessionID == id {
-			roleName = launch.Role
-		}
 	}
 	role, found := work.Policy.Roles[roleName]
 	if !found {
 		return errors.New("managed session role is not in its pinned policy")
 	}
 	return g.validator.ValidateInstructorAgentConfig(ctx, work.ProjectID, role, string(session.Harness), session.Metadata.Model, session.Metadata.Effort)
+}
+
+// managedSessionRole only uses launch authority captured for the current
+// inserted row. Legacy or readmitted sessions fall back to their real kind,
+// never to a deleted predecessor with the same display ID.
+func (g instructorGovernance) managedSessionRole(ctx context.Context, work domain.InstructorWork, id domain.SessionID) (domain.SessionRecord, string, string, error) {
+	reader, ok := g.store.(interface {
+		InstructorSessionForMembership(context.Context, domain.SessionID) (domain.SessionRecord, string, bool, error)
+	})
+	if !ok {
+		return domain.SessionRecord{}, "", "", errors.New("managed session incarnation lookup is unavailable")
+	}
+	session, instance, found, err := reader.InstructorSessionForMembership(ctx, id)
+	if err != nil {
+		return domain.SessionRecord{}, "", "", err
+	}
+	if !found || instance == "" || session.ProjectID != work.ProjectID {
+		return domain.SessionRecord{}, "", "", fmt.Errorf("%w: managed session instance changed or is unavailable", instructorsvc.ErrConflict)
+	}
+	bindings, ok := g.store.(interface {
+		InstructorWorkForSessionInstance(context.Context, domain.SessionID, string) (domain.InstructorWork, bool, error)
+	})
+	if !ok {
+		return domain.SessionRecord{}, "", "", errors.New("managed session instance assignment lookup is unavailable")
+	}
+	bound, managed, err := bindings.InstructorWorkForSessionInstance(ctx, id, instance)
+	if err != nil {
+		return domain.SessionRecord{}, "", "", err
+	}
+	if !managed || bound.ID != work.ID || bound.PolicyVersion != work.PolicyVersion {
+		return domain.SessionRecord{}, "", "", fmt.Errorf("%w: managed session assignment or pinned policy changed", instructorsvc.ErrConflict)
+	}
+	roleName := string(session.Kind)
+	for _, launch := range bound.Launches {
+		if launch.SessionID == id && launch.SessionInstanceID == instance {
+			roleName = launch.Role
+		}
+	}
+	return session, roleName, instance, nil
 }
 
 func (g instructorGovernance) SpawnFailed(ctx context.Context, id string, cause error) error {
@@ -352,18 +426,9 @@ func (g instructorGovernance) ValidateAgentChange(ctx context.Context, id domain
 	if err := g.svc.ValidateResume(ctx, id); err != nil {
 		return err
 	}
-	session, found, err := g.store.GetSession(ctx, id)
+	_, roleName, _, err := g.managedSessionRole(ctx, work, id)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return errors.New("managed session no longer exists")
-	}
-	roleName := string(session.Kind)
-	for _, launch := range work.Launches {
-		if launch.SessionID == id {
-			roleName = launch.Role
-		}
 	}
 	role, found := work.Policy.Roles[roleName]
 	if !found {
@@ -410,7 +475,7 @@ func (g instructorGovernance) ValidateChatAgentConfig(ctx context.Context, id do
 // A requested next-turn choice and a provider-reported configuration are
 // separate facts. Neither attests what reasoning an individual inference used.
 func (g instructorGovernance) ObserveChatAgentConfig(ctx context.Context, id domain.SessionID, model, effort, stage string) error {
-	session, found, err := g.store.GetSession(ctx, id)
+	_, found, err := g.store.GetSession(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -421,13 +486,16 @@ func (g instructorGovernance) ObserveChatAgentConfig(ctx context.Context, id dom
 	launch := domain.InstructorLaunch{Status: stage}
 	if found {
 		work, managed, err = g.svc.WorkForSession(ctx, id)
-		roleName, harness = string(session.Kind), string(session.Harness)
-		for _, previous := range work.Launches {
-			if previous.SessionID == id {
-				roleName = previous.Role
-			}
+		if err != nil || !managed {
+			return err
 		}
+		current, role, instance, roleErr := g.managedSessionRole(ctx, work, id)
+		if roleErr != nil {
+			return roleErr
+		}
+		roleName, harness = role, string(current.Harness)
 		launch.SessionID = id
+		launch.SessionInstanceID = instance
 	} else {
 		reader, ok := g.store.(interface {
 			GetReviewByID(context.Context, string) (domain.Review, bool, error)
@@ -459,8 +527,14 @@ func (g instructorGovernance) ObserveChatAgentConfig(ctx context.Context, id dom
 
 func (g instructorGovernance) ValidateReviewerLaunch(ctx context.Context, spec reviewcore.LaunchSpec) error {
 	work, managed, err := g.svc.WorkForSession(ctx, spec.WorkerID)
-	if err != nil || !managed {
+	if err != nil {
 		return err
+	}
+	if !managed {
+		if spec.ScopeKey != "" {
+			return fmt.Errorf("%w: governed reviewer scope no longer has an admitted worker instance", instructorsvc.ErrConflict)
+		}
+		return nil
 	}
 	if err := g.svc.ValidateResume(ctx, spec.WorkerID); err != nil {
 		return err
@@ -477,8 +551,14 @@ func (g instructorGovernance) ValidateReviewerLaunch(ctx context.Context, spec r
 
 func (g instructorGovernance) ValidateReviewerReuse(ctx context.Context, spec reviewcore.LaunchSpec) error {
 	work, managed, err := g.svc.WorkForSession(ctx, spec.WorkerID)
-	if err != nil || !managed {
+	if err != nil {
 		return err
+	}
+	if !managed {
+		if spec.ScopeKey != "" {
+			return fmt.Errorf("%w: governed reviewer scope no longer has an admitted worker instance", instructorsvc.ErrConflict)
+		}
+		return nil
 	}
 	requested := domain.InstructorAgentSelection{Harness: string(spec.Harness), Model: spec.AgentConfig.Model, Effort: spec.AgentConfig.Effort}
 	for index := len(work.Launches) - 1; index >= 0; index-- {
@@ -513,8 +593,14 @@ func instructorReviewScope(work domain.InstructorWork) string {
 
 func (g instructorGovernance) RecordReviewerLaunch(ctx context.Context, spec reviewcore.LaunchSpec) error {
 	work, managed, err := g.svc.WorkForSession(ctx, spec.WorkerID)
-	if err != nil || !managed {
+	if err != nil {
 		return err
+	}
+	if !managed {
+		if spec.ScopeKey != "" {
+			return fmt.Errorf("%w: governed reviewer scope no longer has an admitted worker instance", instructorsvc.ErrConflict)
+		}
+		return nil
 	}
 	if spec.ScopeKey != instructorReviewScope(work) {
 		return fmt.Errorf("%w: review phase scope changed before launch confirmation", instructorsvc.ErrConflict)
@@ -524,12 +610,12 @@ func (g instructorGovernance) RecordReviewerLaunch(ctx context.Context, spec rev
 		id = spec.RunID
 	}
 	selection := domain.InstructorAgentSelection{Harness: string(spec.Harness), Model: spec.AgentConfig.Model, Effort: spec.AgentConfig.Effort}
-	return g.svc.RecordLaunch(ctx, work.ID, domain.InstructorLaunch{ReviewID: id, ReviewRunID: spec.RunID, SHA: spec.TargetSHA, Role: "reviewer", Requested: selection, Sent: &selection, Status: "launched"})
+	return g.svc.RecordLaunch(ctx, work.ID, domain.InstructorLaunch{ReviewID: id, ReviewRunID: spec.RunID, RuntimeGeneration: spec.LaunchID, SHA: spec.TargetSHA, Role: "reviewer", Requested: selection, Sent: &selection, Status: "launched"})
 }
 
 func newInstructorRuntime(store instructorRuntimeStore, manager *sessionmanager.Manager, verifier instructorsvc.EvidenceVerifier) (*instructorsvc.Service, instructorGovernance, instructorInventory) {
 	delivery := &instructorDelivery{store: store, sessions: manager}
-	service := instructorsvc.New(instructorsvc.Deps{Store: store, Delivery: delivery, Workspace: instructorWorkspace{store: store}, Verifier: verifier, RoleValidator: manager, PolicyPath: os.Getenv("AO_INSTRUCTOR_POLICY")})
+	service := instructorsvc.New(instructorsvc.Deps{Store: store, Delivery: delivery, Workspace: instructorWorkspace{store: store, sessions: manager}, Verifier: verifier, RoleValidator: manager, PolicyPath: os.Getenv("AO_INSTRUCTOR_POLICY"), Publication: hostPublicationBoundary{}})
 	delivery.binder = service
 	inventory := instructorInventory{store: store}
 	inventory.cache = newInstructorInventoryCache(inventory.collectInventory, store)
@@ -559,6 +645,11 @@ func startInstructor(ctx context.Context, svc *instructorsvc.Service, log *slog.
 }
 
 func (d instructorDelivery) Acknowledge(ctx context.Context, dispatch domain.InstructorDispatch) error {
+	if resolver, ok := d.store.(interface {
+		ResolveInstructorSemanticDelivery(context.Context, domain.InstructorDispatch, bool) error
+	}); ok {
+		return resolver.ResolveInstructorSemanticDelivery(ctx, dispatch, true)
+	}
 	ledger, ok := d.store.(ports.SemanticDeliveryLedger)
 	if !ok {
 		return errors.New("native delivery ledger is unavailable")
@@ -566,6 +657,26 @@ func (d instructorDelivery) Acknowledge(ctx context.Context, dispatch domain.Ins
 	return ledger.ResolveSemanticDelivery(ctx, dispatch.TargetSessionID, dispatch.ID, true)
 }
 func (d instructorDelivery) Reconcile(ctx context.Context, dispatch domain.InstructorDispatch, accepted bool, _ string) error {
+	if leaser, ok := d.sessions.(interface {
+		AcquireSessionInput(domain.SessionID) (func(), bool)
+	}); ok {
+		release, admitted := leaser.AcquireSessionInput(dispatch.TargetSessionID)
+		if !admitted {
+			return fmt.Errorf("%w: target runtime has an exclusive operation", instructorsvc.ErrDeliveryUncertain)
+		}
+		defer release()
+	}
+	if reader, ok := d.store.(interface {
+		AdmitInstructorReport(context.Context, string, domain.SessionID, string) (domain.InstructorReportAdmission, bool, error)
+	}); ok {
+		a, found, err := reader.AdmitInstructorReport(ctx, dispatch.WorkID, dispatch.TargetSessionID, dispatch.ID)
+		if err != nil {
+			return err
+		}
+		if !found || a.InstanceID != dispatch.TargetSessionInstanceID {
+			return domain.ErrInstructorProducerChanged
+		}
+	}
 	ledger, ok := d.store.(ports.SemanticDeliveryLedger)
 	if !ok {
 		return errors.New("native delivery ledger is unavailable")
@@ -580,6 +691,11 @@ func (d instructorDelivery) Reconcile(ctx context.Context, dispatch domain.Instr
 		if err := reconciler.ReconcileSemanticDelivery(ctx, dispatch.TargetSessionID, dispatch.ID, accepted); err != nil {
 			return err
 		}
+	}
+	if resolver, ok := d.store.(interface {
+		ResolveInstructorSemanticDelivery(context.Context, domain.InstructorDispatch, bool) error
+	}); ok {
+		return resolver.ResolveInstructorSemanticDelivery(ctx, dispatch, accepted)
 	}
 	return ledger.ResolveSemanticDelivery(ctx, dispatch.TargetSessionID, dispatch.ID, accepted)
 }

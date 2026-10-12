@@ -48,11 +48,13 @@ func (s *Service) fenceUnauthorizedPublication(ctx context.Context, w domain.Ins
 	return err
 }
 
-// HasPublicationGrant is the durable authorization check. Remote publication
-// observations must separately establish what actually happened after approval.
+// HasPublicationGrant recognizes historical, exact-scoped decisions for remote
+// evidence/violation inspection. It is not execution authority: the controlled
+// executor additionally requires protected operator provenance, an enforced
+// runtime boundary and an unconsumed single-use grant.
 func HasPublicationGrant(w domain.InstructorWork) bool {
 	for _, g := range w.PublicationGrants {
-		if validPublicationGrant(g, w.ID) && g.PolicyVersion == w.PolicyVersion && g.SHA == w.SHA && g.Branch == w.Branch {
+		if (g.Operation == "" || g.Operation == "publish") && validPublicationGrant(g, w.ID) && g.PolicyVersion == w.PolicyVersion && g.SHA == w.SHA && g.Branch == w.Branch {
 			return true
 		}
 	}
@@ -60,14 +62,14 @@ func HasPublicationGrant(w domain.InstructorWork) bool {
 }
 
 func validPublicationGrant(g domain.InstructorPublicationGrant, workID string) bool {
-	return g.WorkID == workID && g.PolicyVersion != "" && fullSHA(g.SHA) && g.Branch != "" &&
+	return !g.Revoked && g.WorkID == workID && g.PolicyVersion != "" && fullSHA(g.SHA) && g.Branch != "" &&
 		g.GateID != "" && g.SnapshotID != "" && g.WorkRevision > 0 &&
 		g.Approval == "PUBLISH-GO "+g.Branch && !g.ApprovedAt.IsZero()
 }
 
 func hasPublicationHistory(w domain.InstructorWork) bool {
 	for _, g := range w.PublicationGrants {
-		if validPublicationGrant(g, w.ID) {
+		if (g.Operation == "" || g.Operation == "publish") && validPublicationGrant(g, w.ID) {
 			return true
 		}
 	}

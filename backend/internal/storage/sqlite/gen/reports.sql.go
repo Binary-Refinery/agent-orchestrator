@@ -812,7 +812,7 @@ const requeueClaimedReports = `-- name: RequeueClaimedReports :execrows
 UPDATE reports
 SET delivery_state = 'pending', claim_token = '', claimed_at = NULL,
     last_error = 'delivery claim recovered after daemon restart'
-WHERE delivery_state = 'claimed'
+WHERE delivery_state = 'claimed' AND delivery_batch_id NOT LIKE 'instructor-report:%'
 `
 
 func (q *Queries) RequeueClaimedReports(ctx context.Context) (int64, error) {

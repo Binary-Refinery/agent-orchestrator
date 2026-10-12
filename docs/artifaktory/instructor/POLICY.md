@@ -109,6 +109,12 @@ check commands or that an unsupported effort will silently fall back.
     "requiredPhases": ["start", "commit", "push", "pr", "ci", "review", "fix", "delta", "closeout"]
   },
   "maxFixRounds": 2,
+  "budgets": {
+    "maxConcurrentSessions": 8,
+    "maxSessions": 32,
+    "maxTurns": 256,
+    "maxDelegations": 24
+  },
   "nudgeAfterSeconds": 300,
   "escalateAfterSeconds": 900,
   "commands": [

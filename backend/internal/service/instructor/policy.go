@@ -28,6 +28,7 @@ func DefaultPolicy() domain.InstructorPolicy {
 		{From: "delta", To: "triage", Role: "orchestrator", Requires: []string{"delta-changes"}},
 		{From: "closeout", To: "triage", Role: "orchestrator", Requires: []string{"ci-failed"}},
 	}, CloseoutRequires: []string{"task-packet", "push", "full", "ci", "review-report", "triage", "delta", "attribution", "traceability"}, MaxFixRounds: 2, NudgeAfterSeconds: 300, EscalateAfterSeconds: 900,
+		Budgets:      &domain.InstructorBudgets{MaxConcurrentSessions: 8, MaxSessions: 32, MaxTurns: 256, MaxDelegations: 24},
 		Attribution:  domain.InstructorAttribution{CoAuthorName: "AO Worker", SessionTrailer: "AO-session", IssueTrailer: "Issue"},
 		Traceability: domain.InstructorTraceability{Required: true, RequireAssignee: true, RequiredPhases: []string{"start", "commit", "push", "pr", "ci", "review", "fix", "delta", "closeout"}, AllowedBaseBranches: []string{"main", "staging"}},
 	}
@@ -53,6 +54,16 @@ func ValidatePolicy(p domain.InstructorPolicy) error {
 	}
 	if p.NudgeAfterSeconds < 1 || p.EscalateAfterSeconds <= p.NudgeAfterSeconds {
 		return invalid("policy escalation must follow a positive nudge window")
+	}
+	if p.Budgets != nil {
+		for name, limit := range map[string]int{"maxConcurrentSessions": p.Budgets.MaxConcurrentSessions, "maxSessions": p.Budgets.MaxSessions, "maxTurns": p.Budgets.MaxTurns, "maxDelegations": p.Budgets.MaxDelegations} {
+			if limit < 0 || limit > 1000000 {
+				return invalid("budget " + name + " must be between 0 (unlimited) and 1000000")
+			}
+		}
+		if p.Budgets.MaxSessions > 0 && p.Budgets.MaxConcurrentSessions > p.Budgets.MaxSessions {
+			return invalid("concurrent session budget cannot exceed lifetime session budget")
+		}
 	}
 	for name, r := range p.Roles {
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Harness) == "" {

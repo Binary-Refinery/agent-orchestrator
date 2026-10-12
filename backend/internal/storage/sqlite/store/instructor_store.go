@@ -91,8 +91,28 @@ func (s *Store) GetInstructorWork(ctx context.Context, id string) (domain.Instru
 
 // InstructorWorkForSession resolves the durable work explicitly bound to a session.
 func (s *Store) InstructorWorkForSession(ctx context.Context, id domain.SessionID) (domain.InstructorWork, bool, error) {
+	return s.instructorWorkForSession(ctx, id, "")
+}
+
+// InstructorWorkForSessionInstance rejects a binding that changed after its
+// caller captured the inserted session row. Progress in the same work does not
+// invalidate this identity observation.
+func (s *Store) InstructorWorkForSessionInstance(ctx context.Context, id domain.SessionID, instance string) (domain.InstructorWork, bool, error) {
+	if instance == "" {
+		return domain.InstructorWork{}, false, nil
+	}
+	return s.instructorWorkForSession(ctx, id, instance)
+}
+
+func (s *Store) instructorWorkForSession(ctx context.Context, id domain.SessionID, instance string) (domain.InstructorWork, bool, error) {
+	query := `SELECT w.body FROM instructor_works w JOIN instructor_sessions s ON s.work_id=w.id JOIN instructor_session_instances i ON i.session_id=s.session_id AND i.instance_id=s.instance_id WHERE s.session_id=?`
+	args := []any{id}
+	if instance != "" {
+		query += ` AND s.instance_id=?`
+		args = append(args, instance)
+	}
 	var body string
-	err := s.readDB.QueryRowContext(ctx, `SELECT w.body FROM instructor_works w JOIN instructor_sessions s ON s.work_id=w.id WHERE s.session_id=?`, id).Scan(&body)
+	err := s.readDB.QueryRowContext(ctx, query, args...).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.InstructorWork{}, false, nil
 	}
@@ -126,8 +146,22 @@ func (s *Store) ListInstructorWorks(ctx context.Context) ([]domain.InstructorWor
 	return out, rows.Err()
 }
 
-// SaveInstructorWork updates the expected work revision and its session bindings atomically with an event.
+// SaveInstructorWork updates the expected work revision atomically with an event.
+// Session admission is separate and incarnation-fenced; historical IDs are inert.
 func (s *Store) SaveInstructorWork(ctx context.Context, w domain.InstructorWork, expected int64, event domain.InstructorEvent) (bool, error) {
+	return s.saveInstructorWork(ctx, w, expected, event, false)
+}
+
+// SaveInstructorPhaseActionAudit preserves current directives across terminal
+// action metadata, without authorizing an older operator intent.
+func (s *Store) SaveInstructorPhaseActionAudit(ctx context.Context, w domain.InstructorWork, expected int64, event domain.InstructorEvent) (bool, error) {
+	if event.Kind != "phase_action_completed" && event.Kind != "phase_action_recovered" {
+		return false, errors.New("only terminal phase action audits may preserve a current directive")
+	}
+	return s.saveInstructorWork(ctx, w, expected, event, true)
+}
+
+func (s *Store) saveInstructorWork(ctx context.Context, w domain.InstructorWork, expected int64, event domain.InstructorEvent, preserveDirectives bool) (bool, error) {
 	if err := s.writeMu.LockContext(ctx); err != nil {
 		return false, err
 	}
@@ -142,6 +176,18 @@ func (s *Store) SaveInstructorWork(ctx context.Context, w domain.InstructorWork,
 	}
 	updated := false
 	err = s.inTxDB(ctx, "save instructor work", func(_ *gen.Queries, db gen.DBTX) error {
+		var previous domain.InstructorWork
+		if preserveDirectives {
+			var priorBody string
+			if err := db.QueryRowContext(ctx, `SELECT body FROM instructor_works WHERE id=? AND revision=?`, w.ID, expected).Scan(&priorBody); errors.Is(err, sql.ErrNoRows) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(priorBody), &previous); err != nil {
+				return err
+			}
+		}
 		result, e := db.ExecContext(ctx, `UPDATE instructor_works SET revision=?,body=? WHERE id=? AND revision=?`, w.Revision, body, w.ID, expected)
 		if e != nil {
 			return e
@@ -151,32 +197,67 @@ func (s *Store) SaveInstructorWork(ctx context.Context, w domain.InstructorWork,
 			return e
 		}
 		updated = true
-		for _, id := range w.SessionIDs {
-			var project string
-			if e = db.QueryRowContext(ctx, `SELECT project_id FROM sessions WHERE id=?`, id).Scan(&project); errors.Is(e, sql.ErrNoRows) {
-				continue
-			} else if e != nil {
-				return e
-			}
-			if project != string(w.ProjectID) {
-				return errors.New("session belongs to another project")
-			}
-			var bound string
-			e = db.QueryRowContext(ctx, `SELECT work_id FROM instructor_sessions WHERE session_id=?`, id).Scan(&bound)
-			if e == nil && bound != w.ID {
-				return errors.New("session already belongs to another work")
-			}
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
-				return e
-			}
-			if _, e = db.ExecContext(ctx, `INSERT OR IGNORE INTO instructor_sessions(session_id,work_id) VALUES(?,?)`, id, w.ID); e != nil {
-				return e
+		// Ordinary work saves must never reconstruct associations from the
+		// historical SessionIDs list. Admission is explicit and incarnation-fenced.
+		if preserveDirectives {
+			if err := preserveInstructorDirectivesAcrossAudit(ctx, db, previous, w, event.At, false); err != nil {
+				return err
 			}
 		}
+
 		_, e = db.ExecContext(ctx, `INSERT INTO instructor_events(id,work_id,body) VALUES(?,?,?)`, event.ID, w.ID, eb)
 		return e
 	})
 	return updated, err
+}
+
+func preserveInstructorDirectivesAcrossAudit(ctx context.Context, db gen.DBTX, previous, current domain.InstructorWork, at time.Time, onlyStop bool) error {
+	if current.Revision != previous.Revision+1 {
+		return nil
+	}
+	expected := previous.Revision
+	if onlyStop {
+		if previous.State != "parked" || current.State != "parked" {
+			return nil
+		}
+		// A running authorized profile may report failure/revoke old green proof
+		// after Stop. This preserves only the restrictive pause, never Go/Weiter.
+		previous.Summary, previous.Evidence = current.Summary, current.Evidence
+	}
+	// Only the action audit and ordinary save bookkeeping may differ. Changes
+	// to business state, gates, policy, producer bindings or command intent fence delivery.
+	previous.PhaseActions = current.PhaseActions
+	previous.Revision, previous.UpdatedAt = current.Revision, current.UpdatedAt
+	previous.Actions, current.Actions = nil, nil // Derived menu entries carry no command authority.
+	before, err := instructorJSON(previous)
+	if err != nil {
+		return err
+	}
+	after, err := instructorJSON(current)
+	if err != nil {
+		return err
+	}
+	if before != after {
+		return nil
+	}
+	dispatches, err := readInstructorDispatches(ctx, db, `SELECT body FROM instructor_dispatches WHERE work_id=? AND state IN ('pending','leased')`, current.ID)
+	if err != nil {
+		return err
+	}
+	for _, dispatch := range dispatches {
+		if dispatch.ProjectID != current.ProjectID || dispatch.WorkRevision != expected || onlyStop && dispatch.Action != "stopp" {
+			continue
+		}
+		dispatch.WorkRevision, dispatch.UpdatedAt = current.Revision, at
+		body, err := instructorJSON(dispatch)
+		if err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE instructor_dispatches SET body=? WHERE id=?`, body, dispatch.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PutInstructorSnapshot records an immutable operator command snapshot.
@@ -383,24 +464,43 @@ func (s *Store) SetInstructorDispatch(ctx context.Context, id, state, detail str
 		if e := json.Unmarshal([]byte(b), &d); e != nil {
 			return e
 		}
-		if (d.State == "progress" && (state == "delivered" || state == "accepted" || state == "failed")) || (d.State == "accepted" && (state == "delivered" || state == "failed")) {
+		nativeDelivered := state == "delivered"
+		if d.State == "started" && !nativeDelivered {
+			return nil
+		}
+		startFailure := state == "failed" && d.ReportID != "" && (d.NativeReceipt == nil || d.NativeReceipt.StartedAt == nil)
+		if !nativeDelivered && !startFailure && ((d.State == "progress" && (state == "accepted" || state == "failed")) || (d.State == "accepted" && state == "failed")) {
 			return nil
 		}
 		if d.State == "failed" || d.State == "cancelled" {
 			return nil
 		}
+		if nativeDelivered && (d.State == "accepted" || d.State == "progress" || d.State == "started") {
+			state = d.State
+		}
 		d.State = state
 		d.Error = detail
 		d.UpdatedAt = at
+		if nativeDelivered {
+			if d.NativeReceipt == nil {
+				d.NativeReceipt = &domain.InstructorNativeReceipt{RuntimeID: d.TargetRuntimeID}
+			}
+			if d.NativeReceipt.DeliveredAt == nil {
+				d.NativeReceipt.DeliveredAt = &at
+			}
+			if d.NativeReceipt.AcceptedAt == nil {
+				d.NativeReceipt.AcceptedAt = &at
+			}
+		}
 		b, e := instructorJSON(d)
 		if e != nil {
 			return e
 		}
-		if _, e = db.ExecContext(ctx, `UPDATE instructor_dispatches SET state=?,lease_until=0,body=? WHERE id=?`, state, b, id); e != nil {
+		if _, e = db.ExecContext(ctx, `UPDATE instructor_dispatches SET state=?,lease_until=0,body=? WHERE id=?`, instructorDispatchIndexState(state), b, id); e != nil {
 			return e
 		}
 		if state == "failed" {
-			remaining, err := readInstructorDispatches(ctx, db, `SELECT body FROM instructor_dispatches WHERE batch_id=? AND state='pending'`, d.BatchID)
+			remaining, err := readInstructorDispatches(ctx, db, `SELECT body FROM instructor_dispatches WHERE batch_id=? AND position>? AND state IN ('pending','leased')`, d.BatchID, d.Position)
 			if err != nil {
 				return err
 			}
@@ -424,7 +524,7 @@ func (s *Store) SetInstructorDispatch(ctx context.Context, id, state, detail str
 // ReconcileInstructorDispatch is used only after a scoped operator observation
 // or an actual receipt from the dispatch's immutable bound target.
 func (s *Store) ReconcileInstructorDispatch(ctx context.Context, id, state, detail string, at time.Time) error {
-	if state != "delivered" && state != "accepted" && state != "progress" && state != "cancelled" {
+	if state != "delivered" && state != "accepted" && state != "progress" && state != "started" && state != "cancelled" {
 		return errors.New("invalid reconciled delivery state")
 	}
 	if err := s.writeMu.LockContext(ctx); err != nil {
@@ -440,7 +540,10 @@ func (s *Store) ReconcileInstructorDispatch(ctx context.Context, id, state, deta
 		if err := json.Unmarshal([]byte(body), &d); err != nil {
 			return err
 		}
-		if d.State == "progress" || d.State == "accepted" && state == "delivered" {
+		if err := validateInstructorReportActor(ctx, db, domain.InstructorReportAdmission{WorkID: d.WorkID, SessionID: d.TargetSessionID, InstanceID: d.TargetSessionInstanceID, DispatchID: d.ID}); err != nil {
+			return err
+		}
+		if d.State == "started" || d.State == "progress" || d.State == "accepted" && state == "delivered" {
 			return nil
 		}
 		d.State, d.Error, d.UpdatedAt = state, detail, at
@@ -448,9 +551,19 @@ func (s *Store) ReconcileInstructorDispatch(ctx context.Context, id, state, deta
 		if err != nil {
 			return err
 		}
-		_, err = db.ExecContext(ctx, `UPDATE instructor_dispatches SET state=?,lease_until=0,body=? WHERE id=?`, state, body, id)
+		_, err = db.ExecContext(ctx, `UPDATE instructor_dispatches SET state=?,lease_until=0,body=? WHERE id=?`, instructorDispatchIndexState(state), body, id)
 		return err
 	})
+}
+
+// The historical index vocabulary groups all settled receipt states under
+// accepted. The full JSON record preserves the more precise native started
+// fact, without modifying an already shipped migration's CHECK constraint.
+func instructorDispatchIndexState(state string) string {
+	if state == "started" {
+		return "accepted"
+	}
+	return state
 }
 
 // BindInstructorDispatchTarget pins one immutable delivery target before the external send.
@@ -473,7 +586,15 @@ func (s *Store) BindInstructorDispatchTarget(ctx context.Context, id string, tar
 	if d.TargetSessionID != "" && d.TargetSessionID != target {
 		return errors.New("dispatch target already bound")
 	}
+	var instance string
+	if e := s.writeDB.QueryRowContext(ctx, `SELECT i.instance_id FROM instructor_session_instances i JOIN sessions r ON r.id=i.session_id WHERE r.id=? AND r.project_id=?`, target, d.ProjectID).Scan(&instance); e != nil {
+		return e
+	}
+	if d.TargetSessionID != "" && d.TargetSessionInstanceID != instance {
+		return errors.New("bound dispatch session instance changed or is legacy unknown")
+	}
 	d.TargetSessionID = target
+	d.TargetSessionInstanceID = instance
 	b, e := instructorJSON(d)
 	if e != nil {
 		return e

@@ -380,6 +380,18 @@ type ConversationTurn struct {
 	HandledByReviewID    sql.NullString
 }
 
+type InstructorBudgetEntry struct {
+	ID          string
+	WorkID      string
+	Kind        string
+	ResourceKey string
+	SessionID   string
+	ReviewID    string
+	Delegated   int64
+	State       string
+	Body        string
+}
+
 type InstructorDispatch struct {
 	ID         string
 	BatchID    string
@@ -420,8 +432,21 @@ type InstructorPolicy struct {
 }
 
 type InstructorSession struct {
-	SessionID string
-	WorkID    string
+	SessionID  string
+	WorkID     string
+	InstanceID string
+}
+
+type InstructorSessionInstance struct {
+	SessionID  string
+	InstanceID string
+}
+
+type InstructorSessionMember struct {
+	WorkID     string
+	SessionID  string
+	InstanceID string
+	Body       string
 }
 
 type InstructorSnapshot struct {

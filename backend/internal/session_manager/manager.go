@@ -1105,6 +1105,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 		}
 	}
 	id := rec.ID
+	budgetSessionToken := ""
 	if m.instructor != nil && cfg.WorkID != "" {
 		launch := cfg
 		launch.AgentConfig = agentConfig
@@ -1119,6 +1120,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 			}
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: attach managed work: %w", err)
 		}
+		budgetSessionToken, err = m.reserveInstructorSessionBudget(ctx, id, cfg.ParentSessionID)
+		if err != nil {
+			m.rollbackSpawnSeedRowAfterFailure(ctx, id)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: managed session budget: %w", err)
+		}
+		defer func() {
+			if returnErr != nil && budgetSessionToken != "" {
+				failureCtx, cancel := spawnRollbackContext(ctx)
+				defer cancel()
+				// Cancel succeeds only before the native-effect fence. An unknown
+				// native attempt retains both capacity and lifetime consumption.
+				_ = m.setInstructorBudgetState(failureCtx, budgetSessionToken, "cancelled")
+			}
+		}()
 	}
 	if floorAudit != nil {
 		floorAudit.Session = string(id)
@@ -1370,6 +1385,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	defer releaseCodexAdmission()
+	budgetTurnKey := ""
+	if prompt != "" {
+		budgetTurnKey = "launch:" + launchID
+	}
+	budgetTokens, err := m.beginInstructorNativeController(ctx, id, cfg.ParentSessionID, budgetTurnKey)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true, false)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: native execution budget: %w", err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -1439,6 +1463,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 	if err := m.instructorControllerStarted(ctx, cfg, id); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: record managed controller: %w", err)
 	}
+	if err := m.finishInstructorNativeController(ctx, budgetTokens); err != nil {
+		return domain.SessionRecord{}, 0, 0, err
+	}
 	return rec, promptBytes, systemPromptBytes, nil
 }
 
@@ -1456,90 +1483,6 @@ func (m *Manager) markAutomationLaunchCompleted(ctx context.Context, id domain.S
 	rec.AutomationLaunchCompleted = true
 	rec.UpdatedAt = m.clock()
 	return m.store.UpdateSession(ctx, rec)
-}
-
-func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectConfig) (ports.AgentConfig, error) {
-	base := effectiveAgentConfig(cfg.Harness, cfg.Kind, project)
-	requested := cfg.AgentConfig
-	resolved := applySpawnAgentConfig(base, requested)
-	modelChangedWithoutExplicitEffort := requested.Model != "" && requested.Model != base.Model &&
-		!cfg.EffortOverride && requested.Effort == ""
-	if cfg.EffortOverride {
-		resolved.Effort = requested.Effort
-	}
-	if cfg.Harness != domain.HarnessCodex && cfg.Harness != domain.HarnessClaudeCode && cfg.Harness != domain.HarnessOpenCode {
-		resolved.Effort = ""
-		return resolved, nil
-	}
-	modelID := strings.TrimSpace(resolved.Model)
-	validateClaudeModel := cfg.Harness == domain.HarnessClaudeCode && modelID != ""
-	if resolved.Effort == "" && !validateClaudeModel {
-		return resolved, nil
-	}
-	if m.modelCatalog == nil {
-		if validateClaudeModel || (cfg.Harness == domain.HarnessOpenCode && resolved.Effort != "") {
-			return ports.AgentConfig{}, fmt.Errorf("%w: model catalog is unavailable", ports.ErrModelCapabilitiesUnavailable)
-		}
-		return resolved, nil
-	}
-	catalog, err := m.modelCatalog.Models(ctx, string(cfg.Harness), string(cfg.ProjectID), true)
-	if err != nil {
-		if modelChangedWithoutExplicitEffort && cfg.Harness != domain.HarnessOpenCode {
-			resolved.Effort = ""
-		}
-		if validateClaudeModel || resolved.Effort != "" {
-			return ports.AgentConfig{}, fmt.Errorf("%w: %w", ports.ErrModelCapabilitiesUnavailable, err)
-		}
-		return resolved, nil
-	}
-	if modelID == "" {
-		if cfg.Harness == domain.HarnessOpenCode {
-			var err error
-			modelID, err = configuredOpenCodeModel(catalog)
-			if err != nil {
-				return ports.AgentConfig{}, err
-			}
-			resolved.Model = modelID
-		} else {
-			for _, item := range catalog.Models {
-				if item.IsDefault {
-					modelID = item.ID
-					break
-				}
-			}
-		}
-	}
-	if catalog.Stale && validateClaudeModel {
-		return ports.AgentConfig{}, fmt.Errorf("%w for model %q: catalog is stale", ports.ErrModelCapabilitiesUnavailable, modelID)
-	}
-	var selected *ports.AgentModelInfo
-	for i := range catalog.Models {
-		if catalog.Models[i].ID == modelID {
-			selected = &catalog.Models[i]
-			break
-		}
-	}
-	if validateClaudeModel && selected == nil {
-		return ports.AgentConfig{}, fmt.Errorf("%w: model %q is not in the active provider catalog", ErrUnsupportedModel, modelID)
-	}
-	if modelChangedWithoutExplicitEffort && cfg.Harness != domain.HarnessOpenCode {
-		if selected == nil || !containsString(selected.Efforts, base.Effort) {
-			resolved.Effort = ""
-		}
-	}
-	if resolved.Effort == "" {
-		return resolved, nil
-	}
-	if catalog.Stale || selected == nil {
-		return ports.AgentConfig{}, fmt.Errorf("%w for model %q", ports.ErrModelCapabilitiesUnavailable, modelID)
-	}
-	if cfg.Harness == domain.HarnessOpenCode && selected.EffortSupport == "unknown" {
-		return ports.AgentConfig{}, fmt.Errorf("%w for model %q: native variants were not reported", ports.ErrModelCapabilitiesUnavailable, modelID)
-	}
-	if resolved.Effort != "" && !containsString(selected.Efforts, resolved.Effort) {
-		return ports.AgentConfig{}, fmt.Errorf("%w %q for model %q", ports.ErrUnsupportedEffort, resolved.Effort, modelID)
-	}
-	return resolved, nil
 }
 
 func (m *Manager) applyOpenCodeEffortFloor(ctx context.Context, cfg ports.SpawnConfig, config ports.AgentConfig, automation bool) (bool, ports.AgentConfig, *opencodeeffort.AuditEntry, error) {
@@ -1945,6 +1888,11 @@ func (m *Manager) destroySpawnRuntimeAfterFailure(ctx context.Context, handle po
 func (m *Manager) rollbackSpawnSeedRowAfterFailure(ctx context.Context, id domain.SessionID) {
 	cleanupCtx, cancel := spawnRollbackContext(ctx)
 	defer cancel()
+	if token, err := m.reserveInstructorSessionBudget(cleanupCtx, id, ""); err == nil && token != "" {
+		// A pre-native bookkeeping failure may follow atomic work attachment.
+		// Only a still-reserved entry can be cancelled; attempted effects retain it.
+		_ = m.setInstructorBudgetState(cleanupCtx, token, "cancelled")
+	}
 	m.rollbackSpawnSeedRow(cleanupCtx, id)
 }
 
@@ -2050,62 +1998,6 @@ func roleConfigName(kind domain.SessionKind) string {
 // would leak a provider-specific alias onto the wrong harness. An empty role
 // harness means "not pinned" and always matches. Permissions is
 // harness-neutral and is always inherited.
-func effectiveAgentConfig(harness domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
-	merged := cfg.AgentConfig
-	role := roleOverride(kind, cfg)
-	override := role.AgentConfig
-	harnessMatches := role.Harness == "" || role.Harness == harness
-	if harnessMatches && override.Model != "" {
-		merged.Model = override.Model
-	}
-	if harnessMatches && override.Effort != "" {
-		merged.Effort = override.Effort
-	}
-	if harnessMatches && override.Mode != "" {
-		merged.Mode = override.Mode
-	}
-	if override.Permissions != "" {
-		merged.Permissions = override.Permissions
-	}
-	return merged
-}
-
-func restoredAgentConfig(rec domain.SessionRecord, cfg domain.ProjectConfig) ports.AgentConfig {
-	merged := effectiveAgentConfig(rec.Harness, rec.Kind, cfg)
-	if rec.Harness == domain.HarnessClaudeCode || rec.Harness == domain.HarnessOpenCode || rec.Harness == domain.HarnessCodex {
-		merged.Model = rec.Metadata.Model
-		merged.Effort = rec.Metadata.Effort
-	}
-	return merged
-}
-
-// validateRestoredAgentConfig preserves durable native choices while checking
-// the current provider capabilities before a replacement controller starts.
-func (m *Manager) validateRestoredAgentConfig(ctx context.Context, rec domain.SessionRecord, cfg ports.AgentConfig) (ports.AgentConfig, error) {
-	return m.resolveAgentConfig(ctx, ports.SpawnConfig{
-		ProjectID: rec.ProjectID, Kind: rec.Kind, Harness: rec.Harness,
-		AgentConfig: cfg, EffortOverride: true,
-	}, domain.ProjectConfig{})
-}
-
-func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
-	if override.Model != "" {
-		base.Model = override.Model
-	}
-	if override.Effort != "" {
-		base.Effort = override.Effort
-	}
-	if override.Mode != "" {
-		base.Mode = override.Mode
-	}
-	if override.Permissions != "" {
-		base.Permissions = override.Permissions
-	}
-	if base.Permissions == "" {
-		base.Permissions = ports.PermissionModeAuto
-	}
-	return base
-}
 
 // normalizeAgentConfigForHarness returns a copy of cfg with any effective
 // Model value moved into Mode for adapters that expose selectable values as
@@ -2359,6 +2251,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
 		return false, fmt.Errorf("kill %s: reviewer: %w", id, err)
+	}
+	if guard := m.executionBudget(); guard != nil && domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat && handle.ID != "" {
+		if err := guard.FinishManagedSession(ctx, domain.SessionConversationOwner(id)); err != nil {
+			return false, err
+		}
 	}
 	// Gate shut any shell terminal scoped to this session BEFORE the worktree
 	// goes away: an open shell whose cwd is that directory can otherwise
@@ -2738,6 +2635,11 @@ func (m *Manager) ExitAgent(ctx context.Context, id domain.SessionID) (domain.Se
 	if exited.Activity.State != domain.ActivityExited {
 		return domain.SessionRecord{}, fmt.Errorf("exit agent %s: %w", id, ErrSwitchSourceStopUnconfirmed)
 	}
+	if guard := m.executionBudget(); guard != nil {
+		if err := guard.FinishManagedSession(ctx, domain.SessionConversationOwner(id)); err != nil {
+			return domain.SessionRecord{}, err
+		}
+	}
 	return exited, nil
 }
 
@@ -3077,6 +2979,14 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	defer releaseCodexAdmission()
+	budgetTurnKey := ""
+	if (mode != RestoreModeNative && rec.Metadata.Prompt != "") || (delivery == ports.PromptDeliveryAfterStart && afterStartPrompt != "") {
+		budgetTurnKey = "launch:" + launchID
+	}
+	budgetTokens, err := m.beginInstructorNativeController(ctx, rec.ID, "", budgetTurnKey)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: native execution budget: %w", operation, rec.ID, err)
+	}
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
@@ -3133,6 +3043,9 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	}
 	updated, err := m.getRecord(ctx, rec.ID)
 	if err != nil {
+		return RestoreResult{}, err
+	}
+	if err := m.finishInstructorNativeController(ctx, budgetTokens); err != nil {
 		return RestoreResult{}, err
 	}
 	return RestoreResult{Session: updated, Mode: mode}, nil
@@ -4418,6 +4331,10 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	if err != nil {
 		return err
 	}
+	budgetToken, err := m.reserveInstructorTUITurn(ctx, id, clientMessageID)
+	if err != nil {
+		return fmt.Errorf("send %s: native execution budget: %w", id, err)
+	}
 	var afterWrite func(context.Context) error
 	_, internalReportDelivery := domain.ReportDeliveryID(message)
 	if strings.TrimSpace(message) != "" && !internalReportDelivery {
@@ -4431,6 +4348,11 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		}
 	}
 	outcome, err := m.messenger.DeliverWithPostWrite(ctx, id, message, afterWrite)
+	if outcome != sessionguard.Sent && budgetToken != "" {
+		if cancelErr := m.executionBudget().CancelManagedBudgetBeforeAdmission(ctx, budgetToken); cancelErr != nil {
+			return errors.Join(err, cancelErr)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("send %s: %w", id, err)
 	}
@@ -4447,6 +4369,12 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
 		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
+	}
+	if outcome != sessionguard.Sent && budgetToken != "" {
+		return fmt.Errorf("send %s: agent input was suppressed (%s)", id, outcome.String())
+	}
+	if err := m.completeInstructorTUITurn(ctx, budgetToken, nil); err != nil {
+		return err
 	}
 	// confirmActive only helps — and is only SAFE — when the harness reports
 	// both a prompt-submit signal (so the loop can observe active) and a

@@ -16,6 +16,7 @@ import { agentModelsQueryKey, agentModelsQueryOptions, refreshAgentModels, reval
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { initialNativeRoleSelection, rememberNativeEffort, savedNativeEffort, type NativeEffortDefaults } from "../lib/native-effort-defaults";
 import { isConcreteModelID, modelChoiceLabel } from "../lib/agent-model-choices";
 import { WORKER_DEFAULT_REVIEWERS } from "../lib/reviewer-harnesses";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
@@ -128,24 +129,30 @@ function SettingsBody({
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
+	const workerInitial = initialNativeRoleSelection(config.worker?.agent ?? "", config.agentConfig, config.worker?.agentConfig);
+	const orchestratorInitial = initialNativeRoleSelection(config.orchestrator?.agent ?? "", config.agentConfig, config.orchestrator?.agentConfig);
+	const reviewerInitial = initialNativeRoleSelection(config.reviewers?.[0]?.harness ?? "", config.agentConfig, config.reviewers?.[0]?.agentConfig);
 	const [form, setForm] = useState({
 		displayName: project.name,
 		defaultBranch: config.defaultBranch ?? DEFAULT_BRANCH_AUTO,
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
-		workerEffort: config.worker?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
+		workerModel: workerInitial.model,
+		workerEffort: workerInitial.effort,
+		workerNativeEffortDefaults: workerInitial.defaults,
 		workerPermissions: config.worker?.agentConfig?.permissions ?? config.agentConfig?.permissions ?? "",
-		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
-		orchestratorEffort: config.orchestrator?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
+		orchestratorModel: orchestratorInitial.model,
+		orchestratorEffort: orchestratorInitial.effort,
+		orchestratorNativeEffortDefaults: orchestratorInitial.defaults,
 		orchestratorPermissions: config.orchestrator?.agentConfig?.permissions ?? config.agentConfig?.permissions ?? "",
 		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
-		reviewerModel: config.reviewers?.[0]?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		reviewerModel: reviewerInitial.model,
 		reviewerMode: config.reviewers?.[0]?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
-		reviewerEffort: config.reviewers?.[0]?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
+		reviewerEffort: reviewerInitial.effort,
+		reviewerNativeEffortDefaults: reviewerInitial.defaults,
 		reviewerPermissions: config.reviewers?.[0]?.agentConfig?.permissions ?? config.agentConfig?.permissions ?? "",
 		autoReview: config.autoReview ?? false,
 		intakeEnabled: intake.enabled ?? false,
@@ -206,7 +213,7 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: values.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions),
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions, values.workerNativeEffortDefaults),
 						},
 						orchestrator: {
 							...config.orchestrator,
@@ -217,6 +224,7 @@ function SettingsBody({
 								values.orchestratorMode,
 								values.orchestratorEffort,
 								values.orchestratorPermissions,
+								values.orchestratorNativeEffortDefaults,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -231,7 +239,7 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: values.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions),
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions, values.workerNativeEffortDefaults),
 						},
 						orchestrator: {
 							...config.orchestrator,
@@ -242,6 +250,7 @@ function SettingsBody({
 								values.orchestratorMode,
 								values.orchestratorEffort,
 								values.orchestratorPermissions,
+								values.orchestratorNativeEffortDefaults,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -258,6 +267,7 @@ function SettingsBody({
 											values.reviewerMode,
 											values.reviewerEffort,
 											values.reviewerPermissions,
+										values.reviewerNativeEffortDefaults,
 										),
 									},
 								]
@@ -602,9 +612,9 @@ function SettingsBody({
 								model={form.workerModel}
 								mode={form.workerMode}
 								effort={form.workerEffort}
-								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel, workerEffort: savedNativeEffort(f.workerNativeEffortDefaults, f.workerAgent, workerModel) }))}
 								onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
-								onEffortChange={(workerEffort) => setForm((f) => ({ ...f, workerEffort }))}
+								onEffortChange={(workerEffort) => setForm((f) => ({ ...f, workerEffort, workerNativeEffortDefaults: rememberNativeEffort(f.workerNativeEffortDefaults, f.workerAgent, f.workerModel, workerEffort) }))}
 								onValidityChange={(valid) => setTuningValidity((value) => ({ ...value, worker: valid }))}
 							/>
 						}
@@ -640,9 +650,9 @@ function SettingsBody({
 								model={form.orchestratorModel}
 								mode={form.orchestratorMode}
 								effort={form.orchestratorEffort}
-								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel, orchestratorEffort: savedNativeEffort(f.orchestratorNativeEffortDefaults, f.orchestratorAgent, orchestratorModel) }))}
 								onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
-								onEffortChange={(orchestratorEffort) => setForm((f) => ({ ...f, orchestratorEffort }))}
+								onEffortChange={(orchestratorEffort) => setForm((f) => ({ ...f, orchestratorEffort, orchestratorNativeEffortDefaults: rememberNativeEffort(f.orchestratorNativeEffortDefaults, f.orchestratorAgent, f.orchestratorModel, orchestratorEffort) }))}
 								onValidityChange={(valid) =>
 									setTuningValidity((value) => ({
 										...value,
@@ -691,9 +701,9 @@ function SettingsBody({
 									model={form.reviewerModel}
 									mode={form.reviewerMode}
 									effort={form.reviewerEffort}
-									onModelChange={(reviewerModel) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerModel }))}
+									onModelChange={(reviewerModel) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerModel, reviewerEffort: savedNativeEffort(f.reviewerNativeEffortDefaults, f.reviewerHarness || defaultReviewerHarness, reviewerModel) }))}
 									onModeChange={(reviewerMode) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerMode }))}
-									onEffortChange={(reviewerEffort) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerEffort }))}
+									onEffortChange={(reviewerEffort) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerEffort, reviewerNativeEffortDefaults: rememberNativeEffort(f.reviewerNativeEffortDefaults, f.reviewerHarness || defaultReviewerHarness, f.reviewerModel, reviewerEffort) }))}
 									onValidityChange={(valid) =>
 										setTuningValidity((value) => ({
 											...value,
@@ -763,6 +773,13 @@ function AgentModelField({
 	const queryClient = useQueryClient();
 	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
 	const catalog: AgentModelCatalog | undefined = query.data;
+	const [tuningValid, setTuningValid] = useState(true);
+	const validityCallback = useRef(onValidityChange);
+	validityCallback.current = onValidityChange;
+	const nativeModel = (catalog?.models ?? []).find((item) => item.id === model) ?? (!model ? catalog?.models?.find((item) => item.isDefault && isConcreteModelID(item.id)) : undefined);
+	const needsExplicitEffort = Boolean(nativeModel?.efforts?.some((value) => value && (nativeModel.effortSupport === "supported" || value.toLowerCase() !== "default")));
+	const nativeValid = tuningValid && !(needsExplicitEffort && Boolean(model) && !effort) && !(nativeModel?.effortSupport === "unknown" && Boolean(model || effort)) && !(catalog?.stale && Boolean(effort));
+	useEffect(() => { validityCallback.current(nativeValid); }, [nativeValid]);
 	const revalidationQuery = useQuery({
 		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
 		queryFn: () => revalidateAgentModels(agentId, projectId),
@@ -829,12 +846,16 @@ function AgentModelField({
 		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
 	};
 	const selectCatalogModel = (value: string) => {
-		onModelChange(value);
+		onModelChange(value || catalog?.models?.find((item) => item.isDefault && isConcreteModelID(item.id))?.id || "");
 		onModeChange("");
 	};
 	const selectCustomModel = (value: string) => {
 		onModelChange(value);
 		onModeChange("");
+	};
+	const chooseNativeEffort = (value: string) => {
+		if (!model && nativeModel?.id && value) onModelChange(nativeModel.id);
+		onEffortChange(value);
 	};
 	return (
 		<>
@@ -843,6 +864,7 @@ function AgentModelField({
 					<AgentModelCombobox
 						aria-label={label}
 						value={model}
+						pinSelection
 						models={catalog?.models ?? []}
 						allowCustom={catalog?.allowCustom}
 						customModelEntry={customModelEntry}
@@ -858,14 +880,16 @@ function AgentModelField({
 						compact={agentId === "codex"}
 						tuning={{
 							effort,
-							onEffortChange,
-							onValidityChange,
+							requireExplicitEffort: true,
+							onEffortChange: chooseNativeEffort,
+							onValidityChange: setTuningValid,
 							roleLabel: t(`settings.models.${role}Role`),
 						}}
 					/>
 				</div>
 			</div>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+			{needsExplicitEffort && Boolean(model) && !effort ? <p className="px-1 text-xs leading-row text-warning">{t("settings.models.nativeDefaultRequired")}</p> : null}
 		</>
 	);
 }
@@ -949,8 +973,11 @@ function buildRoleAgentConfig(
 	mode: string,
 	effort: string,
 	permissions: string,
+	nativeEffortDefaults: NativeEffortDefaults,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
+	if (Object.keys(nativeEffortDefaults).length) next.nativeEffortDefaults = nativeEffortDefaults;
+	else delete next.nativeEffortDefaults;
 	if (model) next.model = model;
 	else delete next.model;
 	if (mode) next.mode = mode;

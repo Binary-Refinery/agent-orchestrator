@@ -111,6 +111,15 @@ func (s *Service) PrepareSpawn(ctx context.Context, in SpawnInput) (string, erro
 	if err := validateWorkExceptions(w, s.now()); err != nil {
 		return w.ID, err
 	}
+	if w.ApprovalDispatchID != "" {
+		ready, err := s.approvalCohortReady(ctx, w.ApprovalDispatchID)
+		if err != nil {
+			return w.ID, err
+		}
+		if !ready {
+			return w.ID, invalid("ordered approval cohort awaits native admission")
+		}
+	}
 	if in.Role == "worker" {
 		if err := correctiveWorkerAdmission(w); err != nil {
 			return w.ID, err
@@ -208,6 +217,17 @@ func (s *Service) validateManagedResume(ctx context.Context, w domain.Instructor
 	if err != nil {
 		return err
 	}
+	// The orchestrator must be able to receive its own ordered Go directive.
+	// Worker/reviewer execution cannot precede that native admission receipt.
+	if role != "orchestrator" && w.ApprovalDispatchID != "" {
+		ready, err := s.approvalCohortReady(ctx, w.ApprovalDispatchID)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return invalid("ordered approval cohort awaits native admission")
+		}
+	}
 	if role == "worker" {
 		if err := correctiveWorkerAdmission(w); err != nil {
 			return err
@@ -222,8 +242,20 @@ func (s *Service) validateManagedResume(ctx context.Context, w domain.Instructor
 }
 
 func (s *Service) sessionRole(ctx context.Context, w domain.InstructorWork, id domain.SessionID) (string, *domain.SessionRecord, error) {
+	instance := ""
+	if reader, ok := s.deps.Store.(sessionInstanceReader); ok {
+		var found bool
+		var err error
+		instance, found, err = reader.InstructorSessionInstance(ctx, id)
+		if err != nil {
+			return "", nil, err
+		}
+		if !found {
+			return "", nil, invalid("session instance missing")
+		}
+	}
 	for i := len(w.Launches) - 1; i >= 0; i-- {
-		if w.Launches[i].SessionID == id {
+		if w.Launches[i].SessionID == id && (instance == "" || w.Launches[i].SessionInstanceID == instance) {
 			role := w.Launches[i].Role
 			if _, declared := w.Policy.Roles[role]; !declared {
 				return "", nil, invalid("managed session launch role is not declared in pinned policy")
@@ -311,6 +343,80 @@ func (s *Service) RecordLaunch(ctx context.Context, id string, launch domain.Ins
 	}
 	if _, ok := w.Policy.Roles[launch.Role]; !ok {
 		return invalid("launch role is undeclared")
+	}
+	if launch.SessionID != "" {
+		reader, ok := s.deps.Store.(sessionAdmissionStore)
+		if !ok {
+			return invalid("session instance reader unavailable")
+		}
+		rec, instance, found, err := reader.InstructorSessionForMembership(ctx, launch.SessionID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return invalid("session instance missing")
+		}
+		bound, managed, err := s.WorkForSession(ctx, launch.SessionID)
+		if err != nil {
+			return err
+		}
+		if !managed || bound.ID != w.ID {
+			return invalid("session instance is not admitted to this work")
+		}
+		if launch.SessionInstanceID != "" && launch.SessionInstanceID != instance {
+			return invalid("launch session instance changed")
+		}
+		launch.SessionInstanceID = instance
+		launch.RuntimeGeneration = sessionRuntimeGeneration(rec)
+	} else if reviews, ok := s.deps.Store.(memberReviewReader); ok {
+		review, found, err := reviews.GetReviewByID(ctx, launch.ReviewID)
+		if err != nil {
+			return err
+		}
+		if !found || review.ProjectID != w.ProjectID {
+			return invalid("review identity missing or belongs to another project")
+		}
+		// Restoring the retained reviewer conversation may have no active run.
+		// That launch is recorded without inventing a completed review pass.
+		if launch.ReviewRunID != "" {
+			run, found, err := reviews.GetReviewRun(ctx, launch.ReviewRunID)
+			if err != nil {
+				return err
+			}
+			if !found || run.ReviewID != review.ID || run.SessionID != review.SessionID {
+				return invalid("review run identity mismatch")
+			}
+		}
+		bound, managed, err := s.WorkForSession(ctx, review.SessionID)
+		if err != nil {
+			return err
+		}
+		if !managed || bound.ID != w.ID {
+			return invalid("review worker is not admitted to this work")
+		}
+		reader, ok := s.deps.Store.(sessionInstanceReader)
+		if !ok {
+			return invalid("review worker instance reader unavailable")
+		}
+		instance, found, err := reader.InstructorSessionInstance(ctx, review.SessionID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return invalid("review worker instance missing")
+		}
+		launch.OwnerSessionID = review.SessionID
+		launch.SessionInstanceID = instance
+		launch.ReviewCreatedAt = &review.CreatedAt
+		// The real launch callback can precede the engine's persisted review
+		// update. Preserve its exact launch token instead of capturing the old
+		// retained reviewer's generation during replacement.
+		if launch.RuntimeGeneration == "" {
+			launch.RuntimeGeneration = review.ReviewerLaunchID
+			if launch.RuntimeGeneration == "" {
+				launch.RuntimeGeneration = review.ControllerGeneration
+			}
+		}
 	}
 	if launch.LaunchedAt.IsZero() {
 		launch.LaunchedAt = s.now()

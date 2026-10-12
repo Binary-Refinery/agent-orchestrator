@@ -47,6 +47,9 @@ type ActionDeps struct {
 	Reader       actionReader
 	Resolver     ports.SCMReviewResolver
 	Writer       ports.SCMWriter
+	// MergeAdmission is the daemon's governed-work boundary. Ordinary host SCM
+	// credentials must never become a fallback for a protected publisher.
+	MergeAdmission func(context.Context, domain.PullRequest) error
 	// ThreadWriter updates one resolved thread and its comments without
 	// replacing a potentially newer SCM observation.
 	ThreadWriter interface {
@@ -56,12 +59,13 @@ type ActionDeps struct {
 
 // ActionService validates current pull request state before applying mutations.
 type ActionService struct {
-	store        actionStore
-	resolve      resolveStore
-	merger       ports.SCMMerger
-	reader       actionReader
-	resolver     ports.SCMReviewResolver
-	threadWriter interface {
+	store          actionStore
+	resolve        resolveStore
+	merger         ports.SCMMerger
+	reader         actionReader
+	resolver       ports.SCMReviewResolver
+	mergeAdmission func(context.Context, domain.PullRequest) error
+	threadWriter   interface {
 		MarkPRReviewThreadResolved(context.Context, string, string) error
 	}
 }
@@ -81,12 +85,13 @@ func NewActionService(deps ActionDeps) *ActionService {
 		})
 	}
 	return &ActionService{
-		store:        deps.Store,
-		resolve:      resolve,
-		merger:       deps.Merger,
-		reader:       deps.Reader,
-		resolver:     deps.Resolver,
-		threadWriter: threadWriter,
+		store:          deps.Store,
+		resolve:        resolve,
+		merger:         deps.Merger,
+		reader:         deps.Reader,
+		resolver:       deps.Resolver,
+		mergeAdmission: deps.MergeAdmission,
+		threadWriter:   threadWriter,
 	}
 }
 
@@ -111,6 +116,11 @@ func (s *ActionService) Merge(ctx context.Context, request MergeRequest) (MergeR
 	}
 	if !ok || tracked.Number != prNumber {
 		return MergeResult{}, ErrPRNotFound
+	}
+	if s.mergeAdmission != nil {
+		if err := s.mergeAdmission(ctx, tracked); err != nil {
+			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRPreconditions, err)
+		}
 	}
 	if tracked.Draft || tracked.Merged || tracked.Closed {
 		return MergeResult{}, ErrPRNotMergeable

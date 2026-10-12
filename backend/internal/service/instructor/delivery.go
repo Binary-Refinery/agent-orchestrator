@@ -12,6 +12,49 @@ import (
 
 func deliveryGateID(dispatchID string) string { return "delivery-" + dispatchID }
 
+// ErrStopSuperseded certifies that current pause authority was superseded
+// before any native interrupt in this submission was attempted.
+var ErrStopSuperseded = fmt.Errorf("%w: native stop superseded before this submission", ErrConflict)
+
+// deliverNativeStop reloads Stop under the work mutation lock. Native I/O stays
+// outside that lock: a checks operation can hold its producer lease while
+// committing work facts, and interrupt must be able to wait for that lease.
+func (s *Service) deliverNativeStop(ctx context.Context, dispatch domain.InstructorDispatch) (domain.InstructorDispatch, error) {
+	err := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		rows, err := s.deps.Store.ListInstructorDispatches(ctx, "", dispatch.WorkID)
+		if err != nil {
+			return err
+		}
+		for _, current := range rows {
+			if current.ID != dispatch.ID {
+				continue
+			}
+			dispatch = current
+			if dispatch.State == "delivered" || dispatch.State == "accepted" || dispatch.State == "started" || dispatch.State == "progress" {
+				return nil // Another tick already recorded this control receipt.
+			}
+			if dispatch.Action != "stopp" || dispatch.State != "leased" {
+				return ErrStopSuperseded
+			}
+			w, err := s.get(ctx, dispatch.WorkID)
+			if err != nil {
+				return err
+			}
+			if w.ProjectID != dispatch.ProjectID || w.State != "parked" || w.Revision != dispatch.WorkRevision {
+				return ErrStopSuperseded
+			}
+			return nil
+		}
+		return ErrNotFound
+	}()
+	if err != nil || dispatch.State != "leased" {
+		return dispatch, err
+	}
+	return dispatch, s.deps.Delivery.Deliver(ctx, dispatch)
+}
+
 func uncertainDispatch(w domain.InstructorWork, id string) bool {
 	if w.Gate != nil && w.Gate.Kind == "delivery_uncertain" && w.Gate.DispatchID == id {
 		return true
@@ -91,17 +134,19 @@ func (s *Service) deliveryQueued(ctx context.Context, dispatch domain.Instructor
 	}
 	for _, d := range rows {
 		if d.ID == dispatch.ID {
-			if d.State == "accepted" || d.State == "progress" {
+			if d.State == "accepted" || d.State == "progress" || d.State == "started" {
 				return nil
 			}
 			dispatch.TargetSessionID = d.TargetSessionID
+			dispatch.TargetSessionInstanceID = d.TargetSessionInstanceID
+			dispatch.TargetCreatedAt, dispatch.TargetRuntimeID, dispatch.NativeReceipt = d.TargetCreatedAt, d.TargetRuntimeID, d.NativeReceipt
 		}
 	}
 	w, err := s.get(ctx, dispatch.WorkID)
 	if err != nil {
 		return err
 	}
-	if w.Revision != dispatch.WorkRevision {
+	if dispatch.Action != "worker_result" && w.Revision != dispatch.WorkRevision {
 		return fmt.Errorf("%w: work changed while native delivery was queued", ErrDeliveryUncertain)
 	}
 	now := s.now()
@@ -140,7 +185,7 @@ func (s *Service) deliveryFailed(ctx context.Context, dispatch domain.Instructor
 	if err != nil {
 		return err
 	}
-	if w.State == "done" || w.State == "cancelled" || w.State == "parked" {
+	if w.State == "done" || w.State == "cancelled" || w.State == "parked" && dispatch.Action != "stopp" {
 		return nil
 	}
 	kind, title := "delivery", "Zustellung fehlgeschlagen; erneute Freigabe nötig"
@@ -154,7 +199,9 @@ func (s *Service) deliveryFailed(ctx context.Context, dispatch domain.Instructor
 	} else if w.Gate == nil {
 		w.Gate = &domain.InstructorGate{ID: deliveryGateID(dispatch.ID), Kind: kind, Title: title, DispatchID: dispatch.ID, TargetSessionID: dispatch.TargetSessionID, OpenedAt: s.now()}
 	}
-	w.State = "waiting_human"
+	if w.State != "parked" {
+		w.State = "waiting_human"
+	}
 	w.Summary = title
 	w.WaitCondition = cause.Error()
 	_, err = s.save(ctx, w, w.Revision, "delivery_failed", dispatch.ID+": "+cause.Error())

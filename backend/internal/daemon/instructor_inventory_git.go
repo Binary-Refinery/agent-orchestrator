@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/gitread"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -48,7 +49,7 @@ func instructorReadCommand(ctx context.Context, dir, binary string, args ...stri
 }
 
 func instructorReadGit(ctx context.Context, path string, args ...string) ([]byte, error) {
-	return instructorReadCommand(ctx, path, "git", append([]string{"--no-replace-objects", "--no-optional-locks", "-c", "core.fsmonitor=false"}, args...)...)
+	return gitread.Run(ctx, path, args...)
 }
 
 type instructorGitSource struct{ projectID, path string }
@@ -209,6 +210,26 @@ func (i instructorInventory) gitInventory(ctx context.Context, projects []domain
 	for _, project := range projects {
 		projectRepositories[project.ID] = repositoryByPath[project.ID+"\x00"+instructorInventoryPathKey(project.Path)]
 	}
+	// A current work association is a retained incarnation binding, never a
+	// match against a work's append-only display-ID history.
+	currentWork := map[string]string{}
+	associationErrors := map[string]string{}
+	if i.store != nil {
+		for _, session := range sessions {
+			work, managed, err := i.store.InstructorWorkForSession(ctx, session.ID)
+			if err != nil {
+				message := "work association read failed"
+				if ctx.Err() != nil {
+					message = "work association read timed out or was cancelled"
+				}
+				associationErrors[string(session.ID)] = message
+			} else if managed && work.ProjectID == session.ProjectID {
+				currentWork[string(session.ID)] = work.ID
+			} else if managed {
+				associationErrors[string(session.ID)] = "work association belongs to another project"
+			}
+		}
+	}
 	unassigned := 0
 	for index := range resources {
 		resource := &resources[index]
@@ -219,14 +240,20 @@ func (i instructorInventory) gitInventory(ctx context.Context, projects []domain
 		}
 		for id := range association {
 			sessionSet[id] = true
+			if message := associationErrors[id]; message != "" {
+				if resource.Error != "" {
+					resource.Error += "; "
+				}
+				resource.Error += message
+			}
 		}
 		for _, work := range works {
 			if string(work.ProjectID) != resource.ProjectID {
 				continue
 			}
 			linked := resource.Kind == "branch" && resource.Branch != "" && resource.Branch == work.Branch && resource.RepositoryPath == projectRepositories[resource.ProjectID]
-			for _, id := range work.SessionIDs {
-				linked = linked || sessionSet[string(id)]
+			for id := range sessionSet {
+				linked = linked || currentWork[id] == work.ID
 			}
 			if linked {
 				workSet[work.ID] = true

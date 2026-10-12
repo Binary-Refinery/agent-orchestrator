@@ -67,11 +67,27 @@ selected work revision and gate. An ordinary Go cannot substitute for the exact
 human publication authorization `PUBLISH-GO [Branch]`. Batch failure stops the
 remaining items and retains the audit of completed items.
 
-Approval uses AO's existing trusted local operator API. The exact phrase
-records the caller's explicit decision; it is not cryptographic proof of human
-presence against another process with the same local credentials. The native
-strategic planner has no AO API authority, and applying its advice still goes
-through ordinary operator admission.
+Ordinary decisions use AO's existing local operator API. Publication requires
+an enforced isolated worker runtime, protected operator authorization and
+publisher credentials unavailable to workers. A `PUBLISH-GO [Branch]` phrase,
+CORS origin, role header or environment flag alone establishes none of these.
+The current tmux/conpty and native Chat hosts share the operator's OS user, so
+the production daemon reports publication unavailable and refuses to mint a
+publication grant or execute a managed publication. Ordinary gates and
+resumption remain available. This does **not** prevent a separate process from
+running `git`/`gh` using the same user's credentials; full host containment needs
+an actual isolated runtime and protected operator/publisher adapter.
+
+The controlled publication endpoint binds its single-use grant to work,
+commit, branch, policy, captured snapshot, operator proof and operation. It
+persists a revision-guarded claim before any external effect. A replay is
+refused, and a failed/interrupted attempt remains consumed until independently
+reconciled. AO's ordinary host-credential merge endpoint refuses governed PRs,
+including a known governed repository branch reassigned to another session;
+unmanaged PR behavior remains unchanged. Historical grants remain historical
+evidence records and cannot acquire protected execution authority retroactively.
+The native strategic planner cannot approve publication; applying its advice
+still goes through ordinary operator admission.
 
 ## Enforceable governance
 
@@ -114,6 +130,14 @@ Before execution, phase advancement, approval and closeout, the daemon checks
 the current native-source fingerprint against a completed inspection. Changed
 sources wait for bounded reinspection; vanished or invalid retained native
 proof is revoked instead of remaining green.
+
+## Execution budgets
+
+Work execution also has optional persisted [session/delegation/turn budgets](instructor-budgets.md).
+Concurrent capacity and lifetime consumption are separate; unknown native effects
+retain their reservations across daemon restarts. These caps apply to AO-owned
+native execution routes, not unobserved provider-internal subagents or raw terminal
+keystrokes. Legacy pinned policies remain unchanged.
 
 ## Native model effort
 
@@ -290,3 +314,36 @@ ao instructor policy
 The second command confirms the effective policy and its recomputed version.
 The import affects future work; existing work keeps its pinned policy. No
 settings sync service, runtime-state transfer or credential export is implied.
+
+## Work members and runtime identity
+
+`GET /api/v1/instructor/works/{workId}/members` is an on-demand daemon projection
+for the Instructor board. It groups associated agents and retained review passes
+under the stable work, with a separate logical project coordinator key
+`projectId:orchestrator`. The current project orchestrator is a runtime observation;
+reading it neither adopts it into a work nor rewrites a dispatch's historical target.
+
+Session display IDs can be reused after deletion. Each inserted session row now
+receives a database-owned immutable instance ID, independent of controller launch
+and restore generations. Explicit admission records that instance atomically with
+the work revision and a durable membership history entry. Ordinary work updates
+never reconstruct bindings from the append-only `sessionIds` history. Deleted
+membership remains historical and has no link into a replacement agent using the
+same display ID. Dispatch admission and producer reports also check the captured
+instance instead of granting authority from that historical display ID.
+
+Migration 0195 captures existing live binding rows as `legacy_bound`; it cannot
+prove that an old assignment was originally correct. The board exposes these as
+`legacy_unknown`, without an open target, until explicit same-work attachment
+confirms the current association. Existing governance authority remains enforced
+for the captured live binding. Historical IDs lacking a binding remain unknown;
+they are never automatically joined to a currently reused ID. This upgrade does
+not fabricate missing worker launch or provider confirmation evidence.
+
+The projection includes the captured work revision and completion timestamp and
+reports `atomic: false`: the work and runtime portfolio are not a global database
+snapshot. Each session's row and inserted identity are read together; an observed
+concurrent work revision change returns a conflict for retry. Current and retained
+historical navigation targets name existing AO session/review surfaces only.
+Requested, sent and confirmed native configuration stay distinct. Confirmation
+from an earlier controller generation cannot confirm a restored controller.

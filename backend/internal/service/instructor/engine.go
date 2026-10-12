@@ -2,6 +2,7 @@ package instructor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -10,6 +11,18 @@ import (
 // advanceWork is the daemon-owned bounded workflow reducer. It changes one
 // business phase and queues the project orchestrator; it launches no worker.
 func (s *Service) advanceWork(ctx context.Context, captured domain.InstructorWork) error {
+	if captured.ApprovalDispatchID != "" && captured.State != "done" && captured.State != "cancelled" && captured.State != "parked" {
+		ready, err := s.approvalCohortReady(ctx, captured.ApprovalDispatchID)
+		if errors.Is(err, errApprovalCohortStopped) {
+			return s.fenceStoppedCohort(ctx, captured)
+		}
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return nil
+		}
+	}
 	if captured.State != "ready" && captured.State != "running" {
 		return nil
 	}
@@ -27,13 +40,24 @@ func (s *Service) advanceWork(ctx context.Context, captured domain.InstructorWor
 		_, err = s.save(ctx, w, w.Revision, "exception_expired", cause.Error())
 		return err
 	}
+	for _, action := range captured.PhaseActions {
+		if action.PhaseSequence == captured.PhaseSequence && action.State == "running" {
+			return nil // Finish or recover its audit before freezing a new phase directive.
+		}
+	}
 	ds, err := s.deps.Store.ListInstructorDispatches(ctx, "", captured.ID)
 	if err != nil {
 		return err
 	}
 	for _, d := range ds {
+		if d.State == "cancelled" {
+			continue // A fenced cancellation cannot start and no longer owns a wake-up obligation.
+		}
 		if d.State == "pending" || d.State == "leased" {
 			return nil
+		}
+		if d.ReportID != "" && d.PhaseSequence == captured.PhaseSequence && (d.NativeReceipt == nil || d.NativeReceipt.StartedAt == nil) {
+			return nil // Neither queue nor send/agent acknowledgment is an executing coordinator turn.
 		}
 	}
 	s.mu.Lock()

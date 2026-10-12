@@ -115,7 +115,7 @@ export function ShellTopbar({
 	const session = workspaceScope?.session;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isAutomationsRoute = location.pathname === "/automations";
-	const isInstructorRoute = location.pathname === "/instructor";
+	const isInstructorRoute = location.pathname === "/instructor" || location.pathname === "/instructor-board";
 	const isStandaloneBoardRoute = location.pathname === "/sessions" || location.pathname === "/sessions/";
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	const isInspectorOpen = useUiStore((state) =>
@@ -181,7 +181,7 @@ export function ShellTopbar({
 					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="instructor-topbar-label">
 						<span className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}>
 							<Compass aria-hidden="true" className="size-icon-md" />
-							{t("instructor.title")}
+							{t(location.pathname === "/instructor-board" ? "instructor.board.title" : "instructor.title")}
 						</span>
 					</div>
 				) : isAutomationsRoute ? (

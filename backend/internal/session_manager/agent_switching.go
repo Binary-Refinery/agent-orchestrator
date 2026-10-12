@@ -550,6 +550,29 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}
+	// Reserve before asking the source for a handoff or stopping it. The target
+	// continuation shares one stable switch key for inline/after-start prompts.
+	budgetTokens, err := m.reserveInstructorNativeController(ctx, id, "", "switch:"+string(result.ID))
+	if err != nil {
+		return result, fmt.Errorf("switch agent %s: target execution budget: %w", id, err)
+	}
+	// Claim the replacement before any source model turn or native stop. A
+	// confirmed source exit must not release capacity while the target is pending.
+	if err := m.fenceInstructorNativeController(ctx, budgetTokens); err != nil {
+		return result, fmt.Errorf("switch agent %s: fence target execution budget: %w", id, err)
+	}
+	budgetAttempted := false
+	defer func() {
+		if retErr != nil && !budgetAttempted {
+			cleanupCtx, cancel := switchDurableContext(ctx)
+			defer cancel()
+			for _, token := range budgetTokens {
+				if token != "" {
+					_ = m.executionBudget().CancelManagedBudgetBeforeAdmission(cleanupCtx, token)
+				}
+			}
+		}
+	}()
 	recorder.boundary(domain.AgentSwitchFailureHandoffDirectoryPrepare)
 	candidatePath, _, candidateErr := m.prepareAgentHandoffPaths(ctx, id, string(result.ID))
 	if candidateErr != nil {
@@ -802,6 +825,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		return result, fmt.Errorf("switch agent %s: %w", id, admissionErr)
 	}
 	defer releaseCodexAdmission()
+	budgetAttempted = true
 	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
 	var effectErr ports.RuntimeEffectError
 	hasEffectEvidence := createErr != nil && errors.As(createErr, &effectErr)
@@ -810,6 +834,13 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	}
 	if strings.TrimSpace(handle.ID) == "" {
 		if hasEffectEvidence && effectErr.EffectOutcome() == ports.RuntimeEffectNone {
+			cleanupCtx, cancel := switchDurableContext(ctx)
+			for _, token := range budgetTokens {
+				if token != "" {
+					_ = m.executionBudget().CancelManagedBudgetBeforeAdmission(cleanupCtx, token)
+				}
+			}
+			cancel()
 			recorder.callOutcome = domain.AgentSwitchCallNoEffectFailure
 			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, createErr)
 		}
@@ -959,6 +990,9 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	recorder.targetOwnerCommitted = domain.AgentSwitchTriTrue
 	recorder.ownership = domain.AgentSwitchOwnershipTarget
 	recorder.userImpact = domain.AgentSwitchUserImpactTargetUnavailable
+	if err := m.finishInstructorNativeController(ctx, budgetTokens); err != nil {
+		return result, fmt.Errorf("switch agent %s: record target execution budget: %w", id, err)
+	}
 	result, err = requireAgentSwitch(ctx, store, result.ID)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: reload target activation: %w", id, err)

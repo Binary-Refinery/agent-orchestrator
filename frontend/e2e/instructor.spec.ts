@@ -148,7 +148,7 @@ test("renderer: frozen Work snapshot, inventory, exact publication and honest la
 	await publication.getByRole("button", { name: "Go", exact: true }).click();
 	const gate = page.getByRole("dialog", { name: "Go", exact: true });
 	await expect(gate.getByRole("textbox")).toHaveValue("");
-	await gate.getByRole("button", { name: "Go", exact: true }).click();
+	await expect(gate.getByRole("button", { name: "Go", exact: true })).toBeDisabled();
 	expect(state.commands).toHaveLength(1);
 	await gate.getByRole("textbox").fill("PUBLISH-GO feature/upgrade");
 	await gate.getByRole("button", { name: "Go", exact: true }).click();

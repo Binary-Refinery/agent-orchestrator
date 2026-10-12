@@ -1,0 +1,115 @@
+{
+  "sourceRepository": "OrchestratorInc/agent-orchestrator",
+  "sourceCommit": "c3e17362a85f37d0b0154bf8d841ed4f633f8306",
+  "sharedThroughVersion": 164,
+  "migrations": [
+    {
+      "file": "0165_allow_mimo_code_harness.sql",
+      "sha256": "41b2d7a4ce8678cfc0ea176a76b11a535b8f80f224d8af3c70d952271daefa30"
+    },
+    {
+      "file": "0166_allow_deepseek_harness.sql",
+      "sha256": "46d3555dc632eb95febcbd6a928926d022bc5f3ec6b976ba7ab2900f05cf8c02"
+    },
+    {
+      "file": "0167_allow_opencode_v2_harness.sql",
+      "sha256": "4bef280346882b3e79670f67bed1aa2b8d9ec79ca3c2018cd65be6fafd65990c"
+    },
+    {
+      "file": "0168_cues.sql",
+      "sha256": "35e968657f17ca1bebf95ae3d11970e5bea7cf0332c4e4b4a3791bc6e351871f"
+    },
+    {
+      "file": "0169_reported_pr_cdc.sql",
+      "sha256": "b37f8db2366400defdd4a3361c9d88a993c438a4856a50f62c0b8b91e3e0a295"
+    },
+    {
+      "file": "0170_review_result_notifications.sql",
+      "sha256": "44a7d81dc8bc967eb704c4f4b1d98038c981368984b080a05af46c789dfc6cec"
+    },
+    {
+      "file": "0171_shell_preview_capability.sql",
+      "sha256": "e26d5a1a0731d296675f4eba62ae290e1aa0ce120f6815c218d9a7fbb879ea26"
+    },
+    {
+      "file": "0172_client_task_requests.sql",
+      "sha256": "f75fd0fbae8254bb349618a1cef3229ce47bf9f3704f61fe2ab84f41626c06be"
+    },
+    {
+      "file": "0173_chat_client_payload_hash.sql",
+      "sha256": "627b23cc9413d5fcbed0d8774d765a86e7101a78f8e37434548a58b2e28b58d0"
+    },
+    {
+      "file": "0174_conversation_account_cdc.sql",
+      "sha256": "a06027068f61c41684edcd8586672522329850af6ceacb072afae2464dd3f996"
+    },
+    {
+      "file": "0175_codex_subagent_activity.sql",
+      "sha256": "e07399cc1186414d98f78dca973e255312015a0ae120dc263e40268ad92a3cbc"
+    },
+    {
+      "file": "0176_claude_subagent_activity.sql",
+      "sha256": "2ab49520a87ecc1947510493288e22c2b2ee153149de7c3438c33f995e6012b9"
+    },
+    {
+      "file": "0177_review_run_rerun_same_head.sql",
+      "sha256": "75c0bce2930650310bfcf1fc956d48f6531e24a07a211ecc7f29ed5dc7bdc6ec"
+    },
+    {
+      "file": "0178_archive_reviewers.sql",
+      "sha256": "fe76407aa32945399f5ad012f0ffcef541886b9412829ca8f55bb2c4f8f2d3de"
+    },
+    {
+      "file": "0179_conversation_message_sender.sql",
+      "sha256": "c9714d36635b35b062fd45e195ccaecc73294de208d399adaead54958f778898"
+    },
+    {
+      "file": "0180_session_provision_steps.sql",
+      "sha256": "3aca500b8ff84ea519ef208cbc5f7a8bdf6ff8c81fee427f9c6fb5bca40392fe"
+    },
+    {
+      "file": "0181_session_artifacts.sql",
+      "sha256": "d628853ea2a991091eb99e01ac6b1e68043af8914e13de4ef7bd2a4df8953d36"
+    },
+    {
+      "file": "0185_worktree_startup_cues.sql",
+      "sha256": "b2e62fc24b06c7e7595f8ecd0cb25dda48aaf736d2bbddf284e4b1f9f9de36fa"
+    },
+    {
+      "file": "0186_remove_cue_description.sql",
+      "sha256": "0700dddab778156736f23a7b86894ff61d54b1e120b7a6d3bdc74f2720065830"
+    },
+    {
+      "file": "0187_remove_cue_startup_options.sql",
+      "sha256": "9e1447c2300a47a17ffa1c53b565708af2915ed686940bf305ce247323f5ba70"
+    },
+    {
+      "file": "0188_remove_worktree_startup_cues.sql",
+      "sha256": "160fceb38918852bc1a184c52cc07ec197e0afa0fa78a50778785de273cbc476"
+    },
+    {
+      "file": "0189_session_interaction.sql",
+      "sha256": "fd20ffee5cc89e3d87b541bd192743a2689e5757db94366c83718047dbe190d5"
+    },
+    {
+      "file": "0190_session_hibernation.sql",
+      "sha256": "deb35366478dff2e1e9d593c323279f35a0f87a7772b8bbd49b1edd8be9a8bdb"
+    },
+    {
+      "file": "0191_session_branch_state.sql",
+      "sha256": "0a26a937da65eff49bca613ab128f2197acbd198f735102fcb8ac87ea29509cb"
+    },
+    {
+      "file": "0192_allow_openhands_harness.sql",
+      "sha256": "cd2c5227df5e7977c1b3ec95eca3f61f57e9cc5537a893763b41536924db4125"
+    },
+    {
+      "file": "0193_allow_codewhale_harness.sql",
+      "sha256": "1dae61f9ea8e3a17a6188edd235b549dffd91a30be728a49bff7fa81850e9135"
+    },
+    {
+      "file": "0194_allow_command_code_harness.sql",
+      "sha256": "682801b2f0f63ad0948c2e7d0fd84db28a9de7a97080f6fed3a00dc9342717bd"
+    }
+  ]
+}

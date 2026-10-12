@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +46,7 @@ func TestInstructorGitInventoryDiscoversDirtyAndUnassignedResourcesReadOnly(t *t
 	projects := []domain.ProjectRecord{{ID: "project", Path: repo}}
 	sessions := []domain.SessionRecord{{ID: "worker", ProjectID: "project", Metadata: domain.SessionMetadata{WorkspacePath: linked, Branch: "managed"}}}
 	works := []domain.InstructorWork{{ID: "work", ProjectID: "project", Branch: "managed", SessionIDs: []domain.SessionID{"worker"}}}
-	resources, count := (instructorInventory{}).gitInventory(context.Background(), projects, sessions, works)
+	resources, count := (instructorInventory{store: instructorTestStore{works: works, sessions: sessions}}).gitInventory(context.Background(), projects, sessions, works)
 	var dirty, missing, branch bool
 	for _, resource := range resources {
 		if resource.Kind == "uncommitted" && resource.Path == linked {
@@ -100,7 +101,7 @@ func TestInstructorGitInventoryDoesNotLinkSameBranchAcrossRepositories(t *testin
 		{ID: "unassociated", ProjectID: "workspace", Metadata: domain.SessionMetadata{WorkspacePath: second, Branch: "shared-name"}},
 	}
 	works := []domain.InstructorWork{{ID: "work", ProjectID: "workspace", Branch: "shared-name", SessionIDs: []domain.SessionID{"worker"}}}
-	resources, _ := (instructorInventory{}).gitInventory(context.Background(), projects, sessions, works)
+	resources, _ := (instructorInventory{store: instructorTestStore{works: works, sessions: sessions}}).gitInventory(context.Background(), projects, sessions, works)
 	var linked, unassigned bool
 	for _, resource := range resources {
 		if resource.Kind != "branch" || resource.Branch != "shared-name" {
@@ -134,5 +135,43 @@ func TestInstructorGitBranchIdentitySurvivesRegisteredSourceChange(t *testing.T)
 		if resource.Kind == "branch" && ids[resource.Branch] != resource.ID {
 			t.Fatalf("branch %s acquired a new identity after source change: %s != %s", resource.Branch, ids[resource.Branch], resource.ID)
 		}
+	}
+}
+
+type failingInstructorWorkBindingStore struct {
+	instructorTestStore
+	err   error
+	calls int
+}
+
+func (s *failingInstructorWorkBindingStore) InstructorWorkForSession(context.Context, domain.SessionID) (domain.InstructorWork, bool, error) {
+	s.calls++
+	return domain.InstructorWork{}, false, s.err
+}
+
+func TestInstructorGitInventoryBindingReadFailureIsUnknown(t *testing.T) {
+	for _, cause := range []error{errors.New("database is unavailable; sensitive internal detail"), context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			repo := instructorTestRepository(t)
+			sessions := []domain.SessionRecord{{ID: "owner", ProjectID: "binding-project", Metadata: domain.SessionMetadata{WorkspacePath: repo, Branch: "main"}}}
+			store := &failingInstructorWorkBindingStore{err: cause}
+			resources, count := (instructorInventory{store: store}).gitInventory(context.Background(), []domain.ProjectRecord{{ID: "binding-project", Path: repo}}, sessions, nil)
+			if store.calls != 1 || len(resources) == 0 {
+				t.Fatalf("binding read not exercised: calls=%d resources=%+v", store.calls, resources)
+			}
+			affected := 0
+			for _, resource := range resources {
+				if len(resource.SessionIDs) == 0 {
+					continue
+				}
+				affected++
+				if resource.Assignment != "unknown" || resource.Error == "" || strings.Contains(resource.Error, "sensitive internal detail") {
+					t.Fatalf("binding failure converted to unassigned or leaked internal detail: %+v", resource)
+				}
+			}
+			if affected == 0 || count != 0 {
+				t.Fatalf("failed associations counted as unassigned: affected=%d count=%d resources=%+v", affected, count, resources)
+			}
+		})
 	}
 }

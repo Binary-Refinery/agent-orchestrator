@@ -36,6 +36,7 @@ func commandContract(c domain.InstructorCommandSpec) domain.InstructorCommandSpe
 		if c.Action == "go" {
 			c.Preconditions = append(c.Preconditions, "open-gate", "exact-publication-approval-if-required")
 			c.Parameters = append(c.Parameters, domain.InstructorCommandParameter{Name: "approval", Type: "exact-approval"})
+			c.Parameters = append(c.Parameters, domain.InstructorCommandParameter{Name: "approvals", Type: "work-approvals"})
 		}
 		if c.Action == "neu" {
 			c.Scopes = []string{"project"}

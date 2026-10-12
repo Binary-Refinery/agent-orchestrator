@@ -2761,6 +2761,122 @@ paths:
       summary: Verify exact-commit evidence against daemon-owned provenance
       tags:
       - instructor
+  /api/v1/instructor/works/{workId}/members:
+    get:
+      operationId: instructorWorkMembers
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorMembers'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read incarnation-safe work agents and reviewer surfaces
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/publication:
+    post:
+      operationId: executeInstructorPublication
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorPublicationRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Consume an exact protected grant once through the isolated publisher
+      tags:
+      - instructor
   /api/v1/instructor/works/{workId}/sessions:
     post:
       operationId: attachInstructorSession
@@ -9528,6 +9644,8 @@ components:
           type: string
         model:
           type: string
+        nativeEffortDefaults:
+          $ref: '#/components/schemas/NativeEffortDefaults'
         permissions:
           type: string
       type: object
@@ -11983,6 +12101,65 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainInstructorNativeReceipt:
+      properties:
+        acceptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        deliveredAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        observerRuntimeId:
+          type: string
+        providerTurnId:
+          type: string
+        runtimeId:
+          type: string
+        source:
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+      required:
+      - runtimeId
+      type: object
+    DomainInstructorPhaseAction:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        error:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        phaseSequence:
+          format: int64
+          type: integer
+        producer:
+          type: string
+        startedAt:
+          format: date-time
+          type: string
+        state:
+          type: string
+      required:
+      - id
+      - kind
+      - phaseSequence
+      - producer
+      - state
+      - startedAt
+      type: object
     DomainReviewerConfig:
       properties:
         agentConfig:
@@ -12561,6 +12738,38 @@ components:
       - sessionTrailer
       - issueTrailer
       type: object
+    InstructorBudgetUsage:
+      properties:
+        concurrentSessions:
+          type: integer
+        delegations:
+          type: integer
+        sessions:
+          type: integer
+        turns:
+          type: integer
+      required:
+      - concurrentSessions
+      - sessions
+      - turns
+      - delegations
+      type: object
+    InstructorBudgets:
+      properties:
+        maxConcurrentSessions:
+          type: integer
+        maxDelegations:
+          type: integer
+        maxSessions:
+          type: integer
+        maxTurns:
+          type: integer
+      required:
+      - maxConcurrentSessions
+      - maxSessions
+      - maxTurns
+      - maxDelegations
+      type: object
     InstructorCapabilitiesResponse:
       properties:
         commands:
@@ -12569,6 +12778,8 @@ components:
           type: array
         enabled:
           type: boolean
+        publication:
+          $ref: '#/components/schemas/InstructorPublicationCapabilities'
         reason:
           type: string
         schema:
@@ -12577,6 +12788,7 @@ components:
       - schema
       - enabled
       - commands
+      - publication
       type: object
     InstructorChecksRequest:
       properties:
@@ -12611,12 +12823,21 @@ components:
       properties:
         approval:
           type: string
+        approvals:
+          items:
+            $ref: '#/components/schemas/InstructorWorkApproval'
+          type: array
         command:
           type: string
         idempotencyKey:
           type: string
         new:
           $ref: '#/components/schemas/InstructorRegisterRequest'
+        publicationOperation:
+          enum:
+          - publish
+          - merge
+          type: string
         snapshotId:
           type: string
         workIds:
@@ -12699,8 +12920,19 @@ components:
       required:
       - commands
       type: object
+    InstructorCoordinator:
+      properties:
+        current:
+          $ref: '#/components/schemas/InstructorMember'
+        key:
+          type: string
+      required:
+      - key
+      type: object
     InstructorDetails:
       properties:
+        budgetUsage:
+          $ref: '#/components/schemas/InstructorBudgetUsage'
         dispatches:
           items:
             $ref: '#/components/schemas/InstructorDispatch'
@@ -12735,8 +12967,21 @@ components:
           type: string
         message:
           type: string
+        nativeReceipt:
+          $ref: '#/components/schemas/DomainInstructorNativeReceipt'
+        phase:
+          type: string
+        phaseSequence:
+          format: int64
+          type: integer
+        policyVersion:
+          type: string
         position:
           type: integer
+        producerRuntimeId:
+          type: string
+        producerSessionId:
+          type: string
         projectId:
           type: string
         queuedAt:
@@ -12744,11 +12989,22 @@ components:
           type:
           - "null"
           - string
+        reportId:
+          type: string
         snapshotId:
           type: string
         state:
           type: string
+        targetCreatedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        targetRuntimeId:
+          type: string
         targetSessionId:
+          type: string
+        targetSessionInstanceId:
           type: string
         updatedAt:
           format: date-time
@@ -12859,6 +13115,8 @@ components:
           type: string
         beforePolicyVersion:
           type: string
+        executionBudgets:
+          $ref: '#/components/schemas/InstructorBudgets'
         expiresAt:
           format: date-time
           type: string
@@ -12921,6 +13179,8 @@ components:
       properties:
         approval:
           type: string
+        executionBudgets:
+          $ref: '#/components/schemas/InstructorBudgets'
         expiresAt:
           format: date-time
           type: string
@@ -13122,6 +13382,8 @@ components:
         launchedAt:
           format: date-time
           type: string
+        ownerSessionId:
+          type: string
         phase:
           type: string
         phaseSequence:
@@ -13129,15 +13391,24 @@ components:
           type: integer
         requested:
           $ref: '#/components/schemas/InstructorAgentSelection'
+        reviewCreatedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         reviewId:
           type: string
         reviewRunId:
           type: string
         role:
           type: string
+        runtimeGeneration:
+          type: string
         sent:
           $ref: '#/components/schemas/InstructorAgentSelection'
         sessionId:
+          type: string
+        sessionInstanceId:
           type: string
         sha:
           type: string
@@ -13150,6 +13421,111 @@ components:
       - requested
       - status
       - launchedAt
+      type: object
+    InstructorMember:
+      properties:
+        association:
+          enum:
+          - current
+          - historical
+          - legacy_unknown
+          type: string
+        confirmed:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        id:
+          type: string
+        instanceId:
+          type: string
+        kind:
+          enum:
+          - session
+          - review
+          type: string
+        name:
+          type: string
+        openTarget:
+          $ref: '#/components/schemas/InstructorMemberOpenTarget'
+        phase:
+          type: string
+        reason:
+          type: string
+        requested:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        reviewId:
+          type: string
+        reviewRunId:
+          type: string
+        role:
+          type: string
+        runtimeGeneration:
+          type: string
+        sent:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        sessionId:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - kind
+      - role
+      - association
+      - status
+      - name
+      type: object
+    InstructorMemberOpenTarget:
+      properties:
+        kind:
+          enum:
+          - session
+          - review
+          type: string
+        projectId:
+          type: string
+        reviewId:
+          type: string
+        reviewRunId:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - kind
+      - projectId
+      - sessionId
+      type: object
+    InstructorMembers:
+      properties:
+        atomic:
+          type: boolean
+        capturedAt:
+          format: date-time
+          type: string
+        coordinator:
+          $ref: '#/components/schemas/InstructorCoordinator'
+        members:
+          items:
+            $ref: '#/components/schemas/InstructorMember'
+          type: array
+        projectId:
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - workId
+      - projectId
+      - workRevision
+      - capturedAt
+      - atomic
+      - coordinator
+      - members
       type: object
     InstructorMetrics:
       properties:
@@ -13289,6 +13665,8 @@ components:
       properties:
         attribution:
           $ref: '#/components/schemas/InstructorAttribution'
+        budgets:
+          $ref: '#/components/schemas/InstructorBudgets'
         closeoutRequires:
           items:
             type: string
@@ -13386,6 +13764,47 @@ components:
       - workIds
       - reason
       type: object
+    InstructorPublicationCapabilities:
+      properties:
+        available:
+          type: boolean
+        isolatedCredentials:
+          type: boolean
+        protectedOperator:
+          type: boolean
+        reason:
+          type: string
+        workerIsolation:
+          type: boolean
+      required:
+      - available
+      - workerIsolation
+      - protectedOperator
+      - isolatedCredentials
+      type: object
+    InstructorPublicationExecution:
+      properties:
+        claimedAt:
+          format: date-time
+          type: string
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        error:
+          type: string
+        id:
+          type: string
+        ref:
+          type: string
+        state:
+          type: string
+      required:
+      - id
+      - state
+      - claimedAt
+      type: object
     InstructorPublicationGrant:
       properties:
         approval:
@@ -13393,12 +13812,26 @@ components:
         approvedAt:
           format: date-time
           type: string
+        authorizationId:
+          type: string
         branch:
           type: string
+        dispatchId:
+          type: string
+        execution:
+          $ref: '#/components/schemas/InstructorPublicationExecution'
         gateId:
+          type: string
+        id:
+          type: string
+        operation:
+          type: string
+        operatorId:
           type: string
         policyVersion:
           type: string
+        revoked:
+          type: boolean
         sha:
           type: string
         snapshotId:
@@ -13418,6 +13851,42 @@ components:
       - workRevision
       - approval
       - approvedAt
+      type: object
+    InstructorPublicationRepository:
+      properties:
+        host:
+          type: string
+        repository:
+          type: string
+      required:
+      - host
+      - repository
+      type: object
+    InstructorPublicationRequest:
+      properties:
+        branch:
+          type: string
+        grantId:
+          type: string
+        operation:
+          enum:
+          - publish
+          - merge
+          type: string
+        sha:
+          type: string
+        snapshotId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - grantId
+      - snapshotId
+      - workRevision
+      - sha
+      - branch
+      - operation
       type: object
     InstructorReconcileRequest:
       properties:
@@ -13709,6 +14178,8 @@ components:
           items:
             type: string
           type: array
+        approvalDispatchId:
+          type: string
         approvedTransitions:
           items:
             type: string
@@ -13761,6 +14232,10 @@ components:
           type: integer
         phase:
           type: string
+        phaseActions:
+          items:
+            $ref: '#/components/schemas/DomainInstructorPhaseAction'
+          type: array
         phaseSequence:
           format: int64
           type: integer
@@ -13779,6 +14254,10 @@ components:
         publicationGrants:
           items:
             $ref: '#/components/schemas/InstructorPublicationGrant'
+          type: array
+        publicationRepositories:
+          items:
+            $ref: '#/components/schemas/InstructorPublicationRepository'
           type: array
         revision:
           format: int64
@@ -13842,6 +14321,18 @@ components:
       - updatedAt
       - progressAt
       - actions
+      type: object
+    InstructorWorkApproval:
+      properties:
+        approval:
+          type: string
+        publicationOperation:
+          type: string
+        workId:
+          type: string
+      required:
+      - workId
+      - approval
       type: object
     KillReviewResponse:
       properties:
@@ -14364,6 +14855,14 @@ components:
       required:
       - muted
       type: object
+    NativeEffortDefaults:
+      additionalProperties:
+        additionalProperties:
+          type: string
+        type: object
+      type:
+      - "null"
+      - object
     NativeHistoryRequest:
       properties:
         requireNativeHistory:

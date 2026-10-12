@@ -29,18 +29,26 @@ type CreateInput struct {
 
 // Service validates and creates durable worker reports.
 type Service struct {
-	store     Store
-	now       func() time.Time
-	newID     func() string
-	onCreated func(domain.ReportRecord)
+	store       Store
+	now         func() time.Time
+	newID       func() string
+	onCreated   func(domain.ReportRecord)
+	managedDone ManagedDone
+}
+
+// ManagedDone routes governed completion claims through the Instructor's durable
+// outbox. handled is false for ordinary unassigned reports, preserving batching.
+type ManagedDone interface {
+	QueueWorkerReport(context.Context, domain.ReportRecord) (domain.ReportRecord, bool, error)
 }
 
 // Deps configures a Service.
 type Deps struct {
-	Store     Store
-	Now       func() time.Time
-	NewID     func() string
-	OnCreated func(domain.ReportRecord)
+	Store       Store
+	Now         func() time.Time
+	NewID       func() string
+	OnCreated   func(domain.ReportRecord)
+	ManagedDone ManagedDone
 }
 
 // New constructs a report Service.
@@ -51,7 +59,7 @@ func New(d Deps) *Service {
 	if d.NewID == nil {
 		d.NewID = func() string { return "rpt_" + uuid.NewString() }
 	}
-	return &Service{store: d.Store, now: d.Now, newID: d.NewID, onCreated: d.OnCreated}
+	return &Service{store: d.Store, now: d.Now, newID: d.NewID, onCreated: d.OnCreated, managedDone: d.ManagedDone}
 }
 
 // ListProject returns persisted report facts ordered by created_at then id,
@@ -124,7 +132,17 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.ReportR
 		CreatedAt: now, DeliveryState: domain.ReportPending, AvailableAt: availableAt,
 		SettlementDeadline: settlementDeadline, RepeatCount: 1,
 	}
-	created, err := s.store.CreateReport(ctx, rec)
+	var created domain.ReportRecord
+	handled := false
+	if s.managedDone != nil && rec.State == domain.ReportDone {
+		created, handled, err = s.managedDone.QueueWorkerReport(ctx, rec)
+		if err != nil {
+			return created, err
+		}
+	}
+	if !handled {
+		created, err = s.store.CreateReport(ctx, rec)
+	}
 	if err == nil && s.onCreated != nil {
 		s.onCreated(created)
 	}

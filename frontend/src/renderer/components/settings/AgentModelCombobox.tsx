@@ -23,7 +23,7 @@ const RECENT_MODELS_STORAGE_KEY = "ao.recentModels.v1";
 const ignoreEffortChange = () => {};
 
 export type ModelEffortSelection = Pick<ModelTuningControlsProps,
-	"effort" | "onEffortChange" | "onEffortReset" | "onValidityChange" | "roleLabel"
+	"effort" | "requireExplicitEffort" | "onEffortChange" | "onEffortReset" | "onValidityChange" | "roleLabel"
 >;
 
 function effortLabel(value: string) {
@@ -133,7 +133,7 @@ export function AgentModelCombobox({
 	const showEffort = Boolean(tuning && (effortOptions.length || explicitEffort));
 	const providerEffort = effortModel?.defaultEffort;
 	const defaultEffort = providerEffort && effortOptions.includes(providerEffort) ? providerEffort : "";
-	const effectiveEffort = explicitEffort || defaultEffort;
+	const effectiveEffort = explicitEffort || (tuning?.requireExplicitEffort ? "" : defaultEffort);
 	const currentEffortLabel = effectiveEffort ? effortLabel(effectiveEffort) : t("settings.models.effortNotReported");
 	const entryMode = customModelEntry ?? (allowCustom ? "direct" : "none");
 	const allowDirectCustom = entryMode === "direct";

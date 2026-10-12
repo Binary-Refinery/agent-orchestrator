@@ -54,6 +54,7 @@ type Service struct {
 	observeAgentConfig       func(context.Context, domain.SessionID, string, string, string) error
 	validateAgentConfig      func(context.Context, domain.SessionID, string, string) error
 	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
+	executionBudget          ports.ManagedExecutionBudgetGuard
 	stopProviderHost         func(context.Context, domain.SessionID) error
 	reports                  *reportsvc.Coordinator
 
@@ -621,6 +622,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 
 	var conv ports.ChatConversation
+	budgetSessionToken := ""
+	if s.executionBudget != nil {
+		budgetSessionToken, err = s.executionBudget.ReserveManagedSession(ctx, owner, "")
+		if err != nil {
+			return nil, fmt.Errorf("chat controller budget: %w", err)
+		}
+		if err := s.executionBudget.SetManagedBudgetState(ctx, budgetSessionToken, "uncertain"); err != nil {
+			return nil, err
+		}
+	}
 	hostID := providerHostID(cfg)
 	if cfg.ProviderConversationID != "" {
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
@@ -778,6 +789,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cfg.SessionID, owner, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	s.mu.RLock()
 	controller.validateSemanticDispatch = s.validateSemanticDispatch
+	controller.executionBudget = s.executionBudget
 	s.mu.RUnlock()
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
@@ -941,6 +953,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cfg.ExpectedControllerOwner.RuntimeLaunchID = ""
 		cfg.ExpectedControllerOwner.ProviderConversationID = controller.ProviderConversationID()
 		cfg.ExpectedControllerOwner.ControllerGeneration = controller.Generation()
+	}
+	if s.executionBudget != nil {
+		// Native ownership must be committed first: an old terminated row is
+		// not proof that the replacement provider we just opened is gone.
+		if err := s.executionBudget.SetManagedBudgetState(ctx, budgetSessionToken, "started"); err != nil {
+			_ = cleanupUnpublishedConversation(conv, cfg.ProviderConversationID == "")
+			return nil, fmt.Errorf("record chat controller budget: %w", err)
+		}
 	}
 	s.mu.Lock()
 	s.ownerControllers[owner] = controller
@@ -1297,6 +1317,9 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 		s.mu.Unlock()
 	default:
 	}
+	if err == nil && s.executionBudget != nil {
+		err = s.executionBudget.FinishManagedSession(ctx, owner)
+	}
 	return err
 }
 
@@ -1332,6 +1355,9 @@ func (s *Service) StopForOwner(ctx context.Context, owner domain.ConversationOwn
 		}
 		s.mu.Unlock()
 	default:
+	}
+	if err == nil && s.executionBudget != nil {
+		err = s.executionBudget.FinishManagedSession(ctx, owner)
 	}
 	return err
 }

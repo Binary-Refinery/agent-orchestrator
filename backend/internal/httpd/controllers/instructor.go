@@ -63,8 +63,10 @@ func (c *InstructorController) Register(r chi.Router) {
 	r.Post("/instructor/commands", c.command)
 	r.Post("/instructor/works", c.registerWork)
 	r.Get("/instructor/works/{workId}", c.details)
+	r.Get("/instructor/works/{workId}/members", c.members)
 	r.Post("/instructor/works/{workId}/sessions", c.attachSession)
 	r.Post("/instructor/works/{workId}/checks", c.runChecks)
+	r.Post("/instructor/works/{workId}/publication", c.publish)
 	r.Post("/instructor/works/{workId}/evidence/verify", c.verifyEvidence)
 	r.Post("/instructor/reports", c.report)
 	r.Post("/instructor/reconcile", c.reconcile)
@@ -105,6 +107,10 @@ func (c *InstructorController) setPolicy(w http.ResponseWriter, r *http.Request)
 
 func writeInstructorError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, instructorsvc.ErrPublicationUnavailable):
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "INSTRUCTOR_PUBLICATION_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, instructorsvc.ErrPublicationConsumed):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTRUCTOR_PUBLICATION_CONSUMED", err.Error(), nil)
 	case errors.Is(err, instructorsvc.ErrEvidencePending):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTRUCTOR_EVIDENCE_PENDING", "Current persisted evidence is being inspected; retry after the inspection completes.", nil)
 	case errors.Is(err, instructorsvc.ErrConflict):
@@ -118,7 +124,7 @@ func writeInstructorError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func (c *InstructorController) capabilities(w http.ResponseWriter, _ *http.Request) {
+func (c *InstructorController) capabilities(w http.ResponseWriter, r *http.Request) {
 	reason := ""
 	if !c.Enabled {
 		reason = "AO_INSTRUCTOR is disabled"
@@ -130,7 +136,13 @@ func (c *InstructorController) capabilities(w http.ResponseWriter, _ *http.Reque
 	if c.Svc != nil {
 		commands = c.Svc.Commands()
 	}
-	envelope.WriteJSON(w, http.StatusOK, InstructorCapabilitiesResponse{Schema: "ao.instructor.v1", Enabled: c.Enabled && c.Svc != nil, Reason: reason, Commands: commands})
+	publication := domain.InstructorPublicationCapabilities{Reason: "Protected publication service is unavailable."}
+	if publisher, ok := c.Svc.(interface {
+		PublicationCapabilities(context.Context) domain.InstructorPublicationCapabilities
+	}); ok {
+		publication = publisher.PublicationCapabilities(r.Context())
+	}
+	envelope.WriteJSON(w, http.StatusOK, InstructorCapabilitiesResponse{Schema: "ao.instructor.v1", Enabled: c.Enabled && c.Svc != nil, Reason: reason, Commands: commands, Publication: publication})
 }
 
 func (c *InstructorController) available(w http.ResponseWriter, r *http.Request) bool {
@@ -186,7 +198,8 @@ func (c *InstructorController) command(w http.ResponseWriter, r *http.Request) {
 	if !decodeInstructorRequest(w, r, &req) {
 		return
 	}
-	input := instructorsvc.CommandInput{Command: req.Command, SnapshotID: req.SnapshotID, WorkIDs: req.WorkIDs, Approval: req.Approval, IdempotencyKey: req.IdempotencyKey}
+	input := instructorsvc.CommandInput{Command: req.Command, SnapshotID: req.SnapshotID, WorkIDs: req.WorkIDs, Approval: req.Approval, IdempotencyKey: req.IdempotencyKey, PublicationOperation: req.PublicationOperation, RequesterSessionID: domain.SessionID(r.Header.Get("X-AO-Session-ID"))}
+	input.Approvals = req.Approvals
 	if req.New != nil {
 		value := instructorRegisterInput(*req.New)
 		input.New = &value
@@ -331,7 +344,7 @@ func decodeInstructorRequest(w http.ResponseWriter, r *http.Request, dst any) bo
 }
 
 func instructorExceptionInput(req InstructorExceptionRequest) instructorsvc.ExceptionInput {
-	return instructorsvc.ExceptionInput{SnapshotID: req.SnapshotID, WorkID: req.WorkID, Role: req.Role, Selection: req.Selection, MaxFixRounds: req.MaxFixRounds, Reason: req.Reason, ExpiresAt: req.ExpiresAt, Approval: req.Approval}
+	return instructorsvc.ExceptionInput{SnapshotID: req.SnapshotID, WorkID: req.WorkID, Role: req.Role, Selection: req.Selection, MaxFixRounds: req.MaxFixRounds, ExecutionBudgets: req.ExecutionBudgets, Reason: req.Reason, ExpiresAt: req.ExpiresAt, Approval: req.Approval}
 }
 
 func (c *InstructorController) reconcileInventory(w http.ResponseWriter, r *http.Request) {
@@ -429,4 +442,23 @@ func (c *InstructorController) getPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, job)
+}
+
+func (c *InstructorController) members(w http.ResponseWriter, r *http.Request) {
+	if !c.available(w, r) {
+		return
+	}
+	reader, ok := c.Svc.(interface {
+		Members(context.Context, string) (domain.InstructorMembers, error)
+	})
+	if !ok {
+		apispec.NotImplemented(w, r, r.Method, r.URL.Path)
+		return
+	}
+	result, err := reader.Members(r.Context(), chi.URLParam(r, "workId"))
+	if err != nil {
+		writeInstructorError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, result)
 }

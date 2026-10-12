@@ -364,3 +364,29 @@ func TestInstructorInitialScopeRejectsLegacyRestoreAndPreservesCurrentRecovery(t
 		t.Fatalf("rejected stale scope fabricated provenance: launches=%+v err=%v", after.Launches, err)
 	}
 }
+
+func TestInstructorMembersObserveExactNativeReviewerLaunchGeneration(t *testing.T) {
+	f := newInstructorScopeFixture(t)
+	ctx := context.Background()
+	triggered, err := f.engine.Trigger(ctx, f.worker.ID, "", domain.AgentConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := f.service.Members(ctx, f.work.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, member := range members.Members {
+		if member.ReviewRunID != triggered.Run.ID {
+			continue
+		}
+		found = true
+		if member.Association != "current" || member.RuntimeGeneration == "" || member.RuntimeGeneration != f.launcher.spawns[len(f.launcher.spawns)-1].LaunchID || member.OpenTarget == nil || member.OpenTarget.Kind != "review" {
+			t.Fatalf("native launch generation not associated with active review: %+v", member)
+		}
+	}
+	if !found {
+		t.Fatalf("active native review absent: %+v", members)
+	}
+}
