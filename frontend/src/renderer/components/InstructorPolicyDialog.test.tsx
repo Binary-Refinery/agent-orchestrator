@@ -40,6 +40,41 @@ describe("InstructorPolicyDialog", () => {
 		expect(mocks.save).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		{ push: null, full: null },
+		{ push: [], full: [] },
+		{ push: null, full: ["npm", "test"] },
+	])("renders and preserves unconfigured profiles on save: %j", async (commands) => {
+		const original = { ...policy(), profiles: { push: { command: commands.push, timeoutSeconds: 900 }, full: { command: commands.full, timeoutSeconds: 900 } } };
+		mocks.policy = original;
+		renderDialog();
+		expect(await screen.findByRole("textbox", { name: "push" })).toHaveValue("");
+		expect(screen.getByRole("textbox", { name: "full" })).toHaveValue((commands.full ?? []).join("\n"));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Save policy" })).toBeEnabled());
+		await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(mocks.save).toHaveBeenCalledExactlyOnceWith(original);
+		await screen.findByRole("status");
+		expect(screen.getByRole("textbox", { name: "push" })).toHaveValue("");
+		expect(mocks.policy).toEqual(original);
+	});
+
+	it("clears a configured command to an unconfigured argument array", async () => {
+		renderDialog();
+		await userEvent.clear(await screen.findByRole("textbox", { name: "push" }));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Save policy" })).toBeEnabled());
+		await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ profiles: { push: { command: [], timeoutSeconds: 60 }, full: policy().profiles.full } }));
+	});
+
+	it("edits a null command without trimming or dropping empty arguments", async () => {
+		mocks.policy = { ...policy(), profiles: { ...policy().profiles, push: { command: null, timeoutSeconds: 900 } } };
+		renderDialog();
+		await userEvent.type(await screen.findByRole("textbox", { name: "push" }), "python\ncheck file.py\n\n--profile\npush");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Save policy" })).toBeEnabled());
+		await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ profiles: expect.objectContaining({ push: { command: ["python", "check file.py", "", "--profile", "push"], timeoutSeconds: 900 } }) }));
+	});
+
 	it("keeps check commands as argument arrays rather than shell expressions", async () => {
 		renderDialog();
 		const push = await screen.findByRole("textbox", { name: "push" });

@@ -58,3 +58,11 @@ The existing unsigned Windows build workflow accepts a pinned ref/version and
 requires `VITE_WORKOS_CLIENT_ID`; it does not publish a release. This plan neither
 starts a release nor changes the updater feed. The requested PyCharm MCP removal
 and repository ownership handling belong to their explicit implementation slice.
+
+## Policy settings follow-up boundary
+
+The post-PR-16 [policy settings repair](instructor-policy-settings-validation.md)
+is a frontend compatibility fix on fork main. Existing policies can contain
+`command: null`; displaying that value safely requires no upstream merge,
+policy-hash normalization, database rewrite or migration change. The integration
+and installed-build validation requirements above remain separate work.

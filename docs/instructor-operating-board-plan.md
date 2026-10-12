@@ -73,3 +73,19 @@ Windows configuration was inspected. See the recovery guide below.
    by those changes. Do not restart the full review loop without a new reason.
 5. Freeze the final source revision, publish to the fork, create the PR and verify
    the remote checks for that revision. Do not merge or deploy as validation.
+
+## Policy settings regression after PR #16
+
+The follow-up starts from merged fork main
+`291dbbb97c9604c3eeb6870e637ead63a8ec34af`. Opening Policy settings must work
+when `full` or `push` has `command: null` or an empty argument array. Display
+those commands as empty fields; retain untouched values, policy version,
+timeouts, role mappings and governance fields when saving. Clearing a configured
+command must produce an empty array, while nonempty input retains one argument
+per line, including spaces and empty arguments after the executable.
+
+Cover the reported Instructor-board click path with a real Chromium renderer
+test and the edit/save cases with component regressions. Follow the same local
+checks, independent review, confirmed-finding triage and focused delta chain.
+See [follow-up evidence](instructor-policy-settings-validation.md). This repair
+does not configure or execute missing check commands.
