@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Compass, Plus, RefreshCw } from "lucide-react";
 import {
@@ -28,6 +28,7 @@ type PendingCommand = {
 	spec: InstructorCommandSpec;
 	snapshotId: string;
 	works: InstructorWork[];
+	idempotencyKey: string;
 };
 
 function displayTime(value?: string) {
@@ -68,6 +69,7 @@ export function InstructorView({ initialWorkId }: { initialWorkId?: string } = {
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [batchAction, setBatchAction] = useState("");
 	const [pending, setPending] = useState<PendingCommand | null>(null);
+	const directGoIntent = useRef<{ digest: string; key: string } | null>(null);
 	const [approval, setApproval] = useState("");
 	const [newOpen, setNewOpen] = useState(false);
 	const [newDraft, setNewDraft] = useState<Partial<NewInput> | null>(null);
@@ -98,7 +100,7 @@ export function InstructorView({ initialWorkId }: { initialWorkId?: string } = {
 	async function send(body: InstructorCommandInput) {
 		setActionError(null);
 		try {
-			const result = await command.mutateAsync({ ...body, idempotencyKey: crypto.randomUUID() });
+			const result = await command.mutateAsync({ ...body, idempotencyKey: body.idempotencyKey ?? crypto.randomUUID() });
 			if (result.snapshot) {
 				if (body.command === "delta") setDelta(result.snapshot);
 				else { setSnapshot(result.snapshot); setDelta(null); setSelected(new Set()); }
@@ -114,10 +116,38 @@ export function InstructorView({ initialWorkId }: { initialWorkId?: string } = {
 		if (!snapshot || !snapshotId) return;
 		if (spec.action === "go" && targets.some((work) => work.gate?.exactApproval)) {
 			setApproval("");
-			setPending({ spec, snapshotId, works: targets });
+			setPending(structuredClone({ spec, snapshotId, works: targets, idempotencyKey: crypto.randomUUID() }));
 			return;
 		}
-		void send({ command: spec.action, snapshotId, workIds: targets.map((work) => work.id) });
+		const body: InstructorCommandInput = { command: spec.action, snapshotId, workIds: targets.map((work) => work.id) };
+		if (spec.action === "go" && targets.length > 1) {
+			body.approvals = targets.map((work) => ({ workId: work.id, approval: "" }));
+			const digest = JSON.stringify(body);
+			if (directGoIntent.current?.digest !== digest) directGoIntent.current = { digest, key: crypto.randomUUID() };
+			body.idempotencyKey = directGoIntent.current.key;
+		}
+		void send(body);
+	}
+
+	async function submitPending(event: FormEvent) {
+		event.preventDefault();
+		if (!pending || command.isPending || !pending.works.some((work) => work.gate?.exactApproval === approval)) return;
+		// The typed literal approves only its captured matching group. Never
+		// fill other branches' signatures from the displayed gate metadata.
+		const intent = pending;
+		const targets = intent.works.filter((work) => !work.gate?.exactApproval || work.gate.exactApproval === approval);
+		const result = await send({
+			command: intent.spec.action, snapshotId: intent.snapshotId,
+			idempotencyKey: intent.idempotencyKey,
+			workIds: targets.map((work) => work.id),
+			...(targets.length > 1 ? { approvals: targets.map((work) => ({ workId: work.id, approval: work.gate?.exactApproval ? approval : "" })) } : { approval }),
+		});
+		if (!result) return;
+		if (result.skipped?.length) { setActionError(result.skipped.join(" · ")); return; }
+		const accepted = new Set(targets.map((work) => work.id));
+		const remaining = intent.works.filter((work) => !accepted.has(work.id));
+		setPending((current) => current?.idempotencyKey === intent.idempotencyKey ? remaining.length ? { ...intent, works: remaining, idempotencyKey: crypto.randomUUID() } : null : current);
+		setApproval("");
 	}
 
 	function toggle(workId: string) {
@@ -187,10 +217,10 @@ export function InstructorView({ initialWorkId }: { initialWorkId?: string } = {
 					<InstructorInventory data={inventory.data} loading={inventory.isLoading} error={inventory.error} reconciling={inventoryReconcile.isPending} reconcileError={inventoryReconcile.error} onReconcile={async (resourceId, lastSeenAt) => { await inventoryReconcile.mutateAsync({ resourceId, lastSeenAt }); await inventory.refetch(); }} />
 				</> : null}
 			</main>
-			<Dialog open={Boolean(pending)} onOpenChange={(open) => { if (!open && !command.isPending) setPending(null); }}><DialogContent><DialogTitle>{pending?.spec.name}</DialogTitle><DialogDescription>{pending?.spec.description}</DialogDescription><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (!pending) return; void send({ command: pending.spec.action, snapshotId: pending.snapshotId, workIds: pending.works.map((work) => work.id), approval }).then((result) => { if (result) setPending(null); }); }}><p className="text-sm">{pending?.works.map((work) => work.name).join(", ")}</p><p className="break-all text-xs text-muted-foreground">{pending?.snapshotId}</p>{pending?.works.some((work) => work.gate?.exactApproval) ? <><label className="block text-sm" htmlFor="instructor-approval">{t("instructor.exactApproval")}</label>{pending.works.filter((work) => work.gate?.exactApproval).map((work) => <p key={work.id} className="break-all rounded bg-muted p-2 font-mono text-xs">{work.gate?.exactApproval}</p>)}<Input id="instructor-approval" value={approval} onChange={(event) => setApproval(event.target.value)} required autoComplete="off" /></> : <p className="text-sm text-muted-foreground">{t("instructor.gateApproval")}</p>}{actionError ? <p role="alert" className="text-sm text-destructive">{actionError}</p> : null}<Button disabled={command.isPending} type="submit">{pending?.spec.name}</Button></form></DialogContent></Dialog>
+			<Dialog open={Boolean(pending)} onOpenChange={(open) => { if (!open && !command.isPending) setPending(null); }}><DialogContent><DialogTitle>{pending?.spec.name}</DialogTitle><DialogDescription>{pending?.spec.description}</DialogDescription><form className="space-y-4" onSubmit={(event) => void submitPending(event)}><p className="text-sm">{pending?.works.map((work) => work.name).join(", ")}</p><p className="break-all text-xs text-muted-foreground">{pending?.snapshotId}</p>{pending?.works.some((work) => work.gate?.exactApproval) ? <><label className="block text-sm" htmlFor="instructor-approval">{t("instructor.exactApproval")}</label>{pending.works.filter((work) => work.gate?.exactApproval).map((work) => <p key={work.id} className="break-all rounded bg-muted p-2 font-mono text-xs">{work.gate?.exactApproval}</p>)}<Input id="instructor-approval" value={approval} disabled={command.isPending} onChange={(event) => { setApproval(event.target.value); setPending((current) => current ? { ...current, idempotencyKey: crypto.randomUUID() } : null); }} required autoComplete="off" /></> : <p className="text-sm text-muted-foreground">{t("instructor.gateApproval")}</p>}{actionError ? <p role="alert" className="text-sm text-destructive">{actionError}</p> : null}<Button disabled={command.isPending || !pending?.works.some((work) => work.gate?.exactApproval === approval)} type="submit">{pending?.spec.name}</Button></form></DialogContent></Dialog>
 			<InstructorNewDialog draft={newDraft} open={newOpen} busy={command.isPending} error={actionError} projects={inventory.data?.projects ?? []} onClose={() => setNewOpen(false)} onSubmit={async (input) => { const result = await send({ command: "neu", snapshotId: newSnapshotId, new: input }); if (result) { setNewOpen(false); await query.refetch(); } }} />
 			<InstructorPolicyDialog open={enabled && policyOpen} onClose={() => setPolicyOpen(false)} />
-			<Dialog open={enabled && Boolean(detailsId)} onOpenChange={(open) => { if (!open) { setDetailsId(null); setExceptionOpen(false); } }}><DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto"><DialogTitle>{details.data?.work.name ?? t("instructor.details")}</DialogTitle><DialogDescription>{details.data?.work.goal ?? t("instructor.loading")}</DialogDescription>{details.error ? <p role="alert" className="text-sm text-destructive">{details.error.message}</p> : null}{details.data ? <><Button variant="outline" onClick={() => setExceptionOpen(true)} disabled={!snapshot}>{t("instructor.exception")}</Button><InstructorWorkDetails details={details.data} />{exceptionOpen ? <InstructorExceptionDialog open work={details.data.work} snapshotId={snapshot?.id ?? ""} onClose={() => setExceptionOpen(false)} onApplied={async () => { setExceptionNotice(true); await details.refetch(); }} /> : null}<InstructorDeliveryReconcile key={`${details.data.work.id}:${details.data.work.gate?.dispatchId ?? ""}:${snapshot?.id ?? ""}`} work={details.data.work} snapshotId={snapshot?.id ?? ""} onSaved={async () => { setReconcileNotice(true); await details.refetch(); }} /></> : null}</DialogContent></Dialog>
+			<Dialog open={enabled && Boolean(detailsId)} onOpenChange={(open) => { if (!open) { setDetailsId(null); setExceptionOpen(false); } }}><DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto"><DialogTitle>{details.data?.work.name ?? t("instructor.details")}</DialogTitle><DialogDescription>{details.data?.work.goal ?? t("instructor.loading")}</DialogDescription>{details.error ? <p role="alert" className="text-sm text-destructive">{details.error.message}</p> : null}{details.data ? <><Button variant="outline" onClick={() => setExceptionOpen(true)} disabled={!snapshot}>{t("instructor.exception")}</Button><InstructorWorkDetails details={details.data} />{exceptionOpen ? <InstructorExceptionDialog open budgetUsage={details.data.budgetUsage} work={details.data.work} snapshotId={snapshot?.id ?? ""} onClose={() => setExceptionOpen(false)} onApplied={async () => { setExceptionNotice(true); await details.refetch(); }} /> : null}<InstructorDeliveryReconcile key={`${details.data.work.id}:${details.data.work.gate?.dispatchId ?? ""}:${snapshot?.id ?? ""}`} work={details.data.work} snapshotId={snapshot?.id ?? ""} onSaved={async () => { setReconcileNotice(true); await details.refetch(); }} /></> : null}</DialogContent></Dialog>
 		</div>
 	);
 }
@@ -198,7 +228,7 @@ export function InstructorView({ initialWorkId }: { initialWorkId?: string } = {
 
 type NewInput = NonNullable<InstructorCommandInput["new"]>;
 
-function InstructorNewDialog({ draft, open, busy, error, projects, onClose, onSubmit }: { draft: Partial<NewInput> | null; open: boolean; busy: boolean; error: string | null; projects: Array<{ id: string; name: string }>; onClose: () => void; onSubmit: (input: NewInput) => Promise<void> }) {
+export function InstructorNewDialog({ draft, open, busy, error, projects, onClose, onSubmit }: { draft: Partial<NewInput> | null; open: boolean; busy: boolean; error: string | null; projects: Array<{ id: string; name: string }>; onClose: () => void; onSubmit: (input: NewInput) => Promise<void> }) {
 	const { t } = useTranslation();
 	const [projectId, setProjectId] = useState("");
 	const [name, setName] = useState("");
@@ -210,10 +240,10 @@ function InstructorNewDialog({ draft, open, busy, error, projects, onClose, onSu
 		event.preventDefault();
 		await onSubmit({ projectId, name: name.trim(), goal: goal.trim(), source: "operator", sourceRef: sourceRef.trim(), ...(issueId.trim() ? { issueId: issueId.trim() } : {}) });
 	}
-	return <Dialog open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}><DialogContent><DialogTitle>{t("instructor.new")}</DialogTitle><DialogDescription>{t("instructor.newHint")}</DialogDescription><form className="space-y-4" onSubmit={(event) => void submit(event)}><label className="block text-sm">{t("instructor.project")}<select aria-label={t("instructor.project")} required value={projectId} onChange={(event) => setProjectId(event.target.value)} className="mt-1 w-full rounded-md border border-input bg-background p-2"><option value="">{t("instructor.chooseProject")}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="block text-sm" htmlFor="instructor-name">{t("instructor.name")}</label><Input id="instructor-name" required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /><label className="block text-sm" htmlFor="instructor-goal">{t("instructor.goal")}</label><textarea id="instructor-goal" required maxLength={4096} value={goal} onChange={(event) => setGoal(event.target.value)} className="min-h-24 w-full rounded-md border border-input bg-background p-2 text-sm" /><label className="block text-sm" htmlFor="instructor-issue">{t("instructor.issue")}</label><Input id="instructor-issue" value={issueId} onChange={(event) => setIssueId(event.target.value)} /><label className="block text-sm" htmlFor="instructor-source">{t("instructor.sourceRef")}</label><Input id="instructor-source" value={sourceRef} onChange={(event) => setSourceRef(event.target.value)} />{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<Button type="submit" disabled={busy}>{t("instructor.new")}</Button></form></DialogContent></Dialog>;
+	return <Dialog open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}><DialogContent className="max-h-[calc(100svh-2rem)] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto"><DialogTitle>{t("instructor.new")}</DialogTitle><DialogDescription>{t("instructor.newHint")}</DialogDescription><form className="space-y-4" onSubmit={(event) => void submit(event)}><label className="block text-sm">{t("instructor.project")}<select aria-label={t("instructor.project")} required value={projectId} onChange={(event) => setProjectId(event.target.value)} className="mt-1 w-full rounded-md border border-input bg-background p-2"><option value="">{t("instructor.chooseProject")}</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="block text-sm" htmlFor="instructor-name">{t("instructor.name")}</label><Input id="instructor-name" required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /><label className="block text-sm" htmlFor="instructor-goal">{t("instructor.goal")}</label><textarea id="instructor-goal" required maxLength={4096} value={goal} onChange={(event) => setGoal(event.target.value)} className="min-h-24 w-full rounded-md border border-input bg-background p-2 text-sm" /><label className="block text-sm" htmlFor="instructor-issue">{t("instructor.issue")}</label><Input id="instructor-issue" value={issueId} onChange={(event) => setIssueId(event.target.value)} /><label className="block text-sm" htmlFor="instructor-source">{t("instructor.sourceRef")}</label><Input id="instructor-source" value={sourceRef} onChange={(event) => setSourceRef(event.target.value)} />{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<Button type="submit" disabled={busy}>{t("instructor.new")}</Button></form></DialogContent></Dialog>;
 }
 
-function InstructorWorkDetails({ details }: { details: NonNullable<ReturnType<typeof useInstructorDetails>["data"]> }) {
+export function InstructorWorkDetails({ details }: { details: NonNullable<ReturnType<typeof useInstructorDetails>["data"]> }) {
 	const { t } = useTranslation();
 	const work = details.work;
 	return <div className="space-y-5 text-sm"><p className="break-all font-mono text-xs text-muted-foreground">{work.id} · {work.projectId} · {work.sourceRef}</p><p>{t("instructor.policy", { version: work.policyVersion })}</p><section><h3 className="mb-2 font-medium">{t("instructor.roleConfiguration")}</h3><p className="mb-2 text-xs text-muted-foreground">{t("instructor.effortHint")}</p><table className="w-full text-left text-xs"><thead className="text-muted-foreground"><tr><th className="p-2">{t("instructor.role")}</th><th className="p-2">{t("instructor.harness")}</th><th className="p-2">{t("instructor.requested")}</th><th className="p-2">{t("instructor.confirmed")}</th></tr></thead><tbody>{Object.entries(work.policy.roles ?? {}).map(([role, settings]) => <tr key={role}><td className="p-2">{role}</td><td className="p-2">{settings.harness}</td><td className="p-2">{settings.model || t("instructor.unknown")} · {(settings.effort === "maximum" || settings.effort === "maximum-native" ? settings.effortByModel?.[settings.model] : settings.effort) || t("instructor.unknown")}</td><td className="p-2">{t("instructor.unknown")}</td></tr>)}</tbody></table></section><section><h3 className="mb-2 font-medium">{t("instructor.launches")}</h3><table className="w-full text-left text-xs"><thead className="text-muted-foreground"><tr><th className="p-2">{t("instructor.role")}</th><th className="p-2">{t("instructor.requested")}</th><th className="p-2">{t("instructor.sent")}</th><th className="p-2">{t("instructor.confirmed")}</th></tr></thead><tbody>{work.launches?.map((launch, index) => <tr key={launch.sessionId || launch.reviewId || index}><td className="p-2">{launch.role}<p className="mt-1 text-muted-foreground">{launch.status}</p></td><td className="p-2">{selectionText(launch.requested, t("instructor.unknown"))}</td><td className="p-2">{launch.sent ? selectionText(launch.sent, t("instructor.unknown")) : t("instructor.unknown")}</td><td className="p-2">{launch.confirmed ? selectionText(launch.confirmed, t("instructor.unknown")) : t("instructor.unknown")}</td></tr>)}</tbody></table></section><section><h3 className="mb-2 font-medium">{t("instructor.verification")}</h3>{work.verification ? <div className="space-y-2"><p>{t("instructor.verificationStatus", { status: work.verification.status, passes: work.verification.passes, maximum: work.verification.maxPasses })}</p><p className="text-xs text-muted-foreground">{t("instructor.verificationCounts", { claims: work.verification.claims, verified: work.verification.verified })}</p><p className="text-xs text-muted-foreground">{t("instructor.verificationTimes", { last: displayTime(work.verification.lastRunAt), next: displayTime(work.verification.nextRunAt) })}</p>{work.verification.error ? <p role="alert" className="text-xs text-destructive">{work.verification.error}</p> : null}</div> : <p className="text-muted-foreground">{t("instructor.noVerification")}</p>}</section><section><h3 className="mb-2 font-medium">{t("instructor.evidence")}</h3>{work.evidence?.length ? <ul className="space-y-2">{work.evidence.map((item) => <li key={item.id} className="rounded bg-muted/30 p-2"><p>{item.kind} · {item.role} · {item.profile} · {t(item.revoked ? "instructor.revoked" : item.verified ? "instructor.verified" : "instructor.unverified")}</p><p className="mt-1 text-xs text-muted-foreground">{item.phase} · {item.phaseSequence} · {item.outcome || "—"}{typeof item.criticalFindings === "number" ? <> · {t("instructor.criticalFindings", { count: item.criticalFindings })}</> : null}</p><p className="mt-1 break-all text-xs text-muted-foreground">{item.ref} · {item.sha} · {displayTime(item.createdAt)}</p>{item.revocationReason ? <p className="mt-1 text-xs text-destructive">{item.revocationReason}</p> : null}</li>)}</ul> : <p className="text-muted-foreground">{t("instructor.noEvidence")}</p>}</section><section><h3 className="mb-2 font-medium">{t("instructor.delivery")}</h3>{details.dispatches?.map((item) => <p key={item.id} className="mb-2">{item.action} · {item.state} · {displayTime(item.updatedAt)}{item.error ? <span className="text-destructive"> · {item.error}</span> : null}</p>)}</section><section><h3 className="mb-2 font-medium">{t("instructor.publicationGrants")}</h3>{work.publicationGrants?.length ? <ul className="space-y-2">{work.publicationGrants.map((grant, index) => <li key={`${grant.gateId}-${index}`} className="rounded bg-muted/30 p-2"><p className="break-all font-mono text-xs">{grant.approval}</p><p className="mt-1 break-all text-xs text-muted-foreground">{grant.sha} · {grant.policyVersion} · {grant.snapshotId} · {displayTime(grant.approvedAt)}</p></li>)}</ul> : <p className="text-muted-foreground">{t("instructor.noPublicationGrants")}</p>}</section><section><h3 className="mb-2 font-medium">{t("instructor.exceptionHistory")}</h3>{work.exceptions?.length ? <ul className="space-y-2">{work.exceptions.map((item) => <li key={item.id} className="rounded bg-muted/30 p-2"><p>{item.role || item.kind} · {item.superseded ? t("instructor.exceptionSuperseded") : t("instructor.exceptionRecorded")}</p>{item.selection ? <p className="mt-1 text-xs">{selectionText(item.selection, t("instructor.unknown"))}</p> : null}<p className="mt-1 text-xs">{item.reason}</p><p className="mt-1 text-xs text-muted-foreground">{displayTime(item.grantedAt)} · {t("instructor.exceptionExpiry")}: {displayTime(item.expiresAt)}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.beforePolicyVersion} → {item.afterPolicyVersion}</p></li>)}</ul> : <p className="text-muted-foreground">{t("instructor.noExceptions")}</p>}</section><section><h3 className="mb-2 font-medium">{t("instructor.events")}</h3>{details.events?.map((item) => <p key={item.id} className="mb-2">{displayTime(item.at)} · {item.kind} · {item.detail}</p>)}</section></div>;
@@ -223,7 +253,7 @@ function selectionText(selection: InstructorWork["launches"][number]["requested"
 	return [selection.harness || unknown, selection.model || unknown, selection.effort || unknown].join(" · ");
 }
 
-function InstructorDeliveryReconcile({ work, snapshotId, onSaved }: { work: InstructorWork; snapshotId: string; onSaved: () => Promise<void> }) {
+export function InstructorDeliveryReconcile({ work, snapshotId, onSaved }: { work: InstructorWork; snapshotId: string; onSaved: () => Promise<void> }) {
 	const { t } = useTranslation();
 	const reconcile = useInstructorReconcile();
 	const [observation, setObservation] = useState("");

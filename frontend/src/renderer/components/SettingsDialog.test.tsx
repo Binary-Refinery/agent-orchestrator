@@ -25,10 +25,13 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("./ProjectSettingsForm", () => ({
 	ProjectSettingsForm: ({
 		onSaveState,
+		section,
 	}: {
 		onSaveState?: (state: ProjectSettingsSaveState) => void;
+		section?: string;
 	}) => (
 		<>
+			<div data-testid="project-settings-section">{section}</div>
 			<button
 				type="button"
 				onClick={() =>
@@ -95,6 +98,20 @@ describe("SettingsDialog", () => {
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		await userEvent.click(screen.getByRole("button", { name: "Complete save" }));
 		expect(useUiStore.getState().settingsModal).toBeNull();
+	});
+
+	it("opens the requested project Agents section through the real dialog effect", async () => {
+		useUiStore.getState().openProjectSettings("proj-1", "agents");
+		renderSettingsDialog();
+		expect(await screen.findByTestId("project-settings-section")).toHaveTextContent("agents");
+		expect(screen.getByRole("button", { name: "Agents" })).toHaveAttribute("aria-current", "page");
+	});
+
+	it("retains General as the default project settings section", async () => {
+		useUiStore.getState().openProjectSettings("proj-1");
+		renderSettingsDialog();
+		expect(await screen.findByTestId("project-settings-section")).toHaveTextContent("general");
+		expect(screen.getByRole("button", { name: "General" })).toHaveAttribute("aria-current", "page");
 	});
 
 	it("renders visible error message when project settings save fails", async () => {

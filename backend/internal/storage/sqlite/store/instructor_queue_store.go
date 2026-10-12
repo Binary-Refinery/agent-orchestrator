@@ -46,13 +46,18 @@ func (s *Store) QueueInstructorDispatch(ctx context.Context, dispatch domain.Ins
 	}
 	defer s.writeMu.Unlock()
 	return s.inTxDB(ctx, "queue instructor delivery", func(_ *gen.Queries, db gen.DBTX) error {
-		var state string
-		if err := db.QueryRowContext(ctx, `SELECT state FROM instructor_dispatches WHERE id=?`, dispatch.ID).Scan(&state); err != nil {
+		var state, priorBody string
+		if err := db.QueryRowContext(ctx, `SELECT state,body FROM instructor_dispatches WHERE id=?`, dispatch.ID).Scan(&state, &priorBody); err != nil {
 			return err
 		}
-		if state == "accepted" || state == "progress" {
+		if state == "accepted" || state == "progress" || state == "started" {
 			return nil
 		}
+		var prior domain.InstructorDispatch
+		if err := json.Unmarshal([]byte(priorBody), &prior); err != nil {
+			return err
+		}
+		dispatch.TargetSessionInstanceID, dispatch.TargetRuntimeID, dispatch.TargetCreatedAt, dispatch.NativeReceipt = prior.TargetSessionInstanceID, prior.TargetRuntimeID, prior.TargetCreatedAt, prior.NativeReceipt
 		if state == "cancelled" || state == "failed" {
 			return errors.New("native queue dispatch was cancelled or fenced before retry")
 		}

@@ -1016,6 +1016,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instructor/works/{workId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read incarnation-safe work agents and reviewer surfaces */
+        get: operations["instructorWorkMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Consume an exact protected grant once through the isolated publisher */
+        post: operations["executeInstructorPublication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instructor/works/{workId}/sessions": {
         parameters: {
             query?: never;
@@ -3169,6 +3203,7 @@ export interface components {
             effort?: string;
             mode?: string;
             model?: string;
+            nativeEffortDefaults?: components["schemas"]["NativeEffortDefaults"];
             permissions?: string;
         };
         AgentInfo: {
@@ -4064,6 +4099,31 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainInstructorNativeReceipt: {
+            /** Format: date-time */
+            acceptedAt?: null | string;
+            /** Format: date-time */
+            deliveredAt?: null | string;
+            observerRuntimeId?: string;
+            providerTurnId?: string;
+            runtimeId: string;
+            source?: string;
+            /** Format: date-time */
+            startedAt?: null | string;
+        };
+        DomainInstructorPhaseAction: {
+            /** Format: date-time */
+            completedAt?: null | string;
+            error?: string;
+            id: string;
+            kind: string;
+            /** Format: int64 */
+            phaseSequence: number;
+            producer: string;
+            /** Format: date-time */
+            startedAt: string;
+            state: string;
+        };
         DomainReviewerConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
@@ -4279,9 +4339,22 @@ export interface components {
             issueTrailer: string;
             sessionTrailer: string;
         };
+        InstructorBudgetUsage: {
+            concurrentSessions: number;
+            delegations: number;
+            sessions: number;
+            turns: number;
+        };
+        InstructorBudgets: {
+            maxConcurrentSessions: number;
+            maxDelegations: number;
+            maxSessions: number;
+            maxTurns: number;
+        };
         InstructorCapabilitiesResponse: {
             commands: components["schemas"]["InstructorCommandSpec"][];
             enabled: boolean;
+            publication: components["schemas"]["InstructorPublicationCapabilities"];
             reason?: string;
             schema: string;
         };
@@ -4297,9 +4370,12 @@ export interface components {
         };
         InstructorCommandRequest: {
             approval?: string;
+            approvals?: components["schemas"]["InstructorWorkApproval"][];
             command: string;
             idempotencyKey?: string;
             new?: components["schemas"]["InstructorRegisterRequest"];
+            /** @enum {string} */
+            publicationOperation?: "publish" | "merge";
             snapshotId?: string;
             workIds?: string[];
         };
@@ -4325,7 +4401,12 @@ export interface components {
         InstructorCommandsResponse: {
             commands: components["schemas"]["InstructorCommandSpec"][];
         };
+        InstructorCoordinator: {
+            current?: components["schemas"]["InstructorMember"];
+            key: string;
+        };
         InstructorDetails: {
+            budgetUsage?: components["schemas"]["InstructorBudgetUsage"];
             dispatches: components["schemas"]["InstructorDispatch"][];
             events: components["schemas"]["InstructorEvent"][];
             work: components["schemas"]["InstructorWork"];
@@ -4340,13 +4421,25 @@ export interface components {
             error?: string;
             id: string;
             message: string;
+            nativeReceipt?: components["schemas"]["DomainInstructorNativeReceipt"];
+            phase?: string;
+            /** Format: int64 */
+            phaseSequence?: number;
+            policyVersion?: string;
             position: number;
+            producerRuntimeId?: string;
+            producerSessionId?: string;
             projectId: string;
             /** Format: date-time */
             queuedAt?: null | string;
+            reportId?: string;
             snapshotId: string;
             state: string;
+            /** Format: date-time */
+            targetCreatedAt?: null | string;
+            targetRuntimeId?: string;
             targetSessionId?: string;
+            targetSessionInstanceId?: string;
             /** Format: date-time */
             updatedAt: string;
             workId: string;
@@ -4389,6 +4482,7 @@ export interface components {
             afterPolicyVersion: string;
             approval: string;
             beforePolicyVersion: string;
+            executionBudgets?: components["schemas"]["InstructorBudgets"];
             /** Format: date-time */
             expiresAt: string;
             /** Format: date-time */
@@ -4413,6 +4507,7 @@ export interface components {
         };
         InstructorExceptionRequest: {
             approval?: string;
+            executionBudgets?: components["schemas"]["InstructorBudgets"];
             /** Format: date-time */
             expiresAt: string;
             maxFixRounds?: null | number;
@@ -4490,17 +4585,64 @@ export interface components {
             confirmed?: components["schemas"]["InstructorAgentSelection"];
             /** Format: date-time */
             launchedAt: string;
+            ownerSessionId?: string;
             phase: string;
             /** Format: int64 */
             phaseSequence: number;
             requested: components["schemas"]["InstructorAgentSelection"];
+            /** Format: date-time */
+            reviewCreatedAt?: null | string;
             reviewId?: string;
             reviewRunId?: string;
             role: string;
+            runtimeGeneration?: string;
             sent?: components["schemas"]["InstructorAgentSelection"];
             sessionId?: string;
+            sessionInstanceId?: string;
             sha?: string;
             status: string;
+        };
+        InstructorMember: {
+            /** @enum {string} */
+            association: "current" | "historical" | "legacy_unknown";
+            confirmed?: components["schemas"]["InstructorAgentSelection"];
+            /** Format: date-time */
+            createdAt?: null | string;
+            id: string;
+            instanceId?: string;
+            /** @enum {string} */
+            kind: "session" | "review";
+            name: string;
+            openTarget?: components["schemas"]["InstructorMemberOpenTarget"];
+            phase?: string;
+            reason?: string;
+            requested?: components["schemas"]["InstructorAgentSelection"];
+            reviewId?: string;
+            reviewRunId?: string;
+            role: string;
+            runtimeGeneration?: string;
+            sent?: components["schemas"]["InstructorAgentSelection"];
+            sessionId?: string;
+            status: string;
+        };
+        InstructorMemberOpenTarget: {
+            /** @enum {string} */
+            kind: "session" | "review";
+            projectId: string;
+            reviewId?: string;
+            reviewRunId?: string;
+            sessionId: string;
+        };
+        InstructorMembers: {
+            atomic: boolean;
+            /** Format: date-time */
+            capturedAt: string;
+            coordinator: components["schemas"]["InstructorCoordinator"];
+            members: components["schemas"]["InstructorMember"][];
+            projectId: string;
+            workId: string;
+            /** Format: int64 */
+            workRevision: number;
         };
         InstructorMetrics: {
             active: number;
@@ -4554,6 +4696,7 @@ export interface components {
         };
         InstructorPolicy: {
             attribution: components["schemas"]["InstructorAttribution"];
+            budgets?: components["schemas"]["InstructorBudgets"];
             closeoutRequires: string[];
             commands?: components["schemas"]["InstructorCommandSpec"][];
             escalateAfterSeconds: number;
@@ -4587,16 +4730,54 @@ export interface components {
             reason: string;
             workIds: string[];
         };
+        InstructorPublicationCapabilities: {
+            available: boolean;
+            isolatedCredentials: boolean;
+            protectedOperator: boolean;
+            reason?: string;
+            workerIsolation: boolean;
+        };
+        InstructorPublicationExecution: {
+            /** Format: date-time */
+            claimedAt: string;
+            /** Format: date-time */
+            completedAt?: null | string;
+            error?: string;
+            id: string;
+            ref?: string;
+            state: string;
+        };
         InstructorPublicationGrant: {
             approval: string;
             /** Format: date-time */
             approvedAt: string;
+            authorizationId?: string;
             branch: string;
+            dispatchId?: string;
+            execution?: components["schemas"]["InstructorPublicationExecution"];
             gateId: string;
+            id?: string;
+            operation?: string;
+            operatorId?: string;
             policyVersion: string;
+            revoked?: boolean;
             sha: string;
             snapshotId: string;
             workId: string;
+            /** Format: int64 */
+            workRevision: number;
+        };
+        InstructorPublicationRepository: {
+            host: string;
+            repository: string;
+        };
+        InstructorPublicationRequest: {
+            branch: string;
+            grantId: string;
+            /** @enum {string} */
+            operation: "publish" | "merge";
+            sha: string;
+            snapshotId: string;
             /** Format: int64 */
             workRevision: number;
         };
@@ -4712,6 +4893,7 @@ export interface components {
         };
         InstructorWork: {
             actions: string[];
+            approvalDispatchId?: string;
             approvedTransitions?: string[];
             branch?: string;
             /** Format: date-time */
@@ -4735,6 +4917,7 @@ export interface components {
             nudgedAt?: null | string;
             openCriticalFindings: number;
             phase: string;
+            phaseActions?: components["schemas"]["DomainInstructorPhaseAction"][];
             /** Format: int64 */
             phaseSequence: number;
             /** Format: date-time */
@@ -4745,6 +4928,7 @@ export interface components {
             progressAt: string;
             projectId: string;
             publicationGrants?: components["schemas"]["InstructorPublicationGrant"][];
+            publicationRepositories?: components["schemas"]["InstructorPublicationRepository"][];
             /** Format: int64 */
             revision: number;
             sessionIds: string[];
@@ -4761,6 +4945,11 @@ export interface components {
             waitCondition?: string;
             /** Format: date-time */
             waitUntil?: null | string;
+        };
+        InstructorWorkApproval: {
+            approval: string;
+            publicationOperation?: string;
+            workId: string;
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -4955,6 +5144,11 @@ export interface components {
         MuteDeviceRequest: {
             /** @description True to stop sending push notifications to this device. */
             muted: boolean;
+        };
+        NativeEffortDefaults: null | {
+            [key: string]: {
+                [key: string]: string;
+            };
         };
         NativeHistoryRequest: {
             requireNativeHistory?: boolean;
@@ -9652,6 +9846,162 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["InstructorEvidence"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorWorkMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorMembers"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    executeInstructorPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorPublicationRequest"];
             };
         };
         responses: {

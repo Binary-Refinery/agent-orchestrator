@@ -226,3 +226,18 @@ func TestSemanticChatEvidenceReinspectionDefersExactQueueWithoutCancelling(t *te
 		t.Fatalf("exact queue submitted %d times", calls)
 	}
 }
+
+func TestSemanticChatCancellationWithNativeIdentityRemainsUncertain(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	first, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "native turn", ClientMessageID: "native-cancelled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.st.SettleTurnByID(ctx, first.ID, domain.TurnStateCancelled, "interrupted after native admission", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.ReconcileSemanticChatTurn(ctx, testSession, "native-cancelled", false); !errors.Is(err, ports.ErrSemanticDeliveryUncertain) {
+		t.Fatalf("cancelled native submission was declared unsubmitted: %v", err)
+	}
+}

@@ -75,10 +75,11 @@ type workspaceRepoDetails struct {
 
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
-	Model       string `json:"model,omitempty"`
-	Effort      string `json:"effort,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	Permissions string `json:"permissions,omitempty"`
+	Model                string                       `json:"model,omitempty"`
+	Effort               string                       `json:"effort,omitempty"`
+	NativeEffortDefaults map[string]map[string]string `json:"nativeEffortDefaults,omitempty"`
+	Mode                 string                       `json:"mode,omitempty"`
+	Permissions          string                       `json:"permissions,omitempty"`
 }
 
 // roleOverride mirrors domain.RoleOverride.

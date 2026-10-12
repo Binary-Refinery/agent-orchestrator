@@ -14,14 +14,15 @@ import (
 
 // ExceptionInput proposes one expiring, snapshot-bound role or fix-budget exception.
 type ExceptionInput struct {
-	SnapshotID   string                           `json:"snapshotId"`
-	WorkID       string                           `json:"workId"`
-	Role         string                           `json:"role,omitempty"`
-	Selection    *domain.InstructorAgentSelection `json:"selection,omitempty"`
-	MaxFixRounds *int                             `json:"maxFixRounds,omitempty"`
-	Reason       string                           `json:"reason"`
-	ExpiresAt    time.Time                        `json:"expiresAt"`
-	Approval     string                           `json:"approval,omitempty"`
+	SnapshotID       string                           `json:"snapshotId"`
+	WorkID           string                           `json:"workId"`
+	Role             string                           `json:"role,omitempty"`
+	Selection        *domain.InstructorAgentSelection `json:"selection,omitempty"`
+	MaxFixRounds     *int                             `json:"maxFixRounds,omitempty"`
+	ExecutionBudgets *domain.InstructorBudgets        `json:"executionBudgets,omitempty"`
+	Reason           string                           `json:"reason"`
+	ExpiresAt        time.Time                        `json:"expiresAt"`
+	Approval         string                           `json:"approval,omitempty"`
 }
 
 // ExceptionPreview freezes the proposed policy and exact human approval phrase.
@@ -78,7 +79,7 @@ func (s *Service) exceptionProposal(ctx context.Context, in ExceptionInput) (dom
 	if strings.TrimSpace(in.Reason) == "" || len(in.Reason) > 2048 || !in.ExpiresAt.After(s.now()) || in.ExpiresAt.After(s.now().Add(24*time.Hour)) {
 		return w, ExceptionPreview{}, invalid("exception needs a reason and expiry within 24 hours")
 	}
-	if in.Selection == nil && in.MaxFixRounds == nil {
+	if in.Selection == nil && in.MaxFixRounds == nil && in.ExecutionBudgets == nil {
 		return w, ExceptionPreview{}, invalid("exception must change a role selection or scoped fix budget")
 	}
 	// Deep copy all policy maps: previews never mutate stored work facts.
@@ -116,6 +117,10 @@ func (s *Service) exceptionProposal(ctx context.Context, in ExceptionInput) (dom
 		}
 		policy.MaxFixRounds = *in.MaxFixRounds
 	}
+	if in.ExecutionBudgets != nil {
+		cloned := *in.ExecutionBudgets
+		policy.Budgets = &cloned
+	}
 	if err := ValidatePolicy(policy); err != nil {
 		return w, ExceptionPreview{}, err
 	}
@@ -126,7 +131,8 @@ func (s *Service) exceptionProposal(ctx context.Context, in ExceptionInput) (dom
 		MaxFixRounds                           *int
 		Reason                                 string
 		ExpiresAt                              time.Time
-	}{in.SnapshotID, w.ID, w.PolicyVersion, w.SHA, in.Role, in.Selection, in.MaxFixRounds, strings.TrimSpace(in.Reason), in.ExpiresAt.UTC()}
+		ExecutionBudgets                       *domain.InstructorBudgets `json:"executionBudgets,omitempty"`
+	}{in.SnapshotID, w.ID, w.PolicyVersion, w.SHA, in.Role, in.Selection, in.MaxFixRounds, strings.TrimSpace(in.Reason), in.ExpiresAt.UTC(), in.ExecutionBudgets}
 	encoded, _ := json.Marshal(proposal)
 	hash := sha256.Sum256(encoded)
 	digest := hex.EncodeToString(hash[:])
@@ -174,6 +180,11 @@ func (s *Service) ApplyException(ctx context.Context, in ExceptionInput) (domain
 	}
 	if in.MaxFixRounds != nil {
 		newGrant("budget", "", nil, *in.MaxFixRounds)
+	}
+	if in.ExecutionBudgets != nil {
+		newGrant("execution-budget", "", nil, 0)
+		cloned := *in.ExecutionBudgets
+		w.Exceptions[len(w.Exceptions)-1].ExecutionBudgets = &cloned
 	}
 	w.Policy, w.PolicyVersion = preview.EffectivePolicy, preview.EffectivePolicy.Version
 	w.ApprovedTransitions = nil

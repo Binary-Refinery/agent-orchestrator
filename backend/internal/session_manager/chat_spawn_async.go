@@ -269,6 +269,11 @@ func (m *Manager) failAsyncChatSpawn(ctx context.Context, id domain.SessionID, c
 	m.logger.Error("spawn: asynchronous chat start failed", "sessionID", id, "error", cause)
 	cleanupCtx, cancel := spawnRollbackContext(ctx)
 	defer cancel()
+	if token, err := m.reserveInstructorSessionBudget(cleanupCtx, id, ""); err == nil && token != "" {
+		// Workspace/configuration failures before the native fence are
+		// definite non-admission. Attempted provider starts retain consumption.
+		_ = m.setInstructorBudgetState(cleanupCtx, token, "cancelled")
+	}
 	if observer, ok := m.instructor.(interface {
 		SessionLaunchFailed(context.Context, domain.SessionID, error) error
 	}); ok {

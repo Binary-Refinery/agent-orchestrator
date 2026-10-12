@@ -45,6 +45,25 @@ export function useInstructorSnapshot(enabled: boolean) {
 	});
 }
 
+// The board is live. Decisions capture a separate immutable copy at the point
+// the operator opens a gate; polling must never rewrite that captured approval.
+export const instructorBoardQueryKey = [...instructorQueryKey, "board"] as const;
+export function useInstructorBoardSnapshot(enabled: boolean) {
+	return useQuery({
+		queryKey: instructorBoardQueryKey,
+		queryFn: async ({ signal }) => {
+			const { data, error } = await apiClient.GET("/api/v1/instructor/status", { signal });
+			if (error) throw new Error(apiErrorMessage(error));
+			if (!data) throw new Error("Instructor status response was empty");
+			return data;
+		},
+		enabled,
+		retry: false,
+		refetchInterval: 15_000,
+		staleTime: 0,
+	});
+}
+
 export function useInstructorInventory(enabled: boolean) {
 	return useQuery({
 		queryKey: [...instructorQueryKey, "inventory"],

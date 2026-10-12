@@ -42,6 +42,7 @@ export type SettingsModal =
 	| {
 			scope: "project";
 			projectId: string;
+			section?: "general" | "agents";
 	};
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
@@ -144,7 +145,7 @@ export type UiState = {
 	openUpdateInstallPrompt: () => void;
 	closeUpdateInstallPrompt: () => void;
 	openGlobalSettings: (section?: GlobalSettingsSection, options?: { focusAgentId?: string; preserveProject?: boolean }) => void;
-	openProjectSettings: (projectId: string) => void;
+	openProjectSettings: (projectId: string, section?: "general" | "agents") => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
@@ -306,7 +307,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 					: {}),
 		},
 	})),
-	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	openProjectSettings: (projectId, section) => set({ settingsModal: { scope: "project", projectId, ...(section ? { section } : {}) } }),
 	closeSettings: () => set((state) => ({
 		settingsModal: state.settingsModal?.scope === "global" ? state.settingsModal.returnTo ?? null : null,
 	})),

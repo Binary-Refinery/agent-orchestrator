@@ -36,6 +36,10 @@ var ErrDeliveryQueued = errors.New("native submission is durably queued and not 
 // ErrDeliveryRejected confirms cancellation before native provider admission.
 var ErrDeliveryRejected = errors.New("native queued submission was definitively cancelled before provider admission")
 
+// ErrDeliveryRetryable certifies a failure before any native submission boundary.
+// An uncertain effect must never use this classification.
+var ErrDeliveryRetryable = errors.New("native delivery is unavailable before submission")
+
 // ErrEvidencePending holds execution until current source facts have been inspected.
 var ErrEvidencePending = errors.New("current persisted source facts need bounded inspection before execution")
 
@@ -48,6 +52,7 @@ type Store interface {
 	ListInstructorWorks(context.Context) ([]domain.InstructorWork, error)
 	InstructorWorkForSession(context.Context, domain.SessionID) (domain.InstructorWork, bool, error)
 	SaveInstructorWork(context.Context, domain.InstructorWork, int64, domain.InstructorEvent) (bool, error)
+	SaveInstructorPhaseActionAudit(context.Context, domain.InstructorWork, int64, domain.InstructorEvent) (bool, error)
 	PutInstructorSnapshot(context.Context, domain.InstructorSnapshot) error
 	GetInstructorSnapshot(context.Context, string) (domain.InstructorSnapshot, bool, error)
 	ListInstructorEvents(context.Context, string) ([]domain.InstructorEvent, error)
@@ -110,6 +115,7 @@ type Deps struct {
 	PolicyPath    string
 	Clock         func() time.Time
 	NewID         func() string
+	Publication   PublicationBoundary
 }
 
 // Service owns the global Instructor control plane above project orchestrators.
@@ -124,6 +130,9 @@ type Service struct {
 	verificationCancels map[string]context.CancelFunc
 	verificationWG      sync.WaitGroup
 	planningRunning     bool
+	phaseActions        PhaseActions
+	phaseRunning        map[string]bool
+	phaseSlots          chan struct{}
 }
 
 // New constructs an Instructor service with bounded background inspection.
@@ -134,7 +143,7 @@ func New(deps Deps) *Service {
 	if deps.NewID == nil {
 		deps.NewID = uuid.NewString
 	}
-	return &Service{deps: deps, policy: DefaultPolicy(), verificationRunning: map[string]bool{}, verificationSlots: make(chan struct{}, 2), verificationCancels: map[string]context.CancelFunc{}}
+	return &Service{deps: deps, policy: DefaultPolicy(), verificationRunning: map[string]bool{}, verificationSlots: make(chan struct{}, 2), verificationCancels: map[string]context.CancelFunc{}, phaseRunning: map[string]bool{}, phaseSlots: make(chan struct{}, 2)}
 }
 
 // RegisterInput identifies one durable work and its immutable intake origin.
@@ -175,6 +184,11 @@ type CommandInput struct {
 	Approval       string         `json:"approval,omitempty"`
 	IdempotencyKey string         `json:"idempotencyKey,omitempty"`
 	New            *RegisterInput `json:"new,omitempty"`
+	// RequesterSessionID carries the native caller's identity for denial only.
+	// Its absence never establishes operator authority.
+	RequesterSessionID   domain.SessionID                `json:"-"`
+	PublicationOperation string                          `json:"publicationOperation,omitempty"`
+	Approvals            []domain.InstructorWorkApproval `json:"approvals,omitempty"`
 }
 
 func (s *Service) now() time.Time { return s.deps.Clock().UTC() }
@@ -193,15 +207,21 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 	if len(in.Name) > 120 || len(in.Goal) > 8192 {
 		return domain.InstructorWork{}, invalid("work name or goal is too long")
 	}
+	publicationRepositories := []domain.InstructorPublicationRepository{}
 	if projects, ok := s.deps.Store.(interface {
 		GetProject(context.Context, string) (domain.ProjectRecord, bool, error)
 	}); ok {
-		_, found, err := projects.GetProject(ctx, string(in.ProjectID))
+		project, found, err := projects.GetProject(ctx, string(in.ProjectID))
 		if err != nil {
 			return domain.InstructorWork{}, err
 		}
 		if !found {
 			return domain.InstructorWork{}, fmt.Errorf("%w: project not found", ErrValidation)
+		}
+		for _, raw := range []string{project.RepoOriginURL, project.Config.CanonicalRepoURL} {
+			if repo, err := domain.ParseRepositoryIdentity(raw); err == nil {
+				publicationRepositories = append(publicationRepositories, domain.InstructorPublicationRepository{Host: repo.Host, Repository: repo.Namespace + "/" + repo.Name})
+			}
 		}
 	}
 	p := in.Policy
@@ -241,6 +261,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 	}
 	now := s.now()
 	w := domain.InstructorWork{ID: "work-" + s.deps.NewID(), ProjectID: in.ProjectID, Name: strings.TrimSpace(in.Name), Goal: strings.TrimSpace(in.Goal), Source: in.Source, SourceRef: in.SourceRef, IssueID: in.IssueID, Branch: in.Branch, State: "ready", Phase: p.InitialPhase, Summary: "Auftrag registriert", Policy: p, PolicyVersion: p.Version, SessionIDs: []domain.SessionID{}, Evidence: []domain.InstructorEvidence{}, Revision: 1, CreatedAt: now, UpdatedAt: now, ProgressAt: now, Actions: []string{}}
+	w.PublicationRepositories = publicationRepositories
 	w.PhaseStartedAt = now
 	w.PhaseSequence = 1
 	if w.Phase == "fix" {
@@ -284,7 +305,13 @@ func (s *Service) save(ctx context.Context, w domain.InstructorWork, expected in
 	w.Revision = expected + 1
 	w.UpdatedAt = s.now()
 	w.Actions = nil
-	ok, err := s.deps.Store.SaveInstructorWork(ctx, w, expected, s.event(w, kind, detail))
+	var ok bool
+	var err error
+	if kind == "phase_action_completed" || kind == "phase_action_recovered" {
+		ok, err = s.deps.Store.SaveInstructorPhaseActionAudit(ctx, w, expected, s.event(w, kind, detail))
+	} else {
+		ok, err = s.deps.Store.SaveInstructorWork(ctx, w, expected, s.event(w, kind, detail))
+	}
 	if err != nil {
 		return w, err
 	}
@@ -304,6 +331,22 @@ func containsSession(w domain.InstructorWork, id domain.SessionID) bool {
 
 // AttachSession associates an existing same-project session with one durable work.
 func (s *Service) AttachSession(ctx context.Context, workID string, id domain.SessionID) error {
+	return s.AttachSessionWithParent(ctx, workID, id, "")
+}
+
+// AttachSessionWithParent preserves the actual delegation origin during atomic
+// work binding and budget admission. Adoption uses an empty parent.
+func (s *Service) AttachSessionWithParent(ctx context.Context, workID string, id, parent domain.SessionID) error {
+	return s.attachSession(ctx, workID, id, parent, false)
+}
+
+// AttachLaunchingSession binds a manager-owned seed before its first native
+// controller exists. Proven non-admission may release only this new reservation.
+func (s *Service) AttachLaunchingSession(ctx context.Context, workID string, id, parent domain.SessionID) error {
+	return s.attachSession(ctx, workID, id, parent, true)
+}
+
+func (s *Service) attachSession(ctx context.Context, workID string, id, parent domain.SessionID, prelaunch bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, err := s.get(ctx, workID)
@@ -313,23 +356,59 @@ func (s *Service) AttachSession(ctx context.Context, workID string, id domain.Se
 	if id == "" {
 		return invalid("session id required")
 	}
-	if containsSession(w, id) {
-		return nil
-	}
-	if sessions, ok := s.deps.Store.(interface {
-		GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
-	}); ok {
-		rec, found, e := sessions.GetSession(ctx, id)
+	if admission, ok := s.deps.Store.(sessionAdmissionStore); ok {
+		rec, instance, found, e := admission.InstructorSessionForMembership(ctx, id)
 		if e != nil {
 			return e
 		}
-		if !found || rec.ProjectID != w.ProjectID {
-			return invalid("session is missing or belongs to another project")
+		if !found || instance == "" || rec.ProjectID != w.ProjectID {
+			return invalid("session instance is missing or belongs to another project")
 		}
+		bound, managed, e := s.WorkForSession(ctx, id)
+		if e != nil {
+			return e
+		}
+		if managed {
+			if bound.ID != w.ID {
+				return invalid("session already belongs to another work")
+			}
+			if reader, ok := s.deps.Store.(interface {
+				ListInstructorSessionMembers(context.Context, string) ([]domain.InstructorSessionMembership, error)
+			}); ok {
+				members, e := reader.ListInstructorSessionMembers(ctx, w.ID)
+				if e != nil {
+					return e
+				}
+				for _, member := range members {
+					if member.InstanceID == instance && member.Provenance == "admitted" {
+						return nil
+					}
+				}
+			}
+		}
+		if !containsSession(w, id) {
+			w.SessionIDs = append(w.SessionIDs, id)
+		}
+		expected := w.Revision
+		w.Revision++
+		w.UpdatedAt = s.now()
+		m := domain.InstructorSessionMembership{SessionID: id, InstanceID: instance, ProjectID: rec.ProjectID, Role: string(rec.Kind), Name: rec.DisplayName, CreatedAt: rec.CreatedAt, Provenance: "admitted"}
+		m.ParentSessionID = parent
+		m.Prelaunch = prelaunch
+		updated, e := admission.AttachInstructorSession(ctx, w, expected, s.event(w, "session_attached", string(id)+":"+instance), m)
+		if errors.Is(e, domain.ErrInstructorSessionInstanceChanged) {
+			return ErrConflict
+		}
+		if e != nil {
+			return e
+		}
+		if !updated {
+			return ErrConflict
+		}
+		return nil
 	}
-	w.SessionIDs = append(w.SessionIDs, id)
-	_, err = s.save(ctx, w, w.Revision, "session_attached", string(id))
-	return err
+	return invalid("incarnation-aware session admission unavailable")
+
 }
 
 // WorkForSession resolves the durable work associated with a worker session.
@@ -360,7 +439,17 @@ func (s *Service) Details(ctx context.Context, id string) (domain.InstructorDeta
 		return domain.InstructorDetails{}, err
 	}
 	dispatches, err := s.deps.Store.ListInstructorDispatches(ctx, "", id)
-	return domain.InstructorDetails{Work: w, Events: events, Dispatches: dispatches}, err
+	details := domain.InstructorDetails{Work: w, Events: events, Dispatches: dispatches}
+	if err == nil {
+		if store, ok := s.deps.Store.(budgetStore); ok {
+			usage, usageErr := store.InstructorBudgetUsage(ctx, id)
+			if usageErr != nil {
+				return details, usageErr
+			}
+			details.BudgetUsage = &usage
+		}
+	}
+	return details, err
 }
 
 // Snapshot persists an immutable portfolio view, optionally restricted to changed works.
@@ -460,6 +549,7 @@ func resolveCommand(text string, commands []domain.InstructorCommandSpec) (domai
 
 // Command validates a frozen cohort and atomically records its authorized directives.
 func (s *Service) Command(ctx context.Context, in CommandInput) (domain.InstructorCommandResult, error) {
+	rawSelectedCount := len(in.WorkIDs)
 	registry := s.Commands()
 	var snap domain.InstructorSnapshot
 	if in.SnapshotID != "" {
@@ -560,9 +650,64 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 	if strings.TrimSpace(in.IdempotencyKey) == "" {
 		return domain.InstructorCommandResult{}, invalid("idempotencyKey is required")
 	}
+	approvalByWork := map[string]domain.InstructorWorkApproval{}
+	// Retain the original resolved request digest for pre-existing scalar
+	// batches. Normalizing admission must not turn their safe retry into a
+	// different command or authorize a fresh cohort under the same key.
+	digestInput := in
+	// Preserve the legacy scalar batch only when its literal decision is
+	// exactly the decision shown for every explicitly selected captured gate.
+	// Normalize to the same ordered per-work contract; never fill in a missing
+	// signature, translate Go, or infer another branch's publication authority.
+	if spec.Action == "go" && len(in.WorkIDs) > 1 && len(in.Approvals) == 0 {
+		for _, id := range in.WorkIDs {
+			found := false
+			for _, captured := range snap.Works {
+				if captured.ID != id {
+					continue
+				}
+				if captured.Gate == nil || captured.Gate.ID == "" || captured.Gate.Kind == "" || captured.Gate.ExactApproval != in.Approval ||
+					captured.Gate.Kind == "publication" && (captured.Branch == "" || in.Approval != "PUBLISH-GO "+captured.Branch) {
+					return domain.InstructorCommandResult{}, invalid("scalar multi-work Go requires the same exact literal approval on every captured gate")
+				}
+				in.Approvals = append(in.Approvals, domain.InstructorWorkApproval{WorkID: id, Approval: in.Approval, PublicationOperation: in.PublicationOperation})
+				found = true
+				break
+			}
+			if !found {
+				return domain.InstructorCommandResult{}, invalid("scalar multi-work Go requires every selected gate in the captured snapshot")
+			}
+		}
+		in.Approval, in.PublicationOperation = "", ""
+	}
+	if len(in.Approvals) > 0 {
+		if rawSelectedCount != len(in.WorkIDs) {
+			return domain.InstructorCommandResult{}, invalid("duplicate selected work references")
+		}
+		if spec.Action != "go" || len(in.WorkIDs) == 0 || in.Approval != "" || in.PublicationOperation != "" {
+			return domain.InstructorCommandResult{}, invalid("per-work approvals require Go with an explicit ordered work cohort; scalar approval cannot be combined")
+		}
+		for _, approval := range in.Approvals {
+			if approval.WorkID == "" {
+				return domain.InstructorCommandResult{}, invalid("each approval requires a workId")
+			}
+			if _, duplicate := approvalByWork[approval.WorkID]; duplicate {
+				return domain.InstructorCommandResult{}, invalid("duplicate per-work approval")
+			}
+			approvalByWork[approval.WorkID] = approval
+		}
+		if len(approvalByWork) != len(in.WorkIDs) {
+			return domain.InstructorCommandResult{}, invalid("approvals must exactly cover the selected captured work cohort")
+		}
+		for _, id := range in.WorkIDs {
+			if _, found := approvalByWork[id]; !found {
+				return domain.InstructorCommandResult{}, invalid("approvals must exactly cover the selected captured work cohort")
+			}
+		}
+	}
 	h := sha256.Sum256([]byte(in.IdempotencyKey))
 	batchID := "batch-" + hex.EncodeToString(h[:])
-	requestBytes, _ := json.Marshal(in)
+	requestBytes, _ := json.Marshal(digestInput)
 	requestHash := sha256.Sum256(requestBytes)
 	commandDigest := hex.EncodeToString(requestHash[:])
 	existing, err := s.deps.Store.ListInstructorDispatches(ctx, batchID, "")
@@ -595,15 +740,31 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 	}
 	selected := map[string]bool{}
 	for _, id := range in.WorkIDs {
+		if selected[id] {
+			return domain.InstructorCommandResult{}, invalid("duplicate selected work")
+		}
 		selected[id] = true
 	}
 	all := len(in.WorkIDs) == 0
+	orderedGo := spec.Action == "go" && (all || len(in.Approvals) > 0)
 	dispatches := []domain.InstructorDispatch{}
 	skipped := []string{}
 	updates := []domain.InstructorWork{}
 	events := []domain.InstructorEvent{}
 	cancelWorks := []string{}
-	for _, captured := range snap.Works {
+	capturedWorks := snap.Works
+	if !all {
+		capturedWorks = make([]domain.InstructorWork, 0, len(in.WorkIDs))
+		for _, id := range in.WorkIDs {
+			for _, w := range snap.Works {
+				if w.ID == id {
+					capturedWorks = append(capturedWorks, w)
+					break
+				}
+			}
+		}
+	}
+	for _, captured := range capturedWorks {
 		if !all && !selected[captured.ID] {
 			continue
 		}
@@ -627,15 +788,32 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 			}
 		}
 		if !allowed {
+			if len(in.Approvals) > 0 {
+				return domain.InstructorCommandResult{}, invalid("every selected work must still have its captured eligible gate")
+			}
 			skipped = append(skipped, w.ID+": action unavailable in "+w.State)
 			continue
 		}
-		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" && in.Approval != w.Gate.ExactApproval {
+		workInput := in
+		if approval, found := approvalByWork[w.ID]; found {
+			workInput.Approval, workInput.PublicationOperation = approval.Approval, approval.PublicationOperation
+			if w.Gate == nil || workInput.Approval != w.Gate.ExactApproval {
+				return domain.InstructorCommandResult{}, invalid("each approval must match its captured gate exactly")
+			}
+		}
+		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" && workInput.Approval != w.Gate.ExactApproval {
 			if all {
 				skipped = append(skipped, w.ID+": exact publication approval required")
 				continue
 			}
 			return domain.InstructorCommandResult{}, fmt.Errorf("%w: exact human approval required: %s", ErrValidation, w.Gate.ExactApproval)
+		}
+		var publicationActor PublicationAuthorization
+		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" {
+			publicationActor, err = s.authorizePublication(ctx, w, snap.ID, workInput)
+			if err != nil {
+				return domain.InstructorCommandResult{}, err
+			}
 		}
 		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" && !HasPublicationGrant(w) {
 			if observer, ok := s.deps.Verifier.(PublicationObserver); ok {
@@ -655,16 +833,24 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 		}
 		message := fmt.Sprintf("Instructor %s for work %s (snapshot %s, policy %s). Goal: %s. Continue only within the pinned policy; report acceptance and progress separately.", action, w.ID, snap.ID, w.PolicyVersion, w.Goal)
 		if action == "go" && w.Gate != nil {
-			message += " Human approved gate " + w.Gate.ID + ". " + in.Approval
+			message += " Human approved gate " + w.Gate.ID + ". " + workInput.Approval
 		}
 		if action == "go" && w.Gate != nil {
 			gate := *w.Gate
+			w.ApprovalDispatchID = ""
+			if orderedGo {
+				w.ApprovalDispatchID = batchID + fmt.Sprintf("-%d", len(dispatches))
+			}
 			if gate.Kind == "publication" {
 				w.PublicationGrants = append(w.PublicationGrants, domain.InstructorPublicationGrant{
+					ID:     "publication-" + s.deps.NewID(),
 					GateID: gate.ID, WorkID: w.ID, PolicyVersion: w.PolicyVersion,
 					SHA: w.SHA, Branch: w.Branch, SnapshotID: snap.ID,
-					WorkRevision: captured.Revision, Approval: in.Approval, ApprovedAt: s.now(),
+					WorkRevision: captured.Revision, Approval: workInput.Approval, ApprovedAt: s.now(),
+					OperatorID: publicationActor.OperatorID, AuthorizationID: publicationActor.AuthorizationID,
+					Operation: publicationOperation(workInput.PublicationOperation), DispatchID: w.ApprovalDispatchID,
 				})
+				message += " Publication is reserved for the controlled daemon executor; this grant never permits direct git, gh, provider API or deployment commands from an agent."
 			}
 			if gate.TransitionTo != "" {
 				w.ApprovedTransitions = append(w.ApprovedTransitions, w.Phase+"->"+gate.TransitionTo)
@@ -687,6 +873,9 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 			cancelWorks = append(cancelWorks, w.ID)
 		}
 		if action == "weiter" && w.State == "parked" {
+			if orderedGo {
+				w.ApprovalDispatchID = batchID + fmt.Sprintf("-%d", len(dispatches))
+			}
 			w.State = "ready"
 			if w.Gate != nil {
 				w.State = "waiting_human"
@@ -699,6 +888,13 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 			w.UpdatedAt = s.now()
 			updates = append(updates, w)
 			events = append(events, s.event(w, "operator_resumed", "snapshot="+snap.ID))
+		}
+		if orderedGo && action == "weiter" && captured.State != "parked" {
+			w.ApprovalDispatchID = batchID + fmt.Sprintf("-%d", len(dispatches))
+			w.Revision++
+			w.UpdatedAt = s.now()
+			updates = append(updates, w)
+			events = append(events, s.event(w, "approval_cohort_bound", "snapshot="+snap.ID))
 		}
 		now := s.now()
 		dispatches = append(dispatches, domain.InstructorDispatch{ID: batchID + fmt.Sprintf("-%d", len(dispatches)), BatchID: batchID, WorkID: w.ID, ProjectID: w.ProjectID, SnapshotID: snap.ID, WorkRevision: w.Revision, Position: len(dispatches), Action: action, Message: message, CommandDigest: commandDigest, State: "pending", CreatedAt: now, UpdatedAt: now})
@@ -733,7 +929,30 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 	if err != nil {
 		return w, err
 	}
-	boundProducer := containsSession(w, in.SessionID)
+	if w.ApprovalDispatchID != "" && (in.Kind == "done" || in.Phase != "" && in.Phase != w.Phase) {
+		ready, err := s.approvalCohortReady(ctx, w.ApprovalDispatchID)
+		if err != nil {
+			return w, err
+		}
+		if !ready {
+			return w, invalid("ordered approval cohort awaits native admission before phase or closeout")
+		}
+	}
+	admissionStore, ok := s.deps.Store.(interface {
+		AdmitInstructorReport(context.Context, string, domain.SessionID, string) (domain.InstructorReportAdmission, bool, error)
+		SaveInstructorReport(context.Context, domain.InstructorWork, int64, domain.InstructorEvent, domain.InstructorReportAdmission, string) (bool, error)
+	})
+	if !ok {
+		return w, invalid("atomic report producer admission unavailable")
+	}
+	admission, boundProducer, err := admissionStore.AdmitInstructorReport(ctx, w.ID, in.SessionID, in.DispatchID)
+	if err != nil {
+		return w, err
+	}
+	producerInstance := admission.InstanceID
+	if !boundProducer {
+		return w, invalid("report producer is not currently attached or the bound target incarnation")
+	}
 	var uncertainReceipt *domain.InstructorDispatch
 	var relatedDispatches []domain.InstructorDispatch
 	if in.DispatchID != "" {
@@ -747,7 +966,7 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 			isReconcileReceipt := uncertainDispatch(w, d.ID) && (in.Kind == "accepted" || in.Kind == "progress")
 			queuedReceipt := d.State == "pending" && d.QueuedAt != nil && (in.Kind == "accepted" || in.Kind == "progress")
 			uncertainAvailability := uncertainDispatch(w, d.ID) && in.Kind == "heartbeat"
-			if d.ID == in.DispatchID && d.TargetSessionID == in.SessionID && (d.State != "pending" && d.State != "failed" && d.State != "cancelled" || isReconcileReceipt || queuedReceipt || uncertainAvailability) {
+			if d.ID == in.DispatchID && d.TargetSessionID == in.SessionID && (producerInstance == "" || d.TargetSessionInstanceID == producerInstance) && (d.State != "pending" && d.State != "failed" && d.State != "cancelled" || isReconcileReceipt || queuedReceipt || uncertainAvailability) {
 				boundDispatch = true
 				if isReconcileReceipt {
 					cloned := d
@@ -799,15 +1018,15 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 	}
 	actorRole := ""
 	for _, l := range w.Launches {
-		if l.SessionID == in.SessionID {
+		if l.SessionID == in.SessionID && (producerInstance == "" || l.SessionInstanceID == producerInstance) {
 			actorRole = l.Role
 		}
 	}
-	if !containsSession(w, in.SessionID) {
+	if !admission.Member {
 		actorRole = "orchestrator"
 	}
 	if in.Kind == "heartbeat" {
-		return s.heartbeat(ctx, w, in, actorRole)
+		return s.heartbeat(ctx, w, in, actorRole, admission)
 	}
 	if in.Phase != "" && in.Phase != w.Phase {
 		if err := validateWorkExceptions(w, s.now()); err != nil {
@@ -872,13 +1091,6 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 	if in.Next != "" {
 		w.Next = in.Next
 	}
-	if in.DispatchID != "" {
-		if in.Kind == "accepted" || in.Kind == "progress" {
-			if err := s.deps.Store.SetInstructorDispatch(ctx, in.DispatchID, in.Kind, "", s.now()); err != nil {
-				return w, err
-			}
-		}
-	}
 	switch in.Kind {
 	case "accepted": // Receipt is deliberately not progress.
 		if in.DispatchID != "" && w.State == "waiting_external" && strings.HasPrefix(w.WaitCondition, "Native Nachricht") {
@@ -942,7 +1154,7 @@ func (s *Service) Report(ctx context.Context, in ReportInput) (domain.Instructor
 	default:
 		return w, invalid("unknown report kind")
 	}
-	return s.save(ctx, w, w.Revision, "report:"+in.Kind, in.Summary)
+	return s.saveProducer(ctx, w, w.Revision, "report:"+in.Kind, in.Summary, admission, in.Kind)
 }
 func fullSHA(sha string) bool {
 	if len(sha) != 40 {
@@ -1066,10 +1278,13 @@ func (s *Service) Tick(ctx context.Context) error {
 			break
 		}
 		w, err := s.get(ctx, d.WorkID)
-		if err == nil && w.Revision != d.WorkRevision {
+		if err == nil && d.Action == "worker_result" && (w.Phase != d.Phase || w.PhaseSequence != d.PhaseSequence || d.PolicyVersion != w.PolicyVersion) {
 			err = ErrConflict
 		}
-		if err == nil && d.Action != "pruefen" && d.Action != "stopp" {
+		if err == nil && d.Action != "worker_result" && d.Action != "stopp" && w.Revision != d.WorkRevision {
+			err = ErrConflict
+		}
+		if err == nil && d.Action != "pruefen" && d.Action != "stopp" && d.Action != "worker_result" {
 			err = validateWorkExceptions(w, s.now())
 			if err == nil {
 				err = s.CurrentEvidence(ctx, w)
@@ -1083,7 +1298,17 @@ func (s *Service) Tick(ctx context.Context) error {
 			break
 		}
 		if err == nil {
-			err = s.deps.Delivery.Deliver(ctx, d)
+			if d.Action == "stopp" {
+				d, err = s.deliverNativeStop(ctx, d)
+			} else {
+				err = s.deps.Delivery.Deliver(ctx, d)
+			}
+		}
+		if errors.Is(err, ErrDeliveryRetryable) && d.Attempts < 3 && d.QueuedAt == nil {
+			if e := s.deps.Store.DeferInstructorDispatch(ctx, d.ID, err.Error(), s.now().Add(5*time.Second)); e != nil {
+				return e
+			}
+			continue
 		}
 		if errors.Is(err, ErrDeliveryQueued) {
 			if d.QueuedAt == nil || s.now().Before(d.QueuedAt.Add(2*time.Minute)) {
@@ -1101,19 +1326,23 @@ func (s *Service) Tick(ctx context.Context) error {
 		}
 		state := "delivered"
 		detail := ""
+		stopSuperseded := d.Action == "stopp" && errors.Is(err, ErrStopSuperseded) && !errors.Is(err, ErrDeliveryUncertain)
 		if err != nil {
 			state = "failed"
 			detail = err.Error()
+			if d.Action == "worker_result" && errors.Is(err, ErrDeliveryRejected) && !errors.Is(err, ErrDeliveryUncertain) || stopSuperseded {
+				state = "cancelled" // Typed proof or a newer operator intent ends this wake-up/control obligation.
+			}
 		}
 		if e := s.deps.Store.SetInstructorDispatch(ctx, d.ID, state, detail, s.now()); e != nil {
 			return e
 		}
-		if err != nil {
+		if err != nil && !stopSuperseded {
 			if e := s.deliveryFailed(ctx, d, err); e != nil {
 				return e
 			}
 		}
-		if err != nil {
+		if err != nil && !stopSuperseded {
 			break
 		}
 	}
@@ -1122,8 +1351,14 @@ func (s *Service) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, w := range works {
+		if err := s.observeWorkerWakeups(ctx, w); err != nil {
+			return err
+		}
 		s.scheduleVerification(ctx, w)
 		if err := s.advanceWork(ctx, w); err != nil {
+			return err
+		}
+		if err := s.schedulePhaseAction(ctx, w.ID); err != nil {
 			return err
 		}
 		if w.State == "waiting_human" || w.State == "parked" || w.State == "blocked" || w.State == "done" || w.State == "cancelled" {

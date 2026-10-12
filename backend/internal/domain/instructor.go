@@ -1,63 +1,108 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrInstructorProducerChanged fences a replaced producer or changed work association.
+var ErrInstructorProducerChanged = errors.New("instructor producer association or incarnation changed")
+
+// InstructorReportAdmission is an internal producer capability captured from a
+// single membership/target-and-incarnation read, then fenced at the write boundary.
+type InstructorReportAdmission struct {
+	WorkID            string
+	SessionID         SessionID
+	InstanceID        string
+	DispatchID        string
+	Member            bool
+	RuntimeID         string
+	WorkspacePath     string
+	WorkspaceRepoPath string
+	Harness           AgentHarness
+	Model             string
+	Effort            string
+}
 
 // InstructorWork is durable business state, distinct from derived session status.
 type InstructorWork struct {
-	ID                   string                       `json:"id"`
-	ProjectID            ProjectID                    `json:"projectId"`
-	Name                 string                       `json:"name"`
-	Goal                 string                       `json:"goal"`
-	Source               string                       `json:"source"`
-	SourceRef            string                       `json:"sourceRef"`
-	IssueID              IssueID                      `json:"issueId,omitempty"`
-	SessionIDs           []SessionID                  `json:"sessionIds"`
-	Launches             []InstructorLaunch           `json:"launches"`
-	State                string                       `json:"state"`
-	Phase                string                       `json:"phase"`
-	PhaseStartedAt       time.Time                    `json:"phaseStartedAt"`
-	PhaseSequence        int64                        `json:"phaseSequence"`
-	FixPhaseSequence     int64                        `json:"fixPhaseSequence"`
-	DeltaPhaseSequence   int64                        `json:"deltaPhaseSequence"`
-	Summary              string                       `json:"summary"`
-	Next                 string                       `json:"next"`
-	Branch               string                       `json:"branch,omitempty"`
-	SHA                  string                       `json:"sha,omitempty"`
-	PolicyVersion        string                       `json:"policyVersion"`
-	Policy               InstructorPolicy             `json:"policy"`
-	Gate                 *InstructorGate              `json:"gate,omitempty"`
-	SuspendedGate        *InstructorGate              `json:"suspendedGate,omitempty"`
-	UncertainDispatchIDs []string                     `json:"uncertainDispatchIds,omitempty"`
-	Verification         *InstructorVerification      `json:"verification,omitempty"`
-	Heartbeat            *InstructorHeartbeat         `json:"heartbeat,omitempty"`
-	Evidence             []InstructorEvidence         `json:"evidence"`
-	FixRounds            int                          `json:"fixRounds"`
-	OpenCriticalFindings int                          `json:"openCriticalFindings"`
-	WaitCondition        string                       `json:"waitCondition,omitempty"`
-	WaitUntil            *time.Time                   `json:"waitUntil,omitempty"`
-	NudgedAt             *time.Time                   `json:"nudgedAt,omitempty"`
-	Revision             int64                        `json:"revision"`
-	CreatedAt            time.Time                    `json:"createdAt"`
-	UpdatedAt            time.Time                    `json:"updatedAt"`
-	ProgressAt           time.Time                    `json:"progressAt"`
-	Actions              []string                     `json:"actions"`
-	ApprovedTransitions  []string                     `json:"approvedTransitions,omitempty"`
-	Exceptions           []InstructorException        `json:"exceptions,omitempty"`
-	PublicationGrants    []InstructorPublicationGrant `json:"publicationGrants,omitempty"`
+	ID                      string                            `json:"id"`
+	ProjectID               ProjectID                         `json:"projectId"`
+	Name                    string                            `json:"name"`
+	Goal                    string                            `json:"goal"`
+	Source                  string                            `json:"source"`
+	SourceRef               string                            `json:"sourceRef"`
+	IssueID                 IssueID                           `json:"issueId,omitempty"`
+	SessionIDs              []SessionID                       `json:"sessionIds"`
+	Launches                []InstructorLaunch                `json:"launches"`
+	State                   string                            `json:"state"`
+	Phase                   string                            `json:"phase"`
+	PhaseStartedAt          time.Time                         `json:"phaseStartedAt"`
+	PhaseSequence           int64                             `json:"phaseSequence"`
+	FixPhaseSequence        int64                             `json:"fixPhaseSequence"`
+	DeltaPhaseSequence      int64                             `json:"deltaPhaseSequence"`
+	Summary                 string                            `json:"summary"`
+	Next                    string                            `json:"next"`
+	Branch                  string                            `json:"branch,omitempty"`
+	SHA                     string                            `json:"sha,omitempty"`
+	PolicyVersion           string                            `json:"policyVersion"`
+	Policy                  InstructorPolicy                  `json:"policy"`
+	Gate                    *InstructorGate                   `json:"gate,omitempty"`
+	SuspendedGate           *InstructorGate                   `json:"suspendedGate,omitempty"`
+	UncertainDispatchIDs    []string                          `json:"uncertainDispatchIds,omitempty"`
+	Verification            *InstructorVerification           `json:"verification,omitempty"`
+	Heartbeat               *InstructorHeartbeat              `json:"heartbeat,omitempty"`
+	Evidence                []InstructorEvidence              `json:"evidence"`
+	FixRounds               int                               `json:"fixRounds"`
+	OpenCriticalFindings    int                               `json:"openCriticalFindings"`
+	WaitCondition           string                            `json:"waitCondition,omitempty"`
+	WaitUntil               *time.Time                        `json:"waitUntil,omitempty"`
+	NudgedAt                *time.Time                        `json:"nudgedAt,omitempty"`
+	Revision                int64                             `json:"revision"`
+	CreatedAt               time.Time                         `json:"createdAt"`
+	UpdatedAt               time.Time                         `json:"updatedAt"`
+	ProgressAt              time.Time                         `json:"progressAt"`
+	Actions                 []string                          `json:"actions"`
+	ApprovedTransitions     []string                          `json:"approvedTransitions,omitempty"`
+	Exceptions              []InstructorException             `json:"exceptions,omitempty"`
+	PublicationGrants       []InstructorPublicationGrant      `json:"publicationGrants,omitempty"`
+	PhaseActions            []InstructorPhaseAction           `json:"phaseActions,omitempty"`
+	PublicationRepositories []InstructorPublicationRepository `json:"publicationRepositories,omitempty"`
+	ApprovalDispatchID      string                            `json:"approvalDispatchId,omitempty"`
+}
+
+// InstructorPhaseAction fences one daemon-owned mechanical operation. An
+// interrupted native effect remains uncertain instead of launching it again.
+type InstructorPhaseAction struct {
+	ID            string     `json:"id"`
+	Kind          string     `json:"kind"`
+	PhaseSequence int64      `json:"phaseSequence"`
+	Producer      SessionID  `json:"producer"`
+	State         string     `json:"state"`
+	Error         string     `json:"error,omitempty"`
+	StartedAt     time.Time  `json:"startedAt"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
 }
 
 // InstructorPublicationGrant records an operator decision for the exact captured commit.
 // It does not claim that a push, pull request or remote check actually happened.
 type InstructorPublicationGrant struct {
-	GateID        string    `json:"gateId"`
-	WorkID        string    `json:"workId"`
-	PolicyVersion string    `json:"policyVersion"`
-	SHA           string    `json:"sha"`
-	Branch        string    `json:"branch"`
-	SnapshotID    string    `json:"snapshotId"`
-	WorkRevision  int64     `json:"workRevision"`
-	Approval      string    `json:"approval"`
-	ApprovedAt    time.Time `json:"approvedAt"`
+	ID              string                          `json:"id,omitempty"`
+	GateID          string                          `json:"gateId"`
+	WorkID          string                          `json:"workId"`
+	PolicyVersion   string                          `json:"policyVersion"`
+	SHA             string                          `json:"sha"`
+	Branch          string                          `json:"branch"`
+	SnapshotID      string                          `json:"snapshotId"`
+	WorkRevision    int64                           `json:"workRevision"`
+	Approval        string                          `json:"approval"`
+	ApprovedAt      time.Time                       `json:"approvedAt"`
+	OperatorID      string                          `json:"operatorId,omitempty"`
+	AuthorizationID string                          `json:"authorizationId,omitempty"`
+	Operation       string                          `json:"operation,omitempty"`
+	Execution       *InstructorPublicationExecution `json:"execution,omitempty"`
+	DispatchID      string                          `json:"dispatchId,omitempty"`
+	Revoked         bool                            `json:"revoked,omitempty"`
 }
 
 // InstructorHeartbeat records availability without changing work progress or authority.
@@ -87,18 +132,22 @@ type InstructorVerification struct {
 // InstructorLaunch separates requested, sent and native-reported configuration.
 // Requested and sent configuration never imply native provider confirmation.
 type InstructorLaunch struct {
-	SessionID     SessionID                 `json:"sessionId,omitempty"`
-	ReviewID      string                    `json:"reviewId,omitempty"`
-	ReviewRunID   string                    `json:"reviewRunId,omitempty"`
-	SHA           string                    `json:"sha,omitempty"`
-	Role          string                    `json:"role"`
-	Phase         string                    `json:"phase"`
-	PhaseSequence int64                     `json:"phaseSequence"`
-	Requested     InstructorAgentSelection  `json:"requested"`
-	Sent          *InstructorAgentSelection `json:"sent,omitempty"`
-	Confirmed     *InstructorAgentSelection `json:"confirmed,omitempty"`
-	Status        string                    `json:"status"`
-	LaunchedAt    time.Time                 `json:"launchedAt"`
+	SessionID         SessionID                 `json:"sessionId,omitempty"`
+	SessionInstanceID string                    `json:"sessionInstanceId,omitempty"`
+	OwnerSessionID    SessionID                 `json:"ownerSessionId,omitempty"`
+	RuntimeGeneration string                    `json:"runtimeGeneration,omitempty"`
+	ReviewCreatedAt   *time.Time                `json:"reviewCreatedAt,omitempty"`
+	ReviewID          string                    `json:"reviewId,omitempty"`
+	ReviewRunID       string                    `json:"reviewRunId,omitempty"`
+	SHA               string                    `json:"sha,omitempty"`
+	Role              string                    `json:"role"`
+	Phase             string                    `json:"phase"`
+	PhaseSequence     int64                     `json:"phaseSequence"`
+	Requested         InstructorAgentSelection  `json:"requested"`
+	Sent              *InstructorAgentSelection `json:"sent,omitempty"`
+	Confirmed         *InstructorAgentSelection `json:"confirmed,omitempty"`
+	Status            string                    `json:"status"`
+	LaunchedAt        time.Time                 `json:"launchedAt"`
 }
 
 // InstructorAgentSelection stores exact provider-native harness, model and effort values.
@@ -154,6 +203,7 @@ type InstructorPolicy struct {
 	Transitions          []InstructorTransition       `json:"transitions"`
 	CloseoutRequires     []string                     `json:"closeoutRequires"`
 	MaxFixRounds         int                          `json:"maxFixRounds"`
+	Budgets              *InstructorBudgets           `json:"budgets,omitempty"`
 	NudgeAfterSeconds    int                          `json:"nudgeAfterSeconds"`
 	EscalateAfterSeconds int                          `json:"escalateAfterSeconds"`
 	Commands             []InstructorCommandSpec      `json:"commands,omitempty"`
@@ -169,6 +219,7 @@ type InstructorException struct {
 	Role                string                    `json:"role,omitempty"`
 	Selection           *InstructorAgentSelection `json:"selection,omitempty"`
 	MaxFixRounds        int                       `json:"maxFixRounds,omitempty"`
+	ExecutionBudgets    *InstructorBudgets        `json:"executionBudgets,omitempty"`
 	ProposalHash        string                    `json:"proposalHash"`
 	SnapshotID          string                    `json:"snapshotId"`
 	SHA                 string                    `json:"sha,omitempty"`
@@ -286,23 +337,46 @@ type InstructorSnapshot struct {
 
 // InstructorDispatch journals an ordered directive to an existing project orchestrator.
 type InstructorDispatch struct {
-	ID              string     `json:"id"`
-	BatchID         string     `json:"batchId"`
-	WorkID          string     `json:"workId"`
-	ProjectID       ProjectID  `json:"projectId"`
-	TargetSessionID SessionID  `json:"targetSessionId,omitempty"`
-	SnapshotID      string     `json:"snapshotId"`
-	WorkRevision    int64      `json:"workRevision"`
-	Position        int        `json:"position"`
-	Action          string     `json:"action"`
-	Message         string     `json:"message"`
-	CommandDigest   string     `json:"commandDigest,omitempty"`
-	State           string     `json:"state"`
-	Error           string     `json:"error,omitempty"`
-	Attempts        int        `json:"attempts"`
-	QueuedAt        *time.Time `json:"queuedAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID                      string                   `json:"id"`
+	BatchID                 string                   `json:"batchId"`
+	WorkID                  string                   `json:"workId"`
+	ProjectID               ProjectID                `json:"projectId"`
+	TargetSessionID         SessionID                `json:"targetSessionId,omitempty"`
+	TargetSessionInstanceID string                   `json:"targetSessionInstanceId,omitempty"`
+	TargetCreatedAt         *time.Time               `json:"targetCreatedAt,omitempty"`
+	TargetRuntimeID         string                   `json:"targetRuntimeId,omitempty"`
+	ReportID                string                   `json:"reportId,omitempty"`
+	ProducerSessionID       SessionID                `json:"producerSessionId,omitempty"`
+	ProducerRuntimeID       string                   `json:"producerRuntimeId,omitempty"`
+	Phase                   string                   `json:"phase,omitempty"`
+	PhaseSequence           int64                    `json:"phaseSequence,omitempty"`
+	PolicyVersion           string                   `json:"policyVersion,omitempty"`
+	NativeReceipt           *InstructorNativeReceipt `json:"nativeReceipt,omitempty"`
+	SnapshotID              string                   `json:"snapshotId"`
+	WorkRevision            int64                    `json:"workRevision"`
+	Position                int                      `json:"position"`
+	Action                  string                   `json:"action"`
+	Message                 string                   `json:"message"`
+	CommandDigest           string                   `json:"commandDigest,omitempty"`
+	State                   string                   `json:"state"`
+	Error                   string                   `json:"error,omitempty"`
+	Attempts                int                      `json:"attempts"`
+	QueuedAt                *time.Time               `json:"queuedAt,omitempty"`
+	CreatedAt               time.Time                `json:"createdAt"`
+	UpdatedAt               time.Time                `json:"updatedAt"`
+}
+
+// InstructorNativeReceipt contains provider-observed facts. A native send reply
+// proves acceptance; only a provider event/response proves execution started.
+// An agent-authored accepted/progress report never creates a started receipt.
+type InstructorNativeReceipt struct {
+	RuntimeID         string     `json:"runtimeId"`
+	ObserverRuntimeID string     `json:"observerRuntimeId,omitempty"`
+	ProviderTurnID    string     `json:"providerTurnId,omitempty"`
+	DeliveredAt       *time.Time `json:"deliveredAt,omitempty"`
+	AcceptedAt        *time.Time `json:"acceptedAt,omitempty"`
+	StartedAt         *time.Time `json:"startedAt,omitempty"`
+	Source            string     `json:"source,omitempty"`
 }
 
 // InstructorCommandResult returns admitted dispatches, skipped work and read projections.
@@ -316,7 +390,8 @@ type InstructorCommandResult struct {
 
 // InstructorDetails combines durable work, event history and native delivery receipts.
 type InstructorDetails struct {
-	Work       InstructorWork       `json:"work"`
-	Events     []InstructorEvent    `json:"events"`
-	Dispatches []InstructorDispatch `json:"dispatches"`
+	Work        InstructorWork         `json:"work"`
+	Events      []InstructorEvent      `json:"events"`
+	Dispatches  []InstructorDispatch   `json:"dispatches"`
+	BudgetUsage *InstructorBudgetUsage `json:"budgetUsage,omitempty"`
 }

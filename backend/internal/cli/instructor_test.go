@@ -58,6 +58,15 @@ func TestInstructorCLICommandPreservesObservedScopeAndKey(t *testing.T) {
 	}
 }
 
+func TestInstructorCLIWorkerCannotMintPublicationGo(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "worker-1")
+	_, _, err := executeCLI(t, Deps{}, "instructor", "command", "Go", "--snapshot", "snapshot", "--work", "work", "--key", "decision", "--approval", "PUBLISH-GO feature/work")
+	if err == nil || !strings.Contains(err.Error(), "native sessions cannot authorize publication") {
+		t.Fatalf("native publication approval was sent: %v", err)
+	}
+}
+
 func TestInstructorCLIReportsAcceptanceDistinctFromProgress(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var got map[string]any

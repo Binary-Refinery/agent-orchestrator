@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
@@ -2029,5 +2029,72 @@ describe("ProjectSettingsForm", () => {
 			}),
 			"proj-1",
 		);
+	});
+});
+
+
+describe.each([
+	["worker", "Worker model"],
+	["orchestrator", "Orchestrator model"],
+	["reviewer", "Reviewer model"],
+] as const)("%s native model defaults", (role, pickerLabel) => {
+	it("saves and reloads each model's approved native effort without selecting a provider minimum", async () => {
+		const defaults = { codex: { "provider/model-a": "native-high", "provider/model-b": "native-deep" } };
+		const selection = { model: "provider/model-a", nativeEffortDefaults: defaults };
+		let config: Record<string, unknown> = {
+			agentConfig: { model: "provider/shared-model", effort: "minimal" },
+			worker: { agent: "codex", agentConfig: structuredClone(selection) },
+			orchestrator: { agent: "codex", agentConfig: structuredClone(selection) },
+			reviewers: [{ harness: "codex", agentConfig: structuredClone(selection) }],
+		};
+		const project = () => ({ id: "proj-1", name: "Project", kind: "single_repo", path: "/repo", repo: "", config });
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/readiness") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") return { data: { agent: "codex", selectionMode: "catalog", allowCustom: false, stale: false, models: [
+				{ id: "provider/model-a", label: "Model A", efforts: ["minimal", "native-high"], effortSupport: "supported", defaultEffort: "minimal" },
+				{ id: "provider/model-b", label: "Model B", efforts: ["minimal", "native-deep"], effortSupport: "supported", defaultEffort: "minimal" },
+				{ id: "provider/model-c", label: "Model C", efforts: ["minimal", "native-ultra"], effortSupport: "supported", defaultEffort: "minimal" },
+			] } };
+			return { data: { status: "ok", project: project() } };
+		});
+		putMock.mockImplementation(async (_path, request) => { config = request.body.config; return { data: { project: project() } }; });
+		const client = renderSettings("proj-1", undefined, "agents");
+		const picker = await screen.findByRole("button", { name: pickerLabel });
+		expect(picker).toHaveTextContent("Model A · Native-high");
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model B" }));
+		const savedChoice = screen.getByRole("menuitemradio", { name: "Native-deep" });
+		expect(savedChoice).toHaveAttribute("aria-checked", "true");
+		await userEvent.click(savedChoice);
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const getRole = () => role === "reviewer" ? (config.reviewers as Array<{ agentConfig: typeof selection }>)[0].agentConfig : (config[role] as { agentConfig: typeof selection }).agentConfig;
+		expect(getRole()).toMatchObject({ model: "provider/model-b", effort: "native-deep", nativeEffortDefaults: defaults });
+		// Map-only stored defaults resolve on reload without an old shared minimum.
+		delete (getRole() as { effort?: string }).effort;
+		cleanup(); client.clear();
+		renderSettings("proj-1", undefined, "agents");
+		const reloaded = await screen.findByRole("button", { name: pickerLabel });
+		expect(reloaded).toHaveTextContent("Model B · Native-deep");
+		await userEvent.click(reloaded);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model A" }));
+		expect(screen.getByRole("menuitemradio", { name: "Native-high" })).toHaveAttribute("aria-checked", "true");
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-high" }));
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(2));
+		expect(getRole()).toMatchObject({ model: "provider/model-a", effort: "native-high", nativeEffortDefaults: defaults });
+		await userEvent.click(screen.getByRole("button", { name: pickerLabel }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model C" }));
+		expect(screen.getByRole("menuitemradio", { name: "Minimal" })).toHaveAttribute("aria-checked", "false");
+		await userEvent.keyboard("{Escape}{Escape}");
+		submitSettings();
+		expect(putMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByText("Choose the native effort explicitly. This choice is remembered for this model and provider.")).toBeVisible();
+		await userEvent.click(screen.getByRole("button", { name: pickerLabel }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-ultra" }));
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(3));
+		expect(getRole()).toMatchObject({ model: "provider/model-c", effort: "native-ultra", nativeEffortDefaults: { codex: { ...defaults.codex, "provider/model-c": "native-ultra" } } });
 	});
 });

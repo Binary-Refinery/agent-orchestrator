@@ -173,6 +173,8 @@ var shippedMigrations = map[int64]string{
 	168: "0168_review_run_scope.sql",
 	169: "0169_instructor_planning.sql",
 	170: "0170_instructor_inventory.sql",
+	195: "0195_instructor_members.sql",
+	197: "0197_instructor_budgets.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

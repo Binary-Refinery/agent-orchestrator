@@ -260,11 +260,11 @@ func (s *Store) updateReportClaim(ctx context.Context, id, token string, at time
 func (s *Store) RequeueClaimedReports(ctx context.Context) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	count, err := s.qw.RequeueClaimedReports(ctx)
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE reports SET delivery_state='pending',claim_token='',claimed_at=NULL,last_error='delivery claim recovered after daemon restart' WHERE delivery_state='claimed' AND delivery_batch_id NOT LIKE 'instructor-report:%'`)
 	if err != nil {
 		return 0, fmt.Errorf("requeue claimed reports: %w", err)
 	}
-	return count, nil
+	return result.RowsAffected()
 }
 
 func (s *Store) reportWithOutputs(ctx context.Context, row gen.Report) (domain.ReportRecord, error) {

@@ -131,6 +131,54 @@ describe("InstructorView", () => {
 		expect(mocks.command).toHaveBeenCalledWith(expect.objectContaining({ command: "go", snapshotId: "snapshot-1", workIds: ["work-1"], approval: "PUBLISH-GO feature/login" }));
 	});
 
+	it("keeps ordinary multi-work Go in one explicit ordered cohort with a stable retry intent", async () => {
+		mocks.snapshot = { ...mocks.snapshot, works: [
+			work({ state: "waiting_human", actions: ["details", "go"], gate: { id: "scope-1", kind: "scope", title: "Approve scope" } }),
+			work({ id: "work-2", name: "Search flow", state: "waiting_human", actions: ["details", "go"], gate: { id: "scope-2", kind: "scope", title: "Approve search" } }),
+		] };
+		mocks.command.mockRejectedValueOnce(new Error("Response lost"));
+		render(<InstructorView />);
+		await userEvent.click(screen.getByRole("checkbox", { name: "Select Login flow" }));
+		await userEvent.click(screen.getByRole("checkbox", { name: "Select Search flow" }));
+		await userEvent.selectOptions(screen.getByRole("combobox", { name: "Command" }), "go");
+		await userEvent.click(screen.getByRole("button", { name: "Execute" }));
+		expect(mocks.command).toHaveBeenCalledOnce();
+		expect(mocks.command).toHaveBeenCalledWith(expect.objectContaining({ command: "go", snapshotId: "snapshot-1", workIds: ["work-1", "work-2"], approvals: [{ workId: "work-1", approval: "" }, { workId: "work-2", approval: "" }] }));
+		expect(screen.queryByRole("dialog", { name: "Go" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Execute" }));
+		expect(mocks.command.mock.calls[1][0]).toEqual(mocks.command.mock.calls[0][0]);
+	});
+
+	it("sends matching typed publication groups with stable retry keys and never signs another branch", async () => {
+		const publication = (id: string, name: string, branch: string) => work({ id, name, state: "waiting_human", actions: ["details", "go"], gate: { id: `gate-${id}`, kind: "publication", title: "Publish feature", exactApproval: `PUBLISH-GO ${branch}` } });
+		mocks.snapshot = { ...mocks.snapshot, works: [publication("work-1", "Login flow", "feature/login"), publication("work-2", "Login tests", "feature/login"), publication("work-3", "Search flow", "feature/search")] };
+		mocks.command.mockRejectedValueOnce(new Error("Response lost; retry the same admission"));
+		const view = render(<InstructorView />);
+		for (const name of ["Login flow", "Login tests", "Search flow"]) await userEvent.click(screen.getByRole("checkbox", { name: `Select ${name}` }));
+		await userEvent.selectOptions(screen.getByRole("combobox", { name: "Command" }), "go");
+		await userEvent.click(screen.getByRole("button", { name: "Execute" }));
+		const dialog = screen.getByRole("dialog", { name: "Go" });
+		const approval = within(dialog).getByRole("textbox", { name: "Enter the exact Human approval shown below" });
+		await userEvent.type(approval, "PUBLISH-GO feature/wrong");
+		expect(within(dialog).getByRole("button", { name: "Go" })).toBeDisabled();
+		expect(mocks.command).not.toHaveBeenCalled();
+		await userEvent.clear(approval); await userEvent.type(approval, "PUBLISH-GO feature/login");
+		mocks.snapshot = { ...mocks.snapshot, id: "snapshot-live", works: [publication("work-1", "Login flow", "feature/changed")] };
+		view.rerender(<InstructorView />);
+		await userEvent.click(within(dialog).getByRole("button", { name: "Go" }));
+		expect(mocks.command.mock.calls[0][0]).toMatchObject({ command: "go", snapshotId: "snapshot-1", workIds: ["work-1", "work-2"], approvals: [{ workId: "work-1", approval: "PUBLISH-GO feature/login" }, { workId: "work-2", approval: "PUBLISH-GO feature/login" }] });
+		expect(mocks.command.mock.calls[0][0]).not.toHaveProperty("approval");
+		await userEvent.click(within(dialog).getByRole("button", { name: "Go" }));
+		expect(mocks.command.mock.calls[1][0]).toEqual(mocks.command.mock.calls[0][0]);
+		expect(within(dialog).getByText("PUBLISH-GO feature/search")).toBeInTheDocument();
+		expect(approval).toHaveValue("");
+		await userEvent.type(approval, "PUBLISH-GO feature/search");
+		await userEvent.click(within(dialog).getByRole("button", { name: "Go" }));
+		expect(mocks.command.mock.calls[2][0]).toMatchObject({ snapshotId: "snapshot-1", workIds: ["work-3"], approval: "PUBLISH-GO feature/search" });
+		expect(mocks.command.mock.calls[2][0].idempotencyKey).not.toBe(mocks.command.mock.calls[0][0].idempotencyKey);
+		expect(screen.queryByRole("dialog", { name: "Go" })).not.toBeInTheDocument();
+	});
+
 	it("uses a registered all-command with the frozen cohort and leaves eligibility to the daemon", async () => {
 		render(<InstructorView />);
 		await userEvent.click(screen.getByRole("button", { name: "Go all" }));

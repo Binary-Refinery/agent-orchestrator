@@ -234,6 +234,7 @@ type Controller struct {
 	// failed bookkeeping, even if provider termination cannot be confirmed.
 	configFailure            error
 	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
+	executionBudget          ports.ManagedExecutionBudgetGuard
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
@@ -1700,6 +1701,27 @@ func (c *Controller) dispatch(
 		}
 	}
 
+	budgetToken := ""
+	if c.executionBudget != nil {
+		var err error
+		budgetToken, err = c.executionBudget.ReserveManagedTurn(ctx, c.owner(), turnID, msg.ClientMessageID)
+		if err != nil {
+			state := domain.TurnStateFailed
+			if errors.Is(err, domain.ErrInstructorBudgetExceeded) {
+				state = domain.TurnStateCancelled
+			}
+			if settleErr := c.store.SettleTurnByID(ctx, turnID, state, err.Error(), c.now()); settleErr != nil {
+				return domain.ConversationTurn{}, fmt.Errorf("settle budget refusal: %w", settleErr)
+			}
+			if state == domain.TurnStateCancelled {
+				return domain.ConversationTurn{}, fmt.Errorf("%w: native turn admission: %w", ports.ErrSemanticDeliveryRejected, err)
+			}
+			return domain.ConversationTurn{}, fmt.Errorf("native turn admission: %w", err)
+		}
+		if err := c.executionBudget.SetManagedBudgetState(ctx, budgetToken, "uncertain"); err != nil {
+			return domain.ConversationTurn{}, fmt.Errorf("fence native turn budget: %w", err)
+		}
+	}
 	c.mu.Lock()
 	c.dispatchingTurnID = turnID
 	c.mu.Unlock()
@@ -1741,6 +1763,13 @@ func (c *Controller) dispatch(
 			deferred.DiscardDeferredTurn(ref.ProviderTurnID)
 		}
 		return domain.ConversationTurn{}, fmt.Errorf("bind turn: %w", err)
+	}
+	if c.executionBudget != nil {
+		if err := c.executionBudget.SetManagedBudgetState(ctx, budgetToken, "started"); err != nil {
+			// The durable uncertain reservation still consumes the budget. A
+			// bookkeeping error must never authorize another native attempt.
+			c.log.Error("persist native turn budget", "turn", turnID, "error", err)
+		}
 	}
 
 	c.mu.Lock()
@@ -2743,6 +2772,13 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			return err
 		}
 	}
+	// Native acceptance and execution are separate audit facts. ACP's locally
+	// prepared turn.started event is explicitly excluded by recordSemanticStart.
+	if event.Kind != ports.ChatEventTurnStarted {
+		if err := c.recordSemanticStart(ctx, event); err != nil {
+			return err
+		}
+	}
 
 	switch event.Kind {
 	case ports.ChatEventTurnStarted:
@@ -2772,7 +2808,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				}
 			}
 		}
-		return nil
+		return c.recordSemanticStart(ctx, event)
 
 	case ports.ChatEventUserMessageCompleted:
 		if event.ProviderTurnID == "" || event.Text == "" {

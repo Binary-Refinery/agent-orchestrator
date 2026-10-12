@@ -277,6 +277,10 @@ func OpenPreMigrated(dataDir string) (*Store, error) {
 			got, want,
 		)
 	}
+	if err := validateForkMigrationLineage(writeDB); err != nil {
+		_ = writeDB.Close()
+		return nil, err
+	}
 
 	readDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -290,6 +294,11 @@ func OpenPreMigrated(dataDir string) (*Store, error) {
 }
 
 func migrate(db *sql.DB) error {
+	// Check lineage before history repairs or Goose can mutate a foreign DB.
+	// The fork and upstream shipped different migrations numbered 165–170.
+	if err := validateForkMigrationLineage(db); err != nil {
+		return err
+	}
 	gooseMu.Lock()
 	defer gooseMu.Unlock()
 	goose.SetBaseFS(migrationsFS)

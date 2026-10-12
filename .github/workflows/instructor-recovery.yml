@@ -1,0 +1,31 @@
+name: Instructor configuration recovery
+
+on:
+  pull_request:
+    paths:
+      - "scripts/remove-optional-ide-mcp.py"
+      - "scripts/test_remove_optional_ide_mcp.py"
+      - ".github/workflows/instructor-recovery.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/remove-optional-ide-mcp.py"
+      - "scripts/test_remove_optional_ide_mcp.py"
+      - ".github/workflows/instructor-recovery.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  configuration-recovery:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test optional IDE configuration removal
+        run: python -m unittest discover -s scripts -p test_remove_optional_ide_mcp.py -v

@@ -21,8 +21,22 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 		if d.TargetSessionID == "" || d.TargetSessionID != target {
 			return invalid("native submission target does not match the immutable dispatch target")
 		}
+		if reader, ok := s.deps.Store.(sessionInstanceReader); ok {
+			instance, found, err := reader.InstructorSessionInstance(ctx, target)
+			if err != nil {
+				return err
+			}
+			if !found || instance == "" || instance != d.TargetSessionInstanceID {
+				return invalid("native submission target session instance changed or is legacy unknown")
+			}
+		}
 		if d.State == "cancelled" || d.State == "failed" {
 			return invalid("native submission was cancelled or requires explicit reconciliation")
+		}
+		for _, previous := range dispatches {
+			if previous.BatchID == d.BatchID && previous.Position < d.Position && (previous.State == "failed" || previous.State == "cancelled") {
+				return errApprovalCohortStopped
+			}
 		}
 		w, err := s.get(ctx, d.WorkID)
 		if err != nil {
@@ -33,6 +47,15 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 		}
 		if w.PolicyVersion != PolicyVersion(w.Policy) {
 			return invalid("native submission pinned policy hash mismatch")
+		}
+		if d.Action == "worker_result" {
+			if w.Phase != d.Phase || w.PhaseSequence != d.PhaseSequence || d.PolicyVersion != w.PolicyVersion {
+				return ErrConflict
+			}
+			if w.State == "parked" || w.State == "waiting_human" || w.State == "blocked" {
+				return invalid("worker completion wake-up cannot bypass paused work")
+			}
+			return nil // Claim delivery requests verification; it does not execute or certify the result.
 		}
 		if d.Action != "pruefen" && d.Action != "stopp" {
 			if w.Revision != d.WorkRevision {

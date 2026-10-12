@@ -383,6 +383,9 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewcore.WithAgentAuth(reviewerAgentAuth{readiness: agentReadiness}),
 			reviewcore.WithReviewerChat(reviewerChat)),
 	})
+	if catalog, ok := agentReadiness.(reviewcore.NativeModelCatalog); ok {
+		reviewEngine.SetModelCatalog(catalog)
+	}
 	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry),
@@ -587,6 +590,14 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 // depends on the other's; this is the one place that knows both, which keeps the
 // translation in the wiring rather than in either domain.
 type chatLauncher struct{ svc *chatsvc.Service }
+
+func (c chatLauncher) InterruptChat(ctx context.Context, id domain.SessionID) error {
+	err := c.svc.Interrupt(ctx, id)
+	if errors.Is(err, chatsvc.ErrNoActiveTurn) {
+		return nil
+	}
+	return err
+}
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {

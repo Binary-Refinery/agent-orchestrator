@@ -163,3 +163,14 @@ func TestInstructorInventoryPreservesUnassignedRuntimeFacts(t *testing.T) {
 		t.Fatalf("managed=%+v", result.Sessions[1])
 	}
 }
+
+func (s instructorTestStore) InstructorWorkForSession(_ context.Context, id domain.SessionID) (domain.InstructorWork, bool, error) {
+	for _, work := range s.works {
+		for _, sid := range work.SessionIDs {
+			if sid == id {
+				return work, true, nil
+			}
+		}
+	}
+	return domain.InstructorWork{}, false, nil
+}

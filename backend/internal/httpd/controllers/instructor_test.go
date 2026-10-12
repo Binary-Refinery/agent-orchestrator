@@ -18,13 +18,69 @@ import (
 
 type fakeInstructorService struct {
 	controllers.InstructorService
-	base      string
-	command   instructorsvc.CommandInput
-	reconcile instructorsvc.ReconcileInput
-	exception instructorsvc.ExceptionInput
-	plan      domain.InstructorPlanInput
-	policy    domain.InstructorPolicy
-	err       error
+	base        string
+	command     instructorsvc.CommandInput
+	reconcile   instructorsvc.ReconcileInput
+	exception   instructorsvc.ExceptionInput
+	plan        domain.InstructorPlanInput
+	policy      domain.InstructorPolicy
+	publication instructorsvc.PublicationInput
+	err         error
+}
+
+func (s *fakeInstructorService) ExecutePublication(_ context.Context, in instructorsvc.PublicationInput) (domain.InstructorWork, error) {
+	s.publication = in
+	return domain.InstructorWork{ID: in.WorkID}, s.err
+}
+
+func TestInstructorAPIPublicationPinsScopeAndNeverAcceptsActorProofFromJSON(t *testing.T) {
+	svc := &fakeInstructorService{}
+	srv := instructorTestServer(t, svc, true)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/instructor/works/work-1/publication", `{"grantId":"grant-1","snapshotId":"snapshot-1","workRevision":7,"sha":"1111111111111111111111111111111111111111","branch":"feature/work","operation":"publish"}`)
+	if status != http.StatusOK || svc.publication.WorkID != "work-1" || svc.publication.GrantID != "grant-1" || svc.publication.WorkRevision != 7 || svc.publication.Operation != "publish" {
+		t.Fatalf("publication scope: status=%d body=%s input=%+v", status, body, svc.publication)
+	}
+	svc.publication = instructorsvc.PublicationInput{}
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/instructor/works/work-1/publication", `{"grantId":"grant-1","operatorId":"forged","authorizationId":"forged"}`)
+	if status != http.StatusBadRequest || svc.publication.WorkID != "" {
+		t.Fatalf("client forged operator proof: status=%d body=%s", status, body)
+	}
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{instructorsvc.ErrPublicationUnavailable, http.StatusServiceUnavailable, "INSTRUCTOR_PUBLICATION_UNAVAILABLE"},
+		{instructorsvc.ErrPublicationConsumed, http.StatusConflict, "INSTRUCTOR_PUBLICATION_CONSUMED"},
+	} {
+		svc.err = tc.err
+		body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/instructor/works/work-1/publication", `{"grantId":"grant-1"}`)
+		if status != tc.status || !strings.Contains(string(body), tc.code) {
+			t.Fatalf("publication refusal: status=%d body=%s", status, body)
+		}
+	}
+}
+
+func TestInstructorAPIUnavailablePublisherDoesNotAffectOrdinaryCommands(t *testing.T) {
+	svc := &fakeInstructorService{}
+	srv := instructorTestServer(t, svc, true)
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/instructor/capabilities", "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"publication":{"available":false`) {
+		t.Fatalf("missing enforced capability: status=%d body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/instructor/commands", `{"command":"Weiter","snapshotId":"snapshot-1","workIds":["work-1"],"idempotencyKey":"continue-1"}`)
+	if status != http.StatusOK || svc.command.Command != "Weiter" {
+		t.Fatalf("ordinary continuation blocked by publication: status=%d body=%s", status, body)
+	}
+}
+
+func TestInstructorAPITransfersOneOrderedApprovalCohort(t *testing.T) {
+	svc := &fakeInstructorService{}
+	srv := instructorTestServer(t, svc, true)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/instructor/commands", `{"command":"Go","snapshotId":"captured","workIds":["second","first"],"idempotencyKey":"one-cohort","approvals":[{"workId":"second","approval":"PUBLISH-GO feature/second"},{"workId":"first","approval":"PUBLISH-GO feature/first","publicationOperation":"publish"}]}`)
+	if status != http.StatusOK || svc.command.SnapshotID != "captured" || svc.command.IdempotencyKey != "one-cohort" || len(svc.command.WorkIDs) != 2 || svc.command.WorkIDs[0] != "second" || len(svc.command.Approvals) != 2 || svc.command.Approvals[1].Approval != "PUBLISH-GO feature/first" {
+		t.Fatalf("wire lost the ordered per-work cohort: status=%d body=%s input=%+v", status, body, svc.command)
+	}
 }
 
 func (s *fakeInstructorService) Commands() []domain.InstructorCommandSpec {
@@ -170,5 +226,23 @@ func TestInstructorAPIPlanningIsAsynchronousAndDoesNotAdmitCommands(t *testing.T
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/instructor/plans/plan", "")
 	if status != http.StatusOK || !strings.Contains(string(body), `"id":"plan"`) {
 		t.Fatalf("get status=%d body=%s", status, body)
+	}
+}
+
+func (s *fakeInstructorService) Members(_ context.Context, id string) (domain.InstructorMembers, error) {
+	return domain.InstructorMembers{WorkID: id, WorkRevision: 7, Coordinator: domain.InstructorCoordinator{Key: "project:orchestrator"}, Members: []domain.InstructorMember{{ID: "legacy:deleted", Kind: "session", Role: "unknown", Association: "legacy_unknown", Status: "unknown", SessionID: "deleted", Name: "deleted"}}}, s.err
+}
+
+func TestInstructorMembersAPIKeepsUnknownHistoryUnlinked(t *testing.T) {
+	svc := &fakeInstructorService{}
+	srv := instructorTestServer(t, svc, true)
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/instructor/works/work-1/members", "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"workId":"work-1"`) || !strings.Contains(string(body), `"workRevision":7`) || !strings.Contains(string(body), `"association":"legacy_unknown"`) || strings.Contains(string(body), `"openTarget"`) {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	svc.err = instructorsvc.ErrNotFound
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/instructor/works/missing/members", "")
+	if status != http.StatusNotFound || !strings.Contains(string(body), "INSTRUCTOR_NOT_FOUND") {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
 }

@@ -68,7 +68,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 	const isProjectSettings = displaySettings?.scope === "project";
 	const [activeSection, setActiveSection] = useState<GlobalSettingsSection>("general");
 	const [focusAgentId, setFocusAgentId] = useState<string>();
-	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
+	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>(settingsModal.scope === "project" ? settingsModal.section ?? "general" : "general");
 	const [projectSaveState, setProjectSaveState] = useState<ProjectSettingsSaveState>(initialProjectSaveState);
 	const closeWhenSavedRef = useRef(false);
 	const globalSettingsWasOpen = useRef(false);
@@ -133,7 +133,7 @@ function SettingsDialogLayer({ settingsModal }: { settingsModal: SettingsModal }
 			setActiveSection(globalSettingsItem(settingsModal.section ?? "general", { cloudEnabled }).id);
 		}
 		if (settingsModal?.scope === "project") {
-			setActiveProjectSection("general");
+			setActiveProjectSection(settingsModal.section ?? "general");
 			setProjectSaveState(initialProjectSaveState());
 		}
 	}, [cloudEnabled, settingsModal]);

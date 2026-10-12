@@ -1,6 +1,14 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// NativeEffortDefaults remembers exact model-native choices, scoped by harness.
+// OpenCode model keys retain their provider prefix; values are never ranked or
+// translated into a universal reasoning level.
+type NativeEffortDefaults map[string]map[string]string
 
 // PermissionMode controls how much review an agent requires before acting. It
 // lives in domain (not ports) so the typed AgentConfig can carry it; ports
@@ -28,6 +36,10 @@ type AgentConfig struct {
 	// Effort selects a model-advertised reasoning level. Empty defers to the
 	// provider/model default.
 	Effort string `json:"effort,omitempty"`
+	// NativeEffortDefaults is a project preference, not a native receipt. The
+	// pointer preserves AgentConfig's comparable launch identity; resolvers
+	// remove this preference from configurations passed to native runtimes.
+	NativeEffortDefaults *NativeEffortDefaults `json:"nativeEffortDefaults,omitempty"`
 	// Mode selects an agent-owned operating mode when the adapter exposes modes
 	// instead of raw model ids (currently Amp: low|medium|high|ultra).
 	Mode string `json:"mode,omitempty"`
@@ -41,6 +53,38 @@ type AgentConfig struct {
 // SQL NULL and resolution can skip an empty config.
 func (c AgentConfig) IsZero() bool {
 	return c == AgentConfig{}
+}
+
+// NativeEffort returns only a choice for the exact harness and model identity.
+func (c AgentConfig) NativeEffort(harness, model string) (string, bool) {
+	if c.NativeEffortDefaults == nil {
+		return "", false
+	}
+	effort, ok := (*c.NativeEffortDefaults)[harness][model]
+	return effort, ok && effort != ""
+}
+
+// MergeNativeEffortDefaults copies both levels so resolving a role or request
+// cannot mutate the project's saved preference through an aliased map.
+func MergeNativeEffortDefaults(base, override *NativeEffortDefaults) *NativeEffortDefaults {
+	if base == nil && override == nil {
+		return nil
+	}
+	out := NativeEffortDefaults{}
+	for _, source := range []*NativeEffortDefaults{base, override} {
+		if source == nil {
+			continue
+		}
+		for harness, models := range *source {
+			if out[harness] == nil {
+				out[harness] = map[string]string{}
+			}
+			for model, effort := range models {
+				out[harness][model] = effort
+			}
+		}
+	}
+	return &out
 }
 
 // Valid reports whether the mode is one AO knows. Empty counts as valid: it means
@@ -90,6 +134,18 @@ func ClampPlanRolePermissions(m PermissionMode) PermissionMode {
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
+	if c.NativeEffortDefaults != nil {
+		for harness, models := range *c.NativeEffortDefaults {
+			if strings.TrimSpace(harness) == "" || strings.TrimSpace(harness) != harness || strings.ContainsRune(harness, 0) {
+				return fmt.Errorf("native effort defaults require an exact harness key")
+			}
+			for model, effort := range models {
+				if strings.TrimSpace(model) == "" || strings.TrimSpace(effort) == "" || strings.TrimSpace(model) != model || strings.TrimSpace(effort) != effort || strings.ContainsRune(model, 0) || strings.ContainsRune(effort, 0) {
+					return fmt.Errorf("native effort defaults require exact nonempty model and effort keys")
+				}
+			}
+		}
+	}
 	switch c.Mode {
 	case "", "low", "medium", "high", "ultra":
 	default:

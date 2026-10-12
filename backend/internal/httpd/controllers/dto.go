@@ -22,10 +22,11 @@ import (
 
 // InstructorCapabilitiesResponse reports the available Instructor contract and opt-in state.
 type InstructorCapabilitiesResponse struct {
-	Schema   string                         `json:"schema"`
-	Enabled  bool                           `json:"enabled"`
-	Reason   string                         `json:"reason,omitempty"`
-	Commands []domain.InstructorCommandSpec `json:"commands"`
+	Schema      string                                   `json:"schema"`
+	Enabled     bool                                     `json:"enabled"`
+	Reason      string                                   `json:"reason,omitempty"`
+	Commands    []domain.InstructorCommandSpec           `json:"commands"`
+	Publication domain.InstructorPublicationCapabilities `json:"publication"`
 }
 
 // InstructorCommandsResponse lists the daemon's typed operator command catalog.
@@ -83,12 +84,24 @@ type InstructorOKResponse struct {
 
 // InstructorCommandRequest submits a command against an explicitly captured work scope.
 type InstructorCommandRequest struct {
-	Command        string                     `json:"command"`
-	SnapshotID     string                     `json:"snapshotId,omitempty"`
-	WorkIDs        []string                   `json:"workIds,omitempty"`
-	Approval       string                     `json:"approval,omitempty"`
-	IdempotencyKey string                     `json:"idempotencyKey,omitempty"`
-	New            *InstructorRegisterRequest `json:"new,omitempty"`
+	Command              string                          `json:"command"`
+	SnapshotID           string                          `json:"snapshotId,omitempty"`
+	WorkIDs              []string                        `json:"workIds,omitempty"`
+	Approval             string                          `json:"approval,omitempty"`
+	IdempotencyKey       string                          `json:"idempotencyKey,omitempty"`
+	New                  *InstructorRegisterRequest      `json:"new,omitempty"`
+	PublicationOperation string                          `json:"publicationOperation,omitempty" enum:"publish,merge"`
+	Approvals            []domain.InstructorWorkApproval `json:"approvals,omitempty"`
+}
+
+// InstructorPublicationRequest admits an exact single-use publisher grant.
+type InstructorPublicationRequest struct {
+	GrantID      string `json:"grantId"`
+	SnapshotID   string `json:"snapshotId"`
+	WorkRevision int64  `json:"workRevision"`
+	SHA          string `json:"sha"`
+	Branch       string `json:"branch"`
+	Operation    string `json:"operation" enum:"publish,merge"`
 }
 
 // InstructorReconcileRequest records an explicit decision about one uncertain native delivery.
@@ -108,14 +121,15 @@ type InstructorInventoryReconcileRequest struct {
 
 // InstructorExceptionRequest proposes or approves an expiring exception for one work.
 type InstructorExceptionRequest struct {
-	SnapshotID   string                           `json:"snapshotId"`
-	WorkID       string                           `json:"workId"`
-	Role         string                           `json:"role,omitempty"`
-	Selection    *domain.InstructorAgentSelection `json:"selection,omitempty"`
-	MaxFixRounds *int                             `json:"maxFixRounds,omitempty"`
-	Reason       string                           `json:"reason"`
-	ExpiresAt    time.Time                        `json:"expiresAt"`
-	Approval     string                           `json:"approval,omitempty"`
+	SnapshotID       string                           `json:"snapshotId"`
+	WorkID           string                           `json:"workId"`
+	Role             string                           `json:"role,omitempty"`
+	Selection        *domain.InstructorAgentSelection `json:"selection,omitempty"`
+	MaxFixRounds     *int                             `json:"maxFixRounds,omitempty"`
+	ExecutionBudgets *domain.InstructorBudgets        `json:"executionBudgets,omitempty"`
+	Reason           string                           `json:"reason"`
+	ExpiresAt        time.Time                        `json:"expiresAt"`
+	Approval         string                           `json:"approval,omitempty"`
 }
 
 // InstructorReportRequest records progress claims without attesting their evidence.

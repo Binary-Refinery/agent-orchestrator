@@ -29,7 +29,7 @@ func TestInstructorPublicationGrantNeedsLocalProofAndPrecedesRemoteProof(t *test
 		t.Run(fault, func(t *testing.T) {
 			f := newInstructorFixture(t)
 			observer := &publicationFacts{}
-			f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Verifier: observer, Clock: func() time.Time { return f.now }})
+			f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Verifier: observer, Clock: func() time.Time { return f.now }, Publication: &protectedPublicationFixture{}})
 			work := f.register(t, "publish-"+fault, instructorsvc.DefaultPolicy())
 			worker := f.attachWorker(t, work.ID)
 			work = f.trustedFacts(t, work.ID, func(w *domain.InstructorWork) {

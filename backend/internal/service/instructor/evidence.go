@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/gitread"
 )
 
 type boundedOutput struct{ bytes.Buffer }
@@ -26,9 +27,7 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return n, nil
 }
 func gitFact(ctx context.Context, path string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = path
-	b, e := cmd.Output()
+	b, e := gitread.Run(ctx, path, args...)
 	return strings.TrimSpace(string(b)), e
 }
 
@@ -40,7 +39,18 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if err != nil {
 		return w, err
 	}
-	if !containsSession(w, producer) {
+	checkStore, ok := s.deps.Store.(interface {
+		CaptureInstructorCheckProducer(context.Context, string, domain.SessionID) (domain.SessionRecord, domain.InstructorReportAdmission, bool, error)
+		ValidateInstructorCheckProducer(context.Context, domain.InstructorReportAdmission, domain.SessionRecord) error
+	})
+	if !ok {
+		return w, invalid("atomic native check producer admission unavailable")
+	}
+	producerRecord, admission, managed, err := checkStore.CaptureInstructorCheckProducer(ctx, w.ID, producer)
+	if err != nil {
+		return w, err
+	}
+	if !managed || producerRecord.Kind != domain.KindWorker {
 		return w, invalid("check producer is not attached")
 	}
 	if w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
@@ -49,10 +59,11 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if err := validateWorkExceptions(w, s.now()); err != nil {
 		return w, err
 	}
+	instance := admission.InstanceID
 	selection := domain.InstructorAgentSelection{}
 	var latest *domain.InstructorLaunch
 	for _, launch := range w.Launches {
-		if launch.SessionID == producer {
+		if launch.SessionID == producer && (instance == "" || launch.SessionInstanceID == instance) {
 			cloned := launch
 			latest = &cloned
 		}
@@ -75,7 +86,26 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if s.deps.Workspace == nil {
 		return w, invalid("workspace resolver unavailable")
 	}
-	path, err := s.deps.Workspace.WorkspaceForSession(ctx, producer)
+	if leaser, ok := s.deps.Workspace.(interface {
+		LeaseInstructorProducer(context.Context, domain.SessionID, string) (func(), error)
+	}); ok {
+		release, err := leaser.LeaseInstructorProducer(ctx, producer, admission.InstanceID)
+		if err != nil {
+			return w, err
+		}
+		defer release()
+	}
+	var path string
+	if captured, ok := s.deps.Workspace.(interface {
+		WorkspaceForInstructorProducer(context.Context, domain.SessionRecord) (string, error)
+	}); ok {
+		path, err = captured.WorkspaceForInstructorProducer(ctx, producerRecord)
+	} else {
+		path, err = s.deps.Workspace.WorkspaceForSession(ctx, producer)
+	}
+	if err == nil {
+		err = checkStore.ValidateInstructorCheckProducer(ctx, admission, producerRecord)
+	}
 	if err != nil {
 		return w, err
 	}
@@ -88,7 +118,22 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		return w, invalid("checks require a clean worktree to bind evidence to SHA")
 	}
 	if w.SHA != "" && w.SHA != sha {
-		return w, invalid("workspace SHA differs from current work SHA")
+		if w.Phase != "implement" && w.Phase != "fix" {
+			return w, invalid("workspace SHA differs from current work SHA")
+		}
+		s.mu.Lock()
+		current, readErr := s.get(ctx, w.ID)
+		if readErr == nil && (current.PhaseSequence != w.PhaseSequence || current.PolicyVersion != w.PolicyVersion || current.SHA != w.SHA || current.State != "ready" && current.State != "running") {
+			readErr = ErrConflict
+		}
+		if readErr == nil {
+			current.SHA, current.ProgressAt = sha, s.now()
+			w, readErr = s.saveProducer(ctx, current, current.Revision, "worker_commit_observed", string(producer)+" runtime-bound clean HEAD "+sha, admission, "")
+		}
+		s.mu.Unlock()
+		if readErr != nil {
+			return w, readErr
+		}
 	}
 	if len(profiles) == 0 {
 		profiles = []string{"push", "full"}
@@ -99,6 +144,9 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		if !ok || len(pf.Command) == 0 {
 			return w, invalid(fmt.Sprintf("profile %s has no approved check command", name))
 		}
+		if err := checkStore.ValidateInstructorCheckProducer(ctx, admission, producerRecord); err != nil {
+			return w, err
+		}
 		runCtx, cancel := context.WithTimeout(ctx, time.Duration(pf.TimeoutSeconds)*time.Second)
 		cmd := exec.CommandContext(runCtx, pf.Command[0], pf.Command[1:]...)
 		cmd.Dir = path
@@ -107,6 +155,16 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		cmd.Stderr = &output
 		runErr := cmd.Run()
 		cancel()
+		if actorErr := checkStore.ValidateInstructorCheckProducer(ctx, admission, producerRecord); actorErr != nil {
+			s.mu.Lock()
+			current, readErr := s.get(ctx, id)
+			if readErr == nil && current.State != "done" && current.State != "cancelled" && current.State != "parked" {
+				current.State, current.Summary, current.WaitCondition = "blocked", "Check-Wirkung nach Controllerwechsel unklar", actorErr.Error()
+				_, _ = s.save(ctx, current, current.Revision, "check_effect_uncertain", string(producer)+" capturedRuntime="+admission.RuntimeID)
+			}
+			s.mu.Unlock()
+			return w, actorErr
+		}
 		if runErr != nil {
 			s.mu.Lock()
 			current, e := s.get(ctx, id)
@@ -119,7 +177,7 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 					}
 				}
 				current.Summary = "Prüfprofil " + name + " fehlgeschlagen"
-				_, e = s.save(ctx, current, current.Revision, "check_failed", name+": "+runErr.Error()+"\n"+output.String())
+				_, e = s.saveProducer(ctx, current, current.Revision, "check_failed", name+": "+runErr.Error()+"\n"+output.String(), admission, "")
 			}
 			s.mu.Unlock()
 			return w, errors.Join(runErr, e)
@@ -137,7 +195,7 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		s.mu.Lock()
 		current, e := s.get(ctx, id)
 		if e == nil {
-			_, e = s.save(ctx, current, current.Revision, "check_executed", name+" "+sha+"\n"+output.String())
+			_, e = s.saveProducer(ctx, current, current.Revision, "check_executed", name+" "+sha+"\n"+output.String(), admission, "")
 		}
 		s.mu.Unlock()
 		if e != nil {
@@ -159,7 +217,7 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	current.SHA = sha
 	current.Evidence = append(current.Evidence, evidence...)
 	current.ProgressAt = s.now()
-	return s.save(ctx, current, current.Revision, "checks_verified", strings.Join(profiles, ","))
+	return s.saveProducer(ctx, current, current.Revision, "checks_verified", strings.Join(profiles, ","), admission, "")
 }
 
 // VerifyEvidence ignores a client's verified flag. The injected verifier reads actual

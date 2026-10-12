@@ -11,6 +11,8 @@ export type ModelTuningControlsProps = {
 	models?: Model[];
 	model: string;
 	effort: string;
+	/** Show an unselected native effort until the operator chooses one. */
+	requireExplicitEffort?: boolean;
 	onEffortChange: (value: string) => void;
 	onEffortReset?: (value: string) => void;
 	onValidityChange?: (valid: boolean) => void;
@@ -71,7 +73,7 @@ export function ModelTuningControls(props: ModelTuningControlsProps) {
 	}
 	const effortOptions = selected.efforts?.filter((value) => value && (selected.effortSupport === "supported" || value.toLowerCase() !== "default")) ?? [];
 	const explicitEffort = selected.effortSupport !== "supported" && effort.toLowerCase() === "default" ? "" : effort;
-	const effectiveEffort = explicitEffort || (effortOptions.includes(selected.defaultEffort ?? "") ? selected.defaultEffort : "") || "";
+	const effectiveEffort = explicitEffort || (props.requireExplicitEffort ? "" : effortOptions.includes(selected.defaultEffort ?? "") ? selected.defaultEffort : "") || "";
 	const effortControl = effortOptions.length ? (
 		<SettingsOptionMenu
 			aria-label={`${prefix}${t("settings.models.effort")}`}

@@ -564,6 +564,7 @@ func Run() error {
 		concreteManager.SetInstructorGovernance(instructorBridge)
 		chatSvc.SetAgentConfigValidator(instructorBridge.ValidateChatAgentConfig)
 		chatSvc.SetAgentConfigObserver(instructorBridge.ObserveChatAgentConfig)
+		chatSvc.SetExecutionBudgetGuard(instructorBridge)
 		chatSvc.SetSemanticDispatchValidator(func(ctx context.Context, target domain.SessionID, key string) error {
 			err := instructorSvc.ValidateDispatchAdmission(ctx, target, key)
 			if errors.Is(err, instructorsvc.ErrEvidencePending) {
@@ -579,7 +580,13 @@ func Run() error {
 			return errors.New("wire Instructor: review service lacks governance support")
 		}
 		governedReviews.SetInstructorGovernance(instructorBridge)
+		localReviews, ok := reviewSvc.(instructorLocalReviews)
+		if !ok {
+			return errors.New("wire Instructor: review service lacks governed local review support")
+		}
+		instructorSvc.SetPhaseActions(instructorPhaseActions{reviews: localReviews})
 	}
+	logInstructorRuntimeReadback(ctx, log, cfg, instructorEnabled, instructorSvc)
 
 	// servers isn't clobbered. See preview_wiring.go (issue #4500).
 	wireManagedPreviewExit(managedPreview, sessionSvc, log)
@@ -595,12 +602,19 @@ func Run() error {
 		return errors.New("wire report delivery: session manager lacks semantic send support")
 	}
 	var reportCoordinator *reportsvc.Coordinator
-	reportSvc := reportsvc.New(reportsvc.Deps{Store: store, OnCreated: func(created domain.ReportRecord) {
+	var managedReports reportsvc.ManagedDone
+	if instructorEnabled {
+		managedReports = instructorSvc
+	}
+	reportSvc := reportsvc.New(reportsvc.Deps{Store: store, ManagedDone: managedReports, OnCreated: func(created domain.ReportRecord) {
 		if reportCoordinator != nil {
 			reportCoordinator.Wake()
 		}
 		// The wake-up result is never dropped silently: a durably
 		// audited delivery failure is surfaced in the daemon log.
+		if created.DeliveryBatchID == "instructor-report:"+created.ID {
+			return // Instructor owns the correlated wake-up; do not send twice.
+		}
 		if plan := superviseReportTurn(ctx, lcStack.LCM, created); plan.Audit != "" {
 			log.Warn("supervision wake-up failed", "session", created.SessionID, "audit", plan.Audit)
 		}
@@ -754,6 +768,9 @@ func Run() error {
 			Resolver:     prReader,
 			Writer:       store,
 			ThreadWriter: store,
+			// Turning off the Instructor UI/loop must not erase durable work
+			// governance and reopen the host-credential merge bypass.
+			MergeAdmission: instructorSvc.ValidatePRMerge,
 		})
 	} else {
 		log.Warn("pr action service disabled: no usable SCM provider")

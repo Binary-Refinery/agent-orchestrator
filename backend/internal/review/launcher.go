@@ -547,6 +547,10 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		}
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
+	budgetTokens, err := l.beginInstructorExecution(ctx, spec, strings.TrimSpace(inv.Prompt) != "")
+	if err != nil {
+		return LaunchResult{}, fmt.Errorf("reviewer native execution budget: %w", err)
+	}
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
 	// worse, keep serving under its old harness. Destroy any stale pane on this
@@ -554,6 +558,11 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	// sandbox/permissions/env — which are applied only here at Create, never by
 	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		if guard := l.executionBudget(); guard != nil {
+			for _, token := range budgetTokens {
+				_ = guard.CancelManagedBudgetBeforeAdmission(ctx, token)
+			}
+		}
 		return LaunchResult{}, fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	workingDirectory := cmd.WorkingDirectory
@@ -580,6 +589,9 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	agentSessionID := strings.TrimSpace(cmd.AgentSessionID)
 	if agentSessionID == "" {
 		agentSessionID = strings.TrimSpace(spec.AgentSessionID)
+	}
+	if err := l.recordInstructorExecution(ctx, budgetTokens); err != nil {
+		return LaunchResult{}, errors.Join(err, l.runtime.Destroy(ctx, handle))
 	}
 	return LaunchResult{HandleID: handle.ID, LaunchID: strings.TrimSpace(spec.LaunchID), AgentSessionID: agentSessionID, NativeResumed: nativeResumed}, nil
 }
@@ -755,10 +767,14 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
 		return l.chat.SendReviewChat(ctx, reviewID, msg)
 	}
+	budgetTokens, err := l.beginInstructorExecution(ctx, spec, true)
+	if err != nil {
+		return fmt.Errorf("notify reviewer budget: %w", err)
+	}
 	if err := l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, msg); err != nil {
 		return fmt.Errorf("notify reviewer: %w", err)
 	}
-	return nil
+	return l.recordInstructorExecution(ctx, budgetTokens)
 }
 
 func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error) {
@@ -864,7 +880,15 @@ func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
 	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
 		return l.chat.StopReviewChat(ctx, reviewID)
 	}
-	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
+	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		return err
+	}
+	if guard, ok := l.governance.(interface {
+		FinishManagedReviewerHandle(context.Context, string) error
+	}); ok {
+		return guard.FinishManagedReviewerHandle(ctx, handleID)
+	}
+	return nil
 }
 
 func reviewerChatID(handleID string) (string, bool) {

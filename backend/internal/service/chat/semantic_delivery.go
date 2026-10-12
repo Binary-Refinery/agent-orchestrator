@@ -37,6 +37,39 @@ func (c *Controller) nativeSemanticAcceptance(event ports.ChatEvent) bool {
 	return false
 }
 
+func (c *Controller) nativeSemanticStart(event ports.ChatEvent) bool {
+	if event.ProviderTurnID == "" {
+		return false
+	}
+	if event.ProviderConversationID != "" && event.ProviderConversationID != c.conv.ProviderConversationID() {
+		return false
+	}
+	switch event.Kind {
+	case ports.ChatEventMessageDelta, ports.ChatEventMessageCompleted,
+		ports.ChatEventApprovalRequested, ports.ChatEventInputRequested,
+		ports.ChatEventActivityStarted, ports.ChatEventActivityCompleted:
+		return true
+	case ports.ChatEventTurnCompleted:
+		return event.Err == nil && event.TurnState == domain.TurnStateCompleted
+	case ports.ChatEventTurnStarted:
+		_, synthetic := c.conv.(ports.ChatDeferredTurnStarter)
+		return !synthetic
+	}
+	return false
+}
+
+func (c *Controller) recordSemanticStart(ctx context.Context, event ports.ChatEvent) error {
+	if !c.nativeSemanticStart(event) {
+		return nil
+	}
+	if store, ok := c.store.(interface {
+		RecordNativeSemanticStart(context.Context, string, string, string, string, time.Time) error
+	}); ok {
+		return store.RecordNativeSemanticStart(ctx, c.conversation.ID, event.ProviderTurnID, "chat:"+c.generation, string(event.Kind), c.now())
+	}
+	return nil
+}
+
 // RelaySemanticChatTurn waits for a durable native receipt for this exact key.
 // Empty duplicate results and queued turns are never a provider receipt.
 func (s *Service) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID, text, key string) (domain.SemanticDelivery, error) {
@@ -161,7 +194,7 @@ func (s *Service) ReconcileSemanticChatTurn(ctx context.Context, id domain.Sessi
 	if err != nil {
 		return err
 	}
-	if turn.State == domain.TurnStateCancelled {
+	if turn.State == domain.TurnStateCancelled && turn.ProviderTurnID == "" {
 		return nil
 	}
 	if turn.State != domain.TurnStateQueued {

@@ -131,7 +131,11 @@ func (m *Manager) RunBackgroundTask(
 	deleteProtectedEnv(env, EnvSessionID, envKeysCaseInsensitive)
 	pinRuntimePermissionEnv(env, config.Permissions)
 
-	return runner.RunBackgroundTask(ctx, rec.Harness, ports.ChatStartConfig{
+	budgetToken, err := m.reserveInstructorTUITurn(ctx, id, "background:"+m.newLaunchID())
+	if err != nil {
+		return "", fmt.Errorf("background task budget: %w", err)
+	}
+	answer, err := runner.RunBackgroundTask(ctx, rec.Harness, ports.ChatStartConfig{
 		DataDir:       m.dataDir,
 		WorkspacePath: workspace,
 		Env:           env,
@@ -140,6 +144,12 @@ func (m *Manager) RunBackgroundTask(
 		Permissions:   config.Permissions,
 		SystemPrompt:  systemPrompt,
 	}, prompt)
+	if err == nil {
+		if err := m.setInstructorBudgetState(ctx, budgetToken, "started"); err != nil {
+			return "", err
+		}
+	}
+	return answer, err
 }
 
 func backgroundTaskPermissions(harness domain.AgentHarness) ports.PermissionMode {

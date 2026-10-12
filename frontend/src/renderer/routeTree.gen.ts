@@ -14,6 +14,7 @@ import { Route as ShellIndexRouteImport } from './routes/_shell.index'
 import { Route as ShellTerminalsRouteImport } from './routes/_shell.terminals'
 import { Route as ShellSettingsRouteImport } from './routes/_shell.settings'
 import { Route as ShellSessionsRouteImport } from './routes/_shell.sessions'
+import { Route as ShellInstructorBoardRouteImport } from './routes/_shell.instructor-board'
 import { Route as ShellInstructorRouteImport } from './routes/_shell.instructor'
 import { Route as ShellAutomationsRouteImport } from './routes/_shell.automations'
 import { Route as ShellSessionsIndexRouteImport } from './routes/_shell.sessions.index'
@@ -44,6 +45,11 @@ const ShellSettingsRoute = ShellSettingsRouteImport.update({
 const ShellSessionsRoute = ShellSessionsRouteImport.update({
   id: '/sessions',
   path: '/sessions',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellInstructorBoardRoute = ShellInstructorBoardRouteImport.update({
+  id: '/instructor-board',
+  path: '/instructor-board',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellInstructorRoute = ShellInstructorRouteImport.update({
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
   '/automations': typeof ShellAutomationsRoute
   '/instructor': typeof ShellInstructorRoute
+  '/instructor-board': typeof ShellInstructorBoardRoute
   '/sessions': typeof ShellSessionsRouteWithChildren
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/automations': typeof ShellAutomationsRoute
   '/instructor': typeof ShellInstructorRoute
+  '/instructor-board': typeof ShellInstructorBoardRoute
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
   '/': typeof ShellIndexRoute
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/_shell/automations': typeof ShellAutomationsRoute
   '/_shell/instructor': typeof ShellInstructorRoute
+  '/_shell/instructor-board': typeof ShellInstructorBoardRoute
   '/_shell/sessions': typeof ShellSessionsRouteWithChildren
   '/_shell/settings': typeof ShellSettingsRoute
   '/_shell/terminals': typeof ShellTerminalsRoute
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/'
     | '/automations'
     | '/instructor'
+    | '/instructor-board'
     | '/sessions'
     | '/settings'
     | '/terminals'
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
   to:
     | '/automations'
     | '/instructor'
+    | '/instructor-board'
     | '/settings'
     | '/terminals'
     | '/'
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/_shell/automations'
     | '/_shell/instructor'
+    | '/_shell/instructor-board'
     | '/_shell/sessions'
     | '/_shell/settings'
     | '/_shell/terminals'
@@ -205,6 +217,13 @@ declare module '@tanstack/react-router' {
       path: '/sessions'
       fullPath: '/sessions'
       preLoaderRoute: typeof ShellSessionsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/instructor-board': {
+      id: '/_shell/instructor-board'
+      path: '/instructor-board'
+      fullPath: '/instructor-board'
+      preLoaderRoute: typeof ShellInstructorBoardRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/instructor': {
@@ -276,6 +295,7 @@ const ShellSessionsRouteWithChildren = ShellSessionsRoute._addFileChildren(
 interface ShellRouteChildren {
   ShellAutomationsRoute: typeof ShellAutomationsRoute
   ShellInstructorRoute: typeof ShellInstructorRoute
+  ShellInstructorBoardRoute: typeof ShellInstructorBoardRoute
   ShellSessionsRoute: typeof ShellSessionsRouteWithChildren
   ShellSettingsRoute: typeof ShellSettingsRoute
   ShellTerminalsRoute: typeof ShellTerminalsRoute
@@ -288,6 +308,7 @@ interface ShellRouteChildren {
 const ShellRouteChildren: ShellRouteChildren = {
   ShellAutomationsRoute: ShellAutomationsRoute,
   ShellInstructorRoute: ShellInstructorRoute,
+  ShellInstructorBoardRoute: ShellInstructorBoardRoute,
   ShellSessionsRoute: ShellSessionsRouteWithChildren,
   ShellSettingsRoute: ShellSettingsRoute,
   ShellTerminalsRoute: ShellTerminalsRoute,
