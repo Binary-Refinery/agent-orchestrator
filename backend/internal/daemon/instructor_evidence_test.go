@@ -105,17 +105,49 @@ func TestInstructorCIEvidenceRequiresAllChecksAtExactHead(t *testing.T) {
 	evidence.Ref = "https://github.com/fork/repo/pull/1"
 	store.prs = []domain.PullRequest{{URL: evidence.Ref, HeadSHA: work.SHA}}
 	oldSHA := strings.Repeat("b", 40)
+	check := func(status domain.PRCheckStatus, conclusion string) domain.PullRequestCheck {
+		return domain.PullRequestCheck{CommitHash: work.SHA, Status: status, Conclusion: conclusion}
+	}
+	green := check(domain.PRCheckPassed, "success")
+	neutral := check(domain.PRCheckPassed, "neutral")
+	skipped := check(domain.PRCheckSkipped, "skipped")
 	for _, test := range []struct {
 		name   string
 		checks []domain.PullRequestCheck
 		reject bool
 	}{
-		{"current green", []domain.PullRequestCheck{{CommitHash: work.SHA, Conclusion: "success"}}, false},
-		{"historical green and failure", []domain.PullRequestCheck{{CommitHash: oldSHA, Conclusion: "success"}, {CommitHash: oldSHA, Conclusion: "failure"}, {CommitHash: work.SHA, Conclusion: "success"}}, false},
-		{"historical only", []domain.PullRequestCheck{{CommitHash: oldSHA, Conclusion: "success"}}, true},
-		{"current failure", []domain.PullRequestCheck{{CommitHash: work.SHA, Conclusion: "success"}, {CommitHash: work.SHA, Conclusion: "failure"}}, true},
-		{"queued stale conclusion", []domain.PullRequestCheck{{CommitHash: work.SHA, Status: domain.PRCheckQueued, Conclusion: "success"}}, true},
-		{"running stale conclusion", []domain.PullRequestCheck{{CommitHash: work.SHA, Status: domain.PRCheckInProgress, Conclusion: "success"}}, true},
+		{"current green", []domain.PullRequestCheck{green}, false},
+		{"native neutral", []domain.PullRequestCheck{neutral}, false},
+		{"green and neutral", []domain.PullRequestCheck{green, neutral}, false},
+		{"green and optional skipped", []domain.PullRequestCheck{green, skipped}, false},
+		{"neutral and optional skipped", []domain.PullRequestCheck{neutral, skipped}, false},
+		{"green neutral and optional skipped", []domain.PullRequestCheck{green, neutral, skipped}, false},
+		{"all skipped", []domain.PullRequestCheck{skipped, skipped}, true},
+		{"historical green and failure", []domain.PullRequestCheck{{CommitHash: oldSHA, Status: domain.PRCheckPassed, Conclusion: "success"}, {CommitHash: oldSHA, Status: domain.PRCheckFailed, Conclusion: "failure"}, green}, false},
+		{"historical only", []domain.PullRequestCheck{{CommitHash: oldSHA, Status: domain.PRCheckPassed, Conclusion: "success"}}, true},
+		{"historical pass cannot certify current skipped", []domain.PullRequestCheck{{CommitHash: oldSHA, Status: domain.PRCheckPassed, Conclusion: "success"}, skipped}, true},
+		{"current failure", []domain.PullRequestCheck{green, check(domain.PRCheckFailed, "failure")}, true},
+		{"GitLab current failure", []domain.PullRequestCheck{green, check(domain.PRCheckFailed, "failed")}, true},
+		{"cancelled", []domain.PullRequestCheck{green, check(domain.PRCheckCancelled, "cancelled")}, true},
+		{"GitLab canceled", []domain.PullRequestCheck{green, check(domain.PRCheckCancelled, "canceled")}, true},
+		{"timed out", []domain.PullRequestCheck{green, check(domain.PRCheckFailed, "timed_out")}, true},
+		{"queued stale conclusion", []domain.PullRequestCheck{green, check(domain.PRCheckQueued, "success")}, true},
+		{"running stale conclusion", []domain.PullRequestCheck{green, check(domain.PRCheckInProgress, "success")}, true},
+		{"queued neutral", []domain.PullRequestCheck{green, check(domain.PRCheckQueued, "neutral")}, true},
+		{"running skipped", []domain.PullRequestCheck{green, check(domain.PRCheckInProgress, "skipped")}, true},
+		{"stale is not a legitimate skip", []domain.PullRequestCheck{green, check(domain.PRCheckSkipped, "stale")}, true},
+		{"manual is not a completed skip", []domain.PullRequestCheck{green, check(domain.PRCheckSkipped, "manual")}, true},
+		{"unknown status", []domain.PullRequestCheck{green, check(domain.PRCheckUnknown, "success")}, true},
+		{"missing normalized status", []domain.PullRequestCheck{green, check("", "success")}, true},
+		{"unrecognized normalized status", []domain.PullRequestCheck{green, check("completed", "success")}, true},
+		{"unknown conclusion", []domain.PullRequestCheck{green, check(domain.PRCheckPassed, "unknown")}, true},
+		{"missing conclusion", []domain.PullRequestCheck{green, check(domain.PRCheckPassed, "")}, true},
+		{"failed status contradicts success", []domain.PullRequestCheck{green, check(domain.PRCheckFailed, "success")}, true},
+		{"cancelled status contradicts success", []domain.PullRequestCheck{green, check(domain.PRCheckCancelled, "success")}, true},
+		{"passed status contradicts failure", []domain.PullRequestCheck{green, check(domain.PRCheckPassed, "failure")}, true},
+		{"passed status contradicts skipped", []domain.PullRequestCheck{green, check(domain.PRCheckPassed, "skipped")}, true},
+		{"skipped status contradicts success", []domain.PullRequestCheck{green, check(domain.PRCheckSkipped, "success")}, true},
+		{"skipped status contradicts neutral", []domain.PullRequestCheck{green, check(domain.PRCheckSkipped, "neutral")}, true},
 		{"no checks", nil, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -176,7 +208,7 @@ func TestInstructorVerificationKeyChangesWhenNativeFactsChange(t *testing.T) {
 func TestInstructorVerificationKeyIgnoresObservationChurn(t *testing.T) {
 	w, _, store := evidenceFixture()
 	store.prs = []domain.PullRequest{{URL: "https://github.com/fork/repo/pull/1", HeadSHA: w.SHA, CI: domain.CIPassing}}
-	store.checks = []domain.PullRequestCheck{{Name: "check", CommitHash: w.SHA, Conclusion: "success"}}
+	store.checks = []domain.PullRequestCheck{{Name: "check", CommitHash: w.SHA, Status: domain.PRCheckPassed, Conclusion: "success"}}
 	v := instructorEvidenceVerifier{store: store}
 	before, err := v.VerificationKey(context.Background(), w)
 	if err != nil {
@@ -187,7 +219,7 @@ func TestInstructorVerificationKeyIgnoresObservationChurn(t *testing.T) {
 	store.prs[0].UpdatedAt = time.Now()
 	store.checks[0].CreatedAt = time.Now()
 	store.checks[0].LogTail = "new log excerpt"
-	store.checks = append(store.checks, domain.PullRequestCheck{Name: "historical", CommitHash: strings.Repeat("b", 40), Conclusion: "failure"})
+	store.checks = append(store.checks, domain.PullRequestCheck{Name: "historical", CommitHash: strings.Repeat("b", 40), Status: domain.PRCheckFailed, Conclusion: "failure"})
 	after, err := v.VerificationKey(context.Background(), w)
 	if err != nil || before != after {
 		t.Fatalf("unchanged provider facts reset verification: %v", err)
@@ -218,7 +250,7 @@ func TestInstructorRemoteProofRequiresActualPublicationGrant(t *testing.T) {
 	evidence.Producer = "worker"
 	evidence.Ref = "https://github.com/fork/repo/pull/1"
 	store.prs = []domain.PullRequest{{URL: evidence.Ref, HeadSHA: work.SHA}}
-	store.checks = []domain.PullRequestCheck{{CommitHash: work.SHA, Conclusion: "success"}}
+	store.checks = []domain.PullRequestCheck{{CommitHash: work.SHA, Status: domain.PRCheckPassed, Conclusion: "success"}}
 	verifier := instructorEvidenceVerifier{store: store}
 	if err := verifier.Verify(context.Background(), work, evidence); err == nil {
 		t.Fatal("unapproved remote publication was certified")
@@ -272,7 +304,7 @@ func TestInstructorFailedCIEvidenceRequiresCurrentNativeFailure(t *testing.T) {
 		name, sha, conclusion string
 		status                domain.PRCheckStatus
 	}{
-		{"later success", work.SHA, "success", domain.PRCheckPassed}, {"old failure", strings.Repeat("b", 40), "failure", domain.PRCheckFailed}, {"running", work.SHA, "failure", domain.PRCheckInProgress}, {"pending", work.SHA, "", domain.PRCheckQueued}, {"optional skipped", work.SHA, "skipped", domain.PRCheckSkipped},
+		{"later success", work.SHA, "success", domain.PRCheckPassed}, {"native neutral", work.SHA, "neutral", domain.PRCheckPassed}, {"old failure", strings.Repeat("b", 40), "failure", domain.PRCheckFailed}, {"running", work.SHA, "failure", domain.PRCheckInProgress}, {"pending", work.SHA, "", domain.PRCheckQueued}, {"optional skipped", work.SHA, "skipped", domain.PRCheckSkipped},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store.checks = []domain.PullRequestCheck{{CommitHash: test.sha, Conclusion: test.conclusion, Status: test.status}}

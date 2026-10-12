@@ -133,6 +133,16 @@ Native effort is separate from check/planning timeouts, stall windows,
 fix rounds and verification limits. Optional token/cost caps are outside this
 change and are not enforced or implied by an effort choice.
 
+The legacy opt-in `AO_OPENCODE_EFFORT_FLOOR` resolves an omitted model from
+OpenCode's effective `debug config` in the same project/environment, then pins
+that model before validating its native variants. It uses `max` only when the
+selected model advertises it. The models command does not expose a default
+variant, and the config command does not expose implicit recent/fallback model
+selection. If the configured default cannot be resolved, select an explicit AO
+model; explicit native choices remain available when config discovery is
+unsupported. Discovery does not request a server or inference, though native
+CLI initialization can initialize configuration or plugin dependencies.
+
 ## Implemented operator interfaces
 
 The global Instructor page is available above projects in the sidebar. It reads

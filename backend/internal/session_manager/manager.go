@@ -1017,16 +1017,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 
 	// Opt-in opencode effort floor (default off): at the spawn boundary,
 	// covering interactive spawns (AutomationRunID == nil) and automation
-	// dispatch alike, a missing or below-maximum effort for the opencode
-	// harnesses is raised to maximum. Unknown variants fail closed.
+	// dispatch alike, an omitted effort uses max only if the exact configured
+	// model advertises that native variant. Unknown choices fail closed.
 	var floorAudit *opencodeeffort.AuditEntry
 	if floorEnabled := opencodeeffort.Enabled(); floorEnabled {
 		automation := cfg.AutomationRunID != nil
-		if raised, out, audit, err := m.applyOpenCodeEffortFloor(ctx, cfg, agentConfig, automation); err != nil {
+		raised, out, audit, err := m.applyOpenCodeEffortFloor(ctx, cfg, agentConfig, automation)
+		if err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
-		} else if raised {
-			cfg.AgentConfig.Effort = out
-			agentConfig.Effort = out
+		}
+		// Pin the model whose native variants were checked, even when the
+		// requested effort was already supported and did not need raising.
+		cfg.AgentConfig, agentConfig = out, out
+		if raised {
 			floorAudit = audit
 		}
 	}
@@ -1490,10 +1493,19 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 		return resolved, nil
 	}
 	if modelID == "" {
-		for _, item := range catalog.Models {
-			if item.IsDefault {
-				modelID = item.ID
-				break
+		if cfg.Harness == domain.HarnessOpenCode {
+			var err error
+			modelID, err = configuredOpenCodeModel(catalog)
+			if err != nil {
+				return ports.AgentConfig{}, err
+			}
+			resolved.Model = modelID
+		} else {
+			for _, item := range catalog.Models {
+				if item.IsDefault {
+					modelID = item.ID
+					break
+				}
 			}
 		}
 	}
@@ -1530,31 +1542,55 @@ func (m *Manager) resolveAgentConfig(ctx context.Context, cfg ports.SpawnConfig,
 	return resolved, nil
 }
 
-func (m *Manager) applyOpenCodeEffortFloor(ctx context.Context, cfg ports.SpawnConfig, config ports.AgentConfig, automation bool) (bool, string, *opencodeeffort.AuditEntry, error) {
+func (m *Manager) applyOpenCodeEffortFloor(ctx context.Context, cfg ports.SpawnConfig, config ports.AgentConfig, automation bool) (bool, ports.AgentConfig, *opencodeeffort.AuditEntry, error) {
 	if !opencodeeffort.IsOpenCodeHarness(cfg.Harness) {
-		return false, config.Effort, nil, nil
+		return false, config, nil, nil
 	}
 	if m.modelCatalog == nil {
-		return false, "", nil, ports.ErrModelCapabilitiesUnavailable
+		return false, config, nil, ports.ErrModelCapabilitiesUnavailable
 	}
 	catalog, err := m.modelCatalog.Models(ctx, string(cfg.Harness), string(cfg.ProjectID), true)
 	if err != nil || catalog.Stale {
-		return false, "", nil, fmt.Errorf("%w: OpenCode native variants unavailable", ports.ErrModelCapabilitiesUnavailable)
+		return false, config, nil, fmt.Errorf("%w: OpenCode native variants unavailable", ports.ErrModelCapabilitiesUnavailable)
+	}
+	if config.Model == "" {
+		config.Model, err = configuredOpenCodeModel(catalog)
+		if err != nil {
+			return false, config, nil, err
+		}
 	}
 	for _, model := range catalog.Models {
-		if model.ID != config.Model && (config.Model != "" || !model.IsDefault) {
+		if model.ID != config.Model {
 			continue
 		}
 		if model.EffortSupport == "unknown" {
-			return false, "", nil, ports.ErrModelCapabilitiesUnavailable
+			return false, config, nil, ports.ErrModelCapabilitiesUnavailable
 		}
 		raised, out, audit, err := opencodeeffort.Apply(true, cfg.Harness, string(cfg.ParentSessionID), config.Effort, automation, model.Efforts)
 		if err != nil {
-			return false, "", nil, fmt.Errorf("%w: %w", ports.ErrUnsupportedEffort, err)
+			return false, config, nil, fmt.Errorf("%w: %w", ports.ErrUnsupportedEffort, err)
 		}
-		return raised, out, audit, nil
+		config.Effort = out
+		return raised, config, audit, nil
 	}
-	return false, "", nil, fmt.Errorf("%w for OpenCode model %q", ports.ErrModelCapabilitiesUnavailable, config.Model)
+	return false, config, nil, fmt.Errorf("%w for OpenCode model %q", ports.ErrModelCapabilitiesUnavailable, config.Model)
+}
+
+func configuredOpenCodeModel(catalog ports.AgentModelCatalog) (string, error) {
+	model := ""
+	for _, item := range catalog.Models {
+		if !item.IsDefault {
+			continue
+		}
+		if model != "" && item.ID != model {
+			return "", fmt.Errorf("%w: OpenCode configured default is ambiguous; select an explicit OpenCode model", ports.ErrModelCapabilitiesUnavailable)
+		}
+		model = item.ID
+	}
+	if model == "" {
+		return "", fmt.Errorf("%w: OpenCode configured default could not be resolved; select an explicit OpenCode model", ports.ErrModelCapabilitiesUnavailable)
+	}
+	return model, nil
 }
 
 func containsString(values []string, value string) bool {

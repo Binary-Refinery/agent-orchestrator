@@ -31,7 +31,7 @@ export function InstructorExceptionDialog({ open, work, snapshotId, onClose, onA
 	const [proposal, setProposal] = useState<InstructorExceptionInput | null>(null);
 	const [preview, setPreview] = useState<InstructorExceptionPreview | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const catalog = useQuery(agentModelsQueryOptions(open && changeRole ? harness : "", ""));
+	const catalog = useQuery(agentModelsQueryOptions(open && changeRole ? harness : "", work.projectId));
 	const busy = previewMutation.isPending || apply.isPending;
 	const nativeValid = Boolean(harness && model && effort && catalog.data?.models.some((item) => item.id === model && item.efforts?.includes(effort)));
 

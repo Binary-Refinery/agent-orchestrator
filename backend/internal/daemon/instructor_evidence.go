@@ -203,20 +203,31 @@ func (v instructorEvidenceVerifier) verifyCI(ctx context.Context, work domain.In
 			}
 			return nil
 		}
-		current := false
+		passed := false
 		for _, check := range checks {
 			// The provider cache retains checks for previous PR commits. Those
 			// neither certify nor invalidate this exact head's checks.
 			if check.CommitHash != work.SHA {
 				continue
 			}
-			current = true
-			if check.Conclusion != "success" || check.Status == domain.PRCheckQueued || check.Status == domain.PRCheckInProgress {
-				return evidenceInvalid("provider checks are missing, pending or unsuccessful for the exact commit")
+			switch check.Status {
+			case domain.PRCheckPassed:
+				if check.Conclusion == "success" || check.Conclusion == "neutral" {
+					passed = true
+					continue
+				}
+			case domain.PRCheckSkipped:
+				// The normalized skipped status also includes stale checks and
+				// unexecuted manual jobs. Only a native skipped conclusion is
+				// harmless alongside an actually passed provider check.
+				if check.Conclusion == "skipped" {
+					continue
+				}
 			}
+			return evidenceInvalid("provider checks are missing, pending or unsuccessful for the exact commit")
 		}
-		if !current {
-			return evidenceInvalid("no provider checks observed for the exact commit")
+		if !passed {
+			return evidenceInvalid("no passed provider check observed for the exact commit")
 		}
 		return nil
 	}
