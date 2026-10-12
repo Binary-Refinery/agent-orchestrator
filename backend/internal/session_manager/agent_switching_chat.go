@@ -183,6 +183,9 @@ func (m *Manager) executeChatAgentSwitch(
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target config: %w", id, err)
 	}
+	if err := m.validateInstructorAgentChange(ctx, rec.ID, cfg.TargetHarness, agentConfig); err != nil {
+		return result, err
+	}
 
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {

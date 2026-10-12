@@ -1620,9 +1620,12 @@ func TestSessionsAPI_SpawnPassesParentSessionToService(t *testing.T) {
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"ao","kind":"worker","harness":"claude-code","parentSessionId":"ao-1","prompt":"fix"}`)
+		`{"projectId":"ao","kind":"worker","harness":"claude-code","parentSessionId":"ao-1","prompt":"fix","workId":"work-1","workRole":"triage"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.WorkID != "work-1" || svc.lastSpawn.WorkRole != "triage" {
+		t.Fatalf("work selection=%+v", svc.lastSpawn)
 	}
 	if svc.lastSpawn.ParentSessionID != "ao-1" {
 		t.Fatalf("service ParentSessionID = %q, want ao-1", svc.lastSpawn.ParentSessionID)
@@ -3124,7 +3127,7 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","effort":" high ","mode":"chat","approvalMode":"bypass-permissions","taskPreparation":" prep-token ","attachments":[{"mimeType":"image/png","data":"AQID"}]}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","workId":"work-1","workRole":"triage","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","effort":" high ","mode":"chat","approvalMode":"bypass-permissions","taskPreparation":" prep-token ","attachments":[{"mimeType":"image/png","data":"AQID"}]}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
 	}
@@ -3136,6 +3139,9 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	mustJSON(t, body, &got)
 	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
 		t.Fatalf("response = %#v", got)
+	}
+	if svc.delegationInput.WorkID != "work-1" || svc.delegationInput.WorkRole != "triage" {
+		t.Fatalf("work selection=%+v", svc.delegationInput)
 	}
 	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.Effort == nil || *svc.delegationInput.Effort != "high" || svc.delegationInput.RequestedMode != domain.SessionModeChat || svc.delegationInput.ApprovalMode != domain.PermissionModeBypassPermissions || svc.delegationInput.TaskPreparation != "prep-token" {
 		t.Fatalf("delegation input = %#v", svc.delegationInput)

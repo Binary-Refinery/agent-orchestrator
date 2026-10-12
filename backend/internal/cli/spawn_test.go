@@ -1013,9 +1013,12 @@ func TestSpawnModelFlagWiring(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker", "--model", "gpt-5.6-sol")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker", "--model", "gpt-5.6-sol", "--effort", "xhigh", "--work", "work-1", "--work-role", "triage")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.WorkID != "work-1" || req.WorkRole != "triage" || req.Effort != "xhigh" {
+		t.Fatalf("work selection = %+v", req)
 	}
 	if req.Model != "gpt-5.6-sol" {
 		t.Fatalf("spawn request model = %q, want gpt-5.6-sol", req.Model)

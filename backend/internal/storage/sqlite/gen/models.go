@@ -380,6 +380,69 @@ type ConversationTurn struct {
 	HandledByReviewID    sql.NullString
 }
 
+type InstructorDispatch struct {
+	ID         string
+	BatchID    string
+	WorkID     string
+	Position   int64
+	State      string
+	LeaseUntil int64
+	Body       string
+}
+
+type InstructorEvent struct {
+	ID     string
+	WorkID string
+	Body   string
+}
+
+type InstructorHeartbeat struct {
+	WorkID    string
+	SessionID string
+	Body      string
+}
+
+type InstructorInventoryCache struct {
+	ID   int64
+	Body string
+}
+
+type InstructorPlan struct {
+	ID         string
+	State      string
+	LeaseUntil int64
+	Body       string
+}
+
+type InstructorPolicy struct {
+	ID   int64
+	Body string
+}
+
+type InstructorSession struct {
+	SessionID string
+	WorkID    string
+}
+
+type InstructorSnapshot struct {
+	ID   string
+	Body string
+}
+
+type InstructorVerification struct {
+	WorkID string
+	Body   string
+}
+
+type InstructorWork struct {
+	ID        string
+	ProjectID string
+	Source    string
+	SourceRef string
+	Revision  int64
+	Body      string
+}
+
 type ModelUsageEvent struct {
 	ID                    int64
 	BindingID             int64
@@ -581,6 +644,8 @@ type Review struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 }
 
 type ReviewRun struct {
@@ -599,6 +664,16 @@ type ReviewRun struct {
 	BatchID          string
 	AutoInjectReview bool
 	TriggerSource    domain.ReviewTriggerSource
+	ScopeKey         string
+}
+
+type SemanticDelivery struct {
+	SessionID       string
+	ClientMessageID string
+	RuntimeLaunchID string
+	State           string
+	CreatedAt       string
+	AcceptedAt      sql.NullString
 }
 
 type Session struct {

@@ -42,6 +42,7 @@ type LaunchConfig struct {
 	WorkspacePath   string
 	Env             map[string]string
 	Model           string
+	ReadOnly        bool
 	Permissions     ports.PermissionMode
 	SystemPrompt    string
 	ProviderScopeID string
@@ -69,6 +70,9 @@ type Config struct {
 	SessionMode func(ports.PermissionMode) string
 	// SessionOptions maps AO's per-turn choices onto ACP config option ids.
 	SessionOptions func(ports.ChatTurnSettings) []SessionOption
+	// RequireSessionOptions refuses an unsupported runtime setter for explicit
+	// model/effort choices, for bindings that cannot apply them at launch time.
+	RequireSessionOptions bool
 	// PermissionPolicy lets a provider binding resolve permission requests that
 	// have an exact AO policy mapping before the generic client parks them for a
 	// human. Returning handled=false preserves the ordinary approval flow.
@@ -192,6 +196,9 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 // Start creates a new ACP session in the AO worktree.
 func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
 	totalStarted := time.Now()
+	if cfg.ReadOnly {
+		return nil, fmt.Errorf("%w: %s ACP does not provide an enforceable read-only sandbox", ports.ErrChatConfigOptionInvalid, d.cfg.Harness)
+	}
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
@@ -205,7 +212,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env:   cfg.Env,
-		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Model: cfg.Model, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	connectStarted := time.Now()
@@ -272,7 +279,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		// flags (e.g. kimchiacp passes --model, --auto, --yolo). An agent that
 		// does not implement the runtime ACP setters returns -32601; tolerate it
 		// at session start so those bindings can still open a session.
-		if !errors.Is(err, ErrACPSetterUnsupported) {
+		if !errors.Is(err, ErrACPSetterUnsupported) || (d.cfg.RequireSessionOptions && (cfg.Model != "" || cfg.Effort != "")) {
 			conv.discard()
 			return nil, fmt.Errorf("configure ACP session: %w", err)
 		}
@@ -300,6 +307,9 @@ func (d *Driver) logStartStage(sessionID domain.SessionID, stage string, started
 // transcript; resume-only agents recover context but explicitly report that no
 // typed history replay is available.
 func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
+	if cfg.ReadOnly {
+		return nil, fmt.Errorf("%w: %s ACP does not provide an enforceable read-only sandbox", ports.ErrChatConfigOptionInvalid, d.cfg.Harness)
+	}
 	if cfg.ProviderConversationID == "" {
 		return nil, fmt.Errorf("%w: no stored ACP session id", ports.ErrChatResumeFailed)
 	}
@@ -316,7 +326,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env:   cfg.Env,
-		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Model: cfg.Model, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, live, err := d.connect(ctx, launchCfg, cfg.PrepareEnv)
@@ -358,6 +368,12 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			setup.Models, setup.Modes,
 		)
 		conv.initialPermission = ports.PermissionMode(live.InitialPermissions)
+		if d.cfg.RequireSessionOptions && (cfg.Model != "" || cfg.Effort != "") {
+			if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
+				conv.discard()
+				return nil, fmt.Errorf("%w: configure live ACP session: %w", ports.ErrChatResumeFailed, err)
+			}
+		}
 		return conv, nil
 	}
 	if !supportsSessionRestore(init) {
@@ -425,7 +441,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		conv.legacyWire.modelState(), modes,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
-		if !errors.Is(err, ErrACPSetterUnsupported) {
+		if !errors.Is(err, ErrACPSetterUnsupported) || (d.cfg.RequireSessionOptions && (cfg.Model != "" || cfg.Effort != "")) {
 			conv.discard()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 		}
@@ -462,6 +478,7 @@ func (d *Driver) initialize(
 		proc, d.log, cfg.ProviderScopeID, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases,
 	)
 	conv.onAuthRejected = d.cfg.OnAuthRejected
+	conv.requireSessionOptions = d.cfg.RequireSessionOptions
 	conv.promptResponseFailure = d.cfg.PromptResponseFailure
 	if proc.reconnected {
 		state := proc.acpState

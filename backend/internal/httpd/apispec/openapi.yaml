@@ -1804,6 +1804,1024 @@ paths:
       summary: Validate a selected folder for project import onboarding
       tags:
       - import
+  /api/v1/instructor/capabilities:
+    get:
+      operationId: instructorCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorCapabilitiesResponse'
+          description: OK
+      summary: Inspect Instructor availability and its command registry
+      tags:
+      - instructor
+  /api/v1/instructor/commands:
+    get:
+      operationId: instructorCommands
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorCommandsResponse'
+          description: OK
+      summary: List commands from the daemon registry
+      tags:
+      - instructor
+    post:
+      operationId: instructorCommand
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorCommandRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorCommandResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Apply a command to the exact observed work snapshot
+      tags:
+      - instructor
+  /api/v1/instructor/exceptions:
+    post:
+      operationId: applyInstructorException
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorExceptionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Apply one expiring work-scoped policy exception after exact operator
+        approval
+      tags:
+      - instructor
+  /api/v1/instructor/exceptions/preview:
+    post:
+      operationId: previewInstructorException
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorExceptionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorExceptionPreview'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Preview one expiring work-scoped policy exception and its exact approval
+        phrase
+      tags:
+      - instructor
+  /api/v1/instructor/inventory:
+    get:
+      operationId: instructorInventory
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorInventoryResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: List real runtime projects and sessions including unassigned legacy
+        work
+      tags:
+      - instructor
+  /api/v1/instructor/inventory/reconcile:
+    post:
+      operationId: reconcileInstructorInventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorInventoryReconcileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorOKResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Acknowledge one no-longer-observed resource without deleting any data
+      tags:
+      - instructor
+  /api/v1/instructor/plans:
+    get:
+      operationId: listInstructorPlans
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPlansResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: List durable global Instructor dialogues and advisory proposals
+      tags:
+      - instructor
+    post:
+      operationId: createInstructorPlan
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorPlanInput'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPlanJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start a native global Instructor strategic or intake dialogue over
+        a frozen portfolio
+      tags:
+      - instructor
+  /api/v1/instructor/plans/{planId}:
+    get:
+      operationId: getInstructorPlan
+      parameters:
+      - in: path
+        name: planId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPlanJob'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a durable global Instructor dialogue without admitting its proposals
+      tags:
+      - instructor
+  /api/v1/instructor/policy:
+    get:
+      operationId: instructorPolicy
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPolicy'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read effective governance policy for new work
+      tags:
+      - instructor
+    put:
+      operationId: setInstructorPolicy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorPolicy'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPolicy'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Validate and persist governance policy for future work
+      tags:
+      - instructor
+  /api/v1/instructor/reconcile:
+    post:
+      operationId: reconcileInstructorDelivery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorReconcileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Resolve one uncertain native submission from an explicit observation
+      tags:
+      - instructor
+  /api/v1/instructor/reports:
+    post:
+      operationId: reportInstructorWork
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorReportRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Report work progress and claims without forging verified evidence
+      tags:
+      - instructor
+  /api/v1/instructor/status:
+    get:
+      operationId: instructorStatus
+      parameters:
+      - description: Previous snapshot identifier for a change comparison.
+        in: query
+        name: baseId
+        schema:
+          description: Previous snapshot identifier for a change comparison.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorSnapshot'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Capture a stable work snapshot and available actions
+      tags:
+      - instructor
+  /api/v1/instructor/works:
+    post:
+      operationId: registerInstructorWork
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorRegisterRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Register work under an explicit governance policy
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}:
+    get:
+      operationId: instructorWorkDetails
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorDetails'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read work history, gates, evidence and command delivery
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/checks:
+    post:
+      operationId: runInstructorChecks
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorChecksRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Run bounded approved checks in the attached worktree
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/evidence/verify:
+    post:
+      operationId: verifyInstructorEvidence
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorEvidence'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Verify exact-commit evidence against daemon-owned provenance
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions:
+    post:
+      operationId: attachInstructorSession
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorAttachSessionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorOKResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Attach an existing session to a stable work identity
+      tags:
+      - instructor
   /api/v1/link-preview:
     get:
       operationId: getLinkPreview
@@ -8661,6 +9679,12 @@ components:
       properties:
         defaultEffort:
           type: string
+        effortSupport:
+          enum:
+          - unknown
+          - supported
+          - none
+          type: string
         efforts:
           items:
             type: string
@@ -8997,6 +10021,8 @@ components:
         updatedAt:
           format: date-time
           type: string
+        workId:
+          type: string
       required:
       - id
       - automationId
@@ -9034,6 +10060,8 @@ components:
           - running
           - completed
           - failed
+          type: string
+        workId:
           type: string
       required:
       - id
@@ -10851,6 +11879,12 @@ components:
           type: string
         taskPreparation:
           type: string
+        workId:
+          maxLength: 128
+          type: string
+        workRole:
+          maxLength: 64
+          type: string
       required:
       - projectId
       - brief
@@ -11484,6 +12518,1330 @@ components:
       required:
       - target
       - status
+      type: object
+    InstructorAgentSelection:
+      properties:
+        effort:
+          type: string
+        harness:
+          type: string
+        model:
+          type: string
+      required:
+      - harness
+      - model
+      - effort
+      type: object
+    InstructorAttachSessionRequest:
+      properties:
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      type: object
+    InstructorAttribution:
+      properties:
+        authorEmail:
+          type: string
+        authorName:
+          type: string
+        coAuthorEmail:
+          type: string
+        coAuthorName:
+          type: string
+        issueTrailer:
+          type: string
+        sessionTrailer:
+          type: string
+      required:
+      - authorName
+      - authorEmail
+      - coAuthorName
+      - coAuthorEmail
+      - sessionTrailer
+      - issueTrailer
+      type: object
+    InstructorCapabilitiesResponse:
+      properties:
+        commands:
+          items:
+            $ref: '#/components/schemas/InstructorCommandSpec'
+          type: array
+        enabled:
+          type: boolean
+        reason:
+          type: string
+        schema:
+          type: string
+      required:
+      - schema
+      - enabled
+      - commands
+      type: object
+    InstructorChecksRequest:
+      properties:
+        profiles:
+          items:
+            type: string
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - profiles
+      type: object
+    InstructorCommandParameter:
+      properties:
+        enum:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+        required:
+          type: boolean
+        type:
+          type: string
+      required:
+      - name
+      - type
+      - required
+      type: object
+    InstructorCommandRequest:
+      properties:
+        approval:
+          type: string
+        command:
+          type: string
+        idempotencyKey:
+          type: string
+        new:
+          $ref: '#/components/schemas/InstructorRegisterRequest'
+        snapshotId:
+          type: string
+        workIds:
+          items:
+            type: string
+          type: array
+      required:
+      - command
+      type: object
+    InstructorCommandResult:
+      properties:
+        batchId:
+          type: string
+        details:
+          items:
+            $ref: '#/components/schemas/InstructorDetails'
+          type: array
+        dispatches:
+          items:
+            $ref: '#/components/schemas/InstructorDispatch'
+          type: array
+        skipped:
+          items:
+            type: string
+          type: array
+        snapshot:
+          $ref: '#/components/schemas/InstructorSnapshot'
+      required:
+      - dispatches
+      - skipped
+      type: object
+    InstructorCommandSpec:
+      properties:
+        action:
+          type: string
+        aliases:
+          items:
+            type: string
+          type: array
+        authority:
+          type: string
+        description:
+          type: string
+        mutates:
+          type: boolean
+        name:
+          type: string
+        parameters:
+          items:
+            $ref: '#/components/schemas/InstructorCommandParameter'
+          type: array
+        preconditions:
+          items:
+            type: string
+          type: array
+        scopes:
+          items:
+            type: string
+          type: array
+        snapshotRequired:
+          type: boolean
+      required:
+      - name
+      - aliases
+      - action
+      - description
+      - mutates
+      - snapshotRequired
+      - parameters
+      - scopes
+      - authority
+      - preconditions
+      type: object
+    InstructorCommandsResponse:
+      properties:
+        commands:
+          items:
+            $ref: '#/components/schemas/InstructorCommandSpec'
+          type: array
+      required:
+      - commands
+      type: object
+    InstructorDetails:
+      properties:
+        dispatches:
+          items:
+            $ref: '#/components/schemas/InstructorDispatch'
+          type: array
+        events:
+          items:
+            $ref: '#/components/schemas/InstructorEvent'
+          type: array
+        work:
+          $ref: '#/components/schemas/InstructorWork'
+      required:
+      - work
+      - events
+      - dispatches
+      type: object
+    InstructorDispatch:
+      properties:
+        action:
+          type: string
+        attempts:
+          type: integer
+        batchId:
+          type: string
+        commandDigest:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        message:
+          type: string
+        position:
+          type: integer
+        projectId:
+          type: string
+        queuedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        snapshotId:
+          type: string
+        state:
+          type: string
+        targetSessionId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - id
+      - batchId
+      - workId
+      - projectId
+      - snapshotId
+      - workRevision
+      - position
+      - action
+      - message
+      - state
+      - attempts
+      - createdAt
+      - updatedAt
+      type: object
+    InstructorEvent:
+      properties:
+        at:
+          format: date-time
+          type: string
+        detail:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        workId:
+          type: string
+      required:
+      - id
+      - workId
+      - kind
+      - detail
+      - at
+      type: object
+    InstructorEvidence:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        criticalFindings:
+          type: integer
+        effort:
+          type: string
+        harness:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        model:
+          type: string
+        outcome:
+          type: string
+        phase:
+          type: string
+        phaseSequence:
+          format: int64
+          type: integer
+        policyVersion:
+          type: string
+        producer:
+          type: string
+        profile:
+          type: string
+        ref:
+          type: string
+        revocationReason:
+          type: string
+        revoked:
+          type: boolean
+        role:
+          type: string
+        sha:
+          type: string
+        verified:
+          type: boolean
+        workId:
+          type: string
+      required:
+      - id
+      - workId
+      - policyVersion
+      - sha
+      - kind
+      - phase
+      - phaseSequence
+      - producer
+      - role
+      - ref
+      - verified
+      - createdAt
+      type: object
+    InstructorException:
+      properties:
+        afterPolicyVersion:
+          type: string
+        approval:
+          type: string
+        beforePolicyVersion:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        grantedAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        maxFixRounds:
+          type: integer
+        proposalHash:
+          type: string
+        reason:
+          type: string
+        role:
+          type: string
+        selection:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        sha:
+          type: string
+        snapshotId:
+          type: string
+        superseded:
+          type: boolean
+      required:
+      - id
+      - kind
+      - proposalHash
+      - snapshotId
+      - approval
+      - reason
+      - beforePolicyVersion
+      - afterPolicyVersion
+      - grantedAt
+      - expiresAt
+      - superseded
+      type: object
+    InstructorExceptionPreview:
+      properties:
+        effectivePolicy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        exactApproval:
+          type: string
+        policyVersion:
+          type: string
+        proposalHash:
+          type: string
+        workId:
+          type: string
+      required:
+      - workId
+      - policyVersion
+      - proposalHash
+      - exactApproval
+      - effectivePolicy
+      type: object
+    InstructorExceptionRequest:
+      properties:
+        approval:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        maxFixRounds:
+          type:
+          - "null"
+          - integer
+        reason:
+          type: string
+        role:
+          type: string
+        selection:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        snapshotId:
+          type: string
+        workId:
+          type: string
+      required:
+      - snapshotId
+      - workId
+      - reason
+      - expiresAt
+      type: object
+    InstructorGate:
+      properties:
+        dispatchId:
+          type: string
+        exactApproval:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        openedAt:
+          format: date-time
+          type: string
+        targetSessionId:
+          type: string
+        title:
+          type: string
+        transitionTo:
+          type: string
+      required:
+      - id
+      - kind
+      - title
+      - openedAt
+      type: object
+    InstructorGitResourceInventory:
+      properties:
+        assignment:
+          enum:
+          - linked
+          - unassigned
+          - unknown
+          type: string
+        branch:
+          type: string
+        dirty:
+          type: boolean
+        error:
+          type: string
+        firstSeenAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          enum:
+          - repository
+          - worktree
+          - branch
+          - uncommitted
+          type: string
+        lastSeenAt:
+          format: date-time
+          type: string
+        notObservedSince:
+          format: date-time
+          type:
+          - "null"
+          - string
+        path:
+          type: string
+        projectId:
+          type: string
+        reconciledAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        repositoryPath:
+          type: string
+        sessionIds:
+          items:
+            type: string
+          type: array
+        sha:
+          type: string
+        status:
+          type: string
+        workIds:
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      - kind
+      - projectId
+      - repositoryPath
+      - path
+      - dirty
+      - status
+      - sessionIds
+      - workIds
+      - assignment
+      - firstSeenAt
+      - lastSeenAt
+      type: object
+    InstructorHeartbeat:
+      properties:
+        at:
+          format: date-time
+          type: string
+        role:
+          type: string
+        sessionId:
+          type: string
+        summary:
+          type: string
+        workId:
+          type: string
+      required:
+      - workId
+      - sessionId
+      - role
+      - at
+      type: object
+    InstructorInventoryReconcileRequest:
+      properties:
+        lastSeenAt:
+          format: date-time
+          type: string
+        resourceId:
+          type: string
+      required:
+      - resourceId
+      - lastSeenAt
+      type: object
+    InstructorInventoryResponse:
+      properties:
+        atomic:
+          type: boolean
+        cached:
+          type: boolean
+        capturedAt:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        nextScanAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        projects:
+          items:
+            $ref: '#/components/schemas/InstructorProjectInventory'
+          type: array
+        resources:
+          items:
+            $ref: '#/components/schemas/InstructorGitResourceInventory'
+          type: array
+        scanError:
+          type: string
+        sessions:
+          items:
+            $ref: '#/components/schemas/InstructorSessionInventory'
+          type: array
+        unassignedCount:
+          type: integer
+        unassignedResourceCount:
+          type: integer
+      required:
+      - capturedAt
+      - atomic
+      - projects
+      - sessions
+      - unassignedCount
+      - resources
+      - unassignedResourceCount
+      - enabled
+      - cached
+      type: object
+    InstructorLaunch:
+      properties:
+        confirmed:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        launchedAt:
+          format: date-time
+          type: string
+        phase:
+          type: string
+        phaseSequence:
+          format: int64
+          type: integer
+        requested:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        reviewId:
+          type: string
+        reviewRunId:
+          type: string
+        role:
+          type: string
+        sent:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        sessionId:
+          type: string
+        sha:
+          type: string
+        status:
+          type: string
+      required:
+      - role
+      - phase
+      - phaseSequence
+      - requested
+      - status
+      - launchedAt
+      type: object
+    InstructorMetrics:
+      properties:
+        active:
+          type: integer
+        closedLast7Days:
+          type: integer
+        gated:
+          type: integer
+        gatesClearedLast24Hours:
+          type: integer
+        parked:
+          type: integer
+        recordedViolations:
+          type: integer
+        stalled:
+          type: integer
+        verificationFailures:
+          type: integer
+      required:
+      - closedLast7Days
+      - gatesClearedLast24Hours
+      - active
+      - gated
+      - stalled
+      - parked
+      - recordedViolations
+      - verificationFailures
+      type: object
+    InstructorOKResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
+      type: object
+    InstructorPlanInput:
+      properties:
+        idempotencyKey:
+          type: string
+        request:
+          type: string
+        snapshotId:
+          type: string
+        timeoutSeconds:
+          type: integer
+      required:
+      - request
+      - snapshotId
+      - idempotencyKey
+      type: object
+    InstructorPlanIntake:
+      properties:
+        goal:
+          type: string
+        issueId:
+          type: string
+        name:
+          type: string
+        projectId:
+          type: string
+      required:
+      - projectId
+      - name
+      - goal
+      type: object
+    InstructorPlanJob:
+      properties:
+        confirmed:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        createdAt:
+          format: date-time
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        input:
+          $ref: '#/components/schemas/InstructorPlanInput'
+        output:
+          $ref: '#/components/schemas/InstructorPlanOutput'
+        policyVersion:
+          type: string
+        requestHash:
+          type: string
+        requested:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        sent:
+          $ref: '#/components/schemas/InstructorAgentSelection'
+        state:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - requestHash
+      - input
+      - policyVersion
+      - requested
+      - state
+      - createdAt
+      - updatedAt
+      type: object
+    InstructorPlanOutput:
+      properties:
+        intake:
+          items:
+            $ref: '#/components/schemas/InstructorPlanIntake'
+          type: array
+        proposals:
+          items:
+            $ref: '#/components/schemas/InstructorProposal'
+          type: array
+        questions:
+          items:
+            type: string
+          type: array
+        summary:
+          type: string
+      required:
+      - summary
+      - questions
+      - proposals
+      - intake
+      type: object
+    InstructorPlansResponse:
+      properties:
+        jobs:
+          items:
+            $ref: '#/components/schemas/InstructorPlanJob'
+          type: array
+      required:
+      - jobs
+      type: object
+    InstructorPolicy:
+      properties:
+        attribution:
+          $ref: '#/components/schemas/InstructorAttribution'
+        closeoutRequires:
+          items:
+            type: string
+          type: array
+        commands:
+          items:
+            $ref: '#/components/schemas/InstructorCommandSpec'
+          type: array
+        escalateAfterSeconds:
+          type: integer
+        exceptionVersion:
+          type: string
+        initialPhase:
+          type: string
+        maxFixRounds:
+          type: integer
+        nudgeAfterSeconds:
+          type: integer
+        profiles:
+          additionalProperties:
+            $ref: '#/components/schemas/InstructorProfile'
+          type:
+          - object
+          - "null"
+        roles:
+          additionalProperties:
+            $ref: '#/components/schemas/InstructorRole'
+          type:
+          - object
+          - "null"
+        schema:
+          type: integer
+        traceability:
+          $ref: '#/components/schemas/InstructorTraceability'
+        transitions:
+          items:
+            $ref: '#/components/schemas/InstructorTransition'
+          type: array
+        version:
+          type: string
+      required:
+      - schema
+      - version
+      - initialPhase
+      - roles
+      - profiles
+      - transitions
+      - closeoutRequires
+      - maxFixRounds
+      - nudgeAfterSeconds
+      - escalateAfterSeconds
+      - attribution
+      - traceability
+      type: object
+    InstructorProfile:
+      properties:
+        command:
+          items:
+            type: string
+          type: array
+        timeoutSeconds:
+          type: integer
+      required:
+      - command
+      - timeoutSeconds
+      type: object
+    InstructorProjectInventory:
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+      required:
+      - id
+      - name
+      - path
+      - kind
+      type: object
+    InstructorProposal:
+      properties:
+        command:
+          type: string
+        reason:
+          type: string
+        workIds:
+          items:
+            type: string
+          type: array
+      required:
+      - command
+      - workIds
+      - reason
+      type: object
+    InstructorPublicationGrant:
+      properties:
+        approval:
+          type: string
+        approvedAt:
+          format: date-time
+          type: string
+        branch:
+          type: string
+        gateId:
+          type: string
+        policyVersion:
+          type: string
+        sha:
+          type: string
+        snapshotId:
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - gateId
+      - workId
+      - policyVersion
+      - sha
+      - branch
+      - snapshotId
+      - workRevision
+      - approval
+      - approvedAt
+      type: object
+    InstructorReconcileRequest:
+      properties:
+        accepted:
+          type:
+          - "null"
+          - boolean
+        dispatchId:
+          type: string
+        note:
+          type: string
+        snapshotId:
+          type: string
+        workId:
+          type: string
+      required:
+      - snapshotId
+      - workId
+      - dispatchId
+      - accepted
+      - note
+      type: object
+    InstructorRegisterRequest:
+      properties:
+        branch:
+          type: string
+        goal:
+          type: string
+        issueId:
+          type: string
+        name:
+          type: string
+        policy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        projectId:
+          type: string
+        source:
+          type: string
+        sourceRef:
+          type: string
+      required:
+      - projectId
+      - name
+      - goal
+      - source
+      - sourceRef
+      type: object
+    InstructorReportRequest:
+      properties:
+        branch:
+          type: string
+        dispatchId:
+          type: string
+        evidence:
+          items:
+            $ref: '#/components/schemas/InstructorEvidence'
+          type: array
+        gate:
+          $ref: '#/components/schemas/InstructorGate'
+        kind:
+          type: string
+        next:
+          type: string
+        openCriticalFindings:
+          type:
+          - "null"
+          - integer
+        phase:
+          type: string
+        sessionId:
+          type: string
+        sha:
+          type: string
+        summary:
+          type: string
+        waitCondition:
+          type: string
+        waitUntil:
+          format: date-time
+          type:
+          - "null"
+          - string
+        workId:
+          type: string
+      required:
+      - workId
+      - sessionId
+      - kind
+      type: object
+    InstructorRole:
+      properties:
+        effort:
+          type: string
+        effortByModel:
+          additionalProperties:
+            type: string
+          type: object
+        harness:
+          type: string
+        independent:
+          type: boolean
+        model:
+          type: string
+      required:
+      - harness
+      - model
+      - effort
+      type: object
+    InstructorSessionInventory:
+      properties:
+        activityState:
+          type: string
+        assignment:
+          enum:
+          - linked
+          - unassigned
+          type: string
+        branch:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        displayName:
+          type: string
+        harness:
+          type: string
+        id:
+          type: string
+        isTerminated:
+          type: boolean
+        issueId:
+          type: string
+        kind:
+          type: string
+        mode:
+          type: string
+        projectId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        workIds:
+          items:
+            type: string
+          type: array
+        workspacePath:
+          type: string
+        workspaceRepoPath:
+          type: string
+      required:
+      - id
+      - kind
+      - harness
+      - mode
+      - activityState
+      - isTerminated
+      - workIds
+      - assignment
+      - createdAt
+      - updatedAt
+      type: object
+    InstructorSnapshot:
+      properties:
+        baseId:
+          type: string
+        commandConflicts:
+          items:
+            type: string
+          type: array
+        commands:
+          items:
+            $ref: '#/components/schemas/InstructorCommandSpec'
+          type: array
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/InstructorMetrics'
+        works:
+          items:
+            $ref: '#/components/schemas/InstructorWork'
+          type: array
+      required:
+      - id
+      - createdAt
+      - works
+      - commands
+      - metrics
+      - commandConflicts
+      type: object
+    InstructorTraceability:
+      properties:
+        allowedBaseBranches:
+          items:
+            type: string
+          type: array
+        allowedRepositories:
+          items:
+            type: string
+          type: array
+        boardStatuses:
+          additionalProperties:
+            type: string
+          type: object
+        phaseLabels:
+          additionalProperties:
+            type: string
+          type: object
+        projectNumber:
+          type: integer
+        projectOwner:
+          type: string
+        requireAssignee:
+          type: boolean
+        required:
+          type: boolean
+        requiredPhases:
+          items:
+            type: string
+          type: array
+      required:
+      - required
+      - requireAssignee
+      - projectNumber
+      - requiredPhases
+      - allowedRepositories
+      - allowedBaseBranches
+      type: object
+    InstructorTransition:
+      properties:
+        from:
+          type: string
+        humanGate:
+          type: boolean
+        requires:
+          items:
+            type: string
+          type: array
+        role:
+          type: string
+        to:
+          type: string
+      required:
+      - from
+      - to
+      - role
+      - requires
+      type: object
+    InstructorVerification:
+      properties:
+        claims:
+          type: integer
+        error:
+          type: string
+        inspected:
+          type: boolean
+        key:
+          type: string
+        lastRunAt:
+          format: date-time
+          type: string
+        maxPasses:
+          type: integer
+        nextRunAt:
+          format: date-time
+          type: string
+        passes:
+          type: integer
+        status:
+          type: string
+        verified:
+          type: integer
+      required:
+      - key
+      - inspected
+      - passes
+      - maxPasses
+      - status
+      - claims
+      - verified
+      - lastRunAt
+      - nextRunAt
+      type: object
+    InstructorWork:
+      properties:
+        actions:
+          items:
+            type: string
+          type: array
+        approvedTransitions:
+          items:
+            type: string
+          type: array
+        branch:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        deltaPhaseSequence:
+          format: int64
+          type: integer
+        evidence:
+          items:
+            $ref: '#/components/schemas/InstructorEvidence'
+          type: array
+        exceptions:
+          items:
+            $ref: '#/components/schemas/InstructorException'
+          type: array
+        fixPhaseSequence:
+          format: int64
+          type: integer
+        fixRounds:
+          type: integer
+        gate:
+          $ref: '#/components/schemas/InstructorGate'
+        goal:
+          type: string
+        heartbeat:
+          $ref: '#/components/schemas/InstructorHeartbeat'
+        id:
+          type: string
+        issueId:
+          type: string
+        launches:
+          items:
+            $ref: '#/components/schemas/InstructorLaunch'
+          type: array
+        name:
+          type: string
+        next:
+          type: string
+        nudgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        openCriticalFindings:
+          type: integer
+        phase:
+          type: string
+        phaseSequence:
+          format: int64
+          type: integer
+        phaseStartedAt:
+          format: date-time
+          type: string
+        policy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        policyVersion:
+          type: string
+        progressAt:
+          format: date-time
+          type: string
+        projectId:
+          type: string
+        publicationGrants:
+          items:
+            $ref: '#/components/schemas/InstructorPublicationGrant'
+          type: array
+        revision:
+          format: int64
+          type: integer
+        sessionIds:
+          items:
+            type: string
+          type: array
+        sha:
+          type: string
+        source:
+          type: string
+        sourceRef:
+          type: string
+        state:
+          type: string
+        summary:
+          type: string
+        suspendedGate:
+          $ref: '#/components/schemas/InstructorGate'
+        uncertainDispatchIds:
+          items:
+            type: string
+          type: array
+        updatedAt:
+          format: date-time
+          type: string
+        verification:
+          $ref: '#/components/schemas/InstructorVerification'
+        waitCondition:
+          type: string
+        waitUntil:
+          format: date-time
+          type:
+          - "null"
+          - string
+      required:
+      - id
+      - projectId
+      - name
+      - goal
+      - source
+      - sourceRef
+      - sessionIds
+      - launches
+      - state
+      - phase
+      - phaseStartedAt
+      - phaseSequence
+      - fixPhaseSequence
+      - deltaPhaseSequence
+      - summary
+      - next
+      - policyVersion
+      - policy
+      - evidence
+      - fixRounds
+      - openCriticalFindings
+      - revision
+      - createdAt
+      - updatedAt
+      - progressAt
+      - actions
       type: object
     KillReviewResponse:
       properties:
@@ -12277,6 +14635,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        governanceFile:
+          type: string
         governanceManaged:
           type: boolean
         orchestrator:
@@ -12708,6 +15068,8 @@ components:
         prUrl:
           type: string
         reviewId:
+          type: string
+        scopeKey:
           type: string
         sessionId:
           type: string
@@ -13705,6 +16067,12 @@ components:
           - github
           - gitlab
           type: string
+        workId:
+          maxLength: 128
+          type: string
+        workRole:
+          maxLength: 64
+          type: string
       type: object
     SpawnSessionResponse:
       properties:
@@ -14676,6 +17044,8 @@ tags:
   name: notifications
 - description: Durable worker reports
   name: reports
+- description: Governed portfolio work, scoped commands and durable project orchestration
+  name: instructor
 - description: Token usage telemetry for AO sessions
   name: usage
 - description: Mobile push-device registration for OS push notifications

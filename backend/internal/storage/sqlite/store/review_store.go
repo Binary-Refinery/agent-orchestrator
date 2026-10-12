@@ -42,6 +42,8 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
+		LaunchAgentConfig:      encodeReviewLaunchConfig(r.LaunchAgentConfig),
+		LaunchScopeKey:         r.LaunchScopeKey,
 		CreatedAt:              r.CreatedAt,
 		UpdatedAt:              r.UpdatedAt,
 	})
@@ -219,6 +221,7 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		GithubReviewID:   r.GithubReviewID,
 		CreatedAt:        r.CreatedAt,
 		AutoInjectReview: r.AutoInjectReview,
+		ScopeKey:         r.ScopeKey,
 	})
 	if isSQLiteUnique(err) {
 		return fmt.Errorf("insert review run for session %s pr %s sha %s: %w", r.SessionID, r.PRURL, r.TargetSHA, domain.ErrDuplicateReviewRun)
@@ -391,6 +394,8 @@ func reviewFromGetReviewBySessionRow(r gen.GetReviewBySessionRow) domain.Review 
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
+		LaunchAgentConfig:      decodeReviewLaunchConfig(r.LaunchAgentConfig),
+		LaunchScopeKey:         r.LaunchScopeKey,
 		CreatedAt:              r.CreatedAt,
 		UpdatedAt:              r.UpdatedAt,
 	}
@@ -411,6 +416,8 @@ func reviewFromGetReviewBySessionAndHarnessRow(r gen.GetReviewBySessionAndHarnes
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
+		LaunchAgentConfig:      decodeReviewLaunchConfig(r.LaunchAgentConfig),
+		LaunchScopeKey:         r.LaunchScopeKey,
 		CreatedAt:              r.CreatedAt,
 		UpdatedAt:              r.UpdatedAt,
 	}
@@ -431,6 +438,8 @@ func reviewFromListReviewsBySessionRow(r gen.ListReviewsBySessionRow) domain.Rev
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
+		LaunchAgentConfig:      decodeReviewLaunchConfig(r.LaunchAgentConfig),
+		LaunchScopeKey:         r.LaunchScopeKey,
 		CreatedAt:              r.CreatedAt,
 		UpdatedAt:              r.UpdatedAt,
 	}
@@ -451,13 +460,15 @@ func reviewFromReview(r gen.GetReviewByIDRow) domain.Review {
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
+		LaunchAgentConfig:      decodeReviewLaunchConfig(r.LaunchAgentConfig),
+		LaunchScopeKey:         r.LaunchScopeKey,
 		CreatedAt:              r.CreatedAt,
 		UpdatedAt:              r.UpdatedAt,
 	}
 }
 
 func reviewFromListRecoverableChatReviewsRow(r gen.ListRecoverableChatReviewsRow) domain.Review {
-	return domain.Review{ID: r.ID, SessionID: r.SessionID, ProjectID: r.ProjectID, Harness: r.Harness, PRURL: r.PRURL, ReviewerHandleID: r.ReviewerHandleID, AgentSessionID: r.AgentSessionID, ReviewerActivityState: domain.ActivityState(r.ReviewerActivityState), ReviewerLaunchID: r.ReviewerLaunchID, InterfaceMode: domain.ReviewerInterfaceMode(r.InterfaceMode), ProviderConversationID: r.ProviderConversationID, ControllerGeneration: r.ControllerGeneration, ControllerError: r.ControllerError, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	return domain.Review{ID: r.ID, SessionID: r.SessionID, ProjectID: r.ProjectID, Harness: r.Harness, PRURL: r.PRURL, ReviewerHandleID: r.ReviewerHandleID, AgentSessionID: r.AgentSessionID, ReviewerActivityState: domain.ActivityState(r.ReviewerActivityState), ReviewerLaunchID: r.ReviewerLaunchID, InterfaceMode: domain.ReviewerInterfaceMode(r.InterfaceMode), ProviderConversationID: r.ProviderConversationID, ControllerGeneration: r.ControllerGeneration, ControllerError: r.ControllerError, LaunchAgentConfig: decodeReviewLaunchConfig(r.LaunchAgentConfig), LaunchScopeKey: r.LaunchScopeKey, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
 func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
@@ -482,6 +493,7 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		CreatedAt:        r.CreatedAt,
 		DeliveredAt:      deliveredAt,
 		AutoInjectReview: r.AutoInjectReview,
+		ScopeKey:         r.ScopeKey,
 	}
 }
 
@@ -542,4 +554,44 @@ func (s *Store) ListCurrentHeadReviewRunsForSessions(ctx context.Context, ids []
 		}
 	}
 	return out, nil
+}
+
+func encodeReviewLaunchConfig(config *domain.AgentConfig) string {
+	if config == nil {
+		return ""
+	}
+	data, _ := json.Marshal(config)
+	return string(data)
+}
+
+func decodeReviewLaunchConfig(data string) *domain.AgentConfig {
+	if data == "" {
+		return nil
+	}
+	var config domain.AgentConfig
+	if err := json.Unmarshal([]byte(data), &config); err != nil {
+		return nil
+	}
+	return &config
+}
+
+// SetReviewLaunchConfig snapshots only the actually launched selection, leaving
+// concurrent provider ownership, hooks, and activity fields intact.
+func (s *Store) SetReviewLaunchConfig(ctx context.Context, reviewID string, config domain.AgentConfig, scope string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetReviewLaunchConfig(ctx, gen.SetReviewLaunchConfigParams{ID: reviewID, LaunchAgentConfig: encodeReviewLaunchConfig(&config), LaunchScopeKey: scope})
+	return rows > 0, err
+}
+
+// GetReviewRunByScope finds only a pass owned by the exact correction phase.
+func (s *Store) GetReviewRunByScope(ctx context.Context, id domain.SessionID, prURL, targetSHA string, harness domain.ReviewerHarness, scope string) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunByScope(ctx, gen.GetReviewRunByScopeParams{SessionID: id, PRURL: prURL, TargetSha: targetSHA, Harness: harness, ScopeKey: scope})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ReviewRun{}, false, nil
+	}
+	if err != nil {
+		return domain.ReviewRun{}, false, err
+	}
+	return reviewRunFromRow(row), true, nil
 }

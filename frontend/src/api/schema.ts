@@ -741,6 +741,298 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instructor/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Instructor availability and its command registry */
+        get: operations["instructorCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List commands from the daemon registry */
+        get: operations["instructorCommands"];
+        put?: never;
+        /** Apply a command to the exact observed work snapshot */
+        post: operations["instructorCommand"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply one expiring work-scoped policy exception after exact operator approval */
+        post: operations["applyInstructorException"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/exceptions/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview one expiring work-scoped policy exception and its exact approval phrase */
+        post: operations["previewInstructorException"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List real runtime projects and sessions including unassigned legacy work */
+        get: operations["instructorInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/inventory/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge one no-longer-observed resource without deleting any data */
+        post: operations["reconcileInstructorInventory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List durable global Instructor dialogues and advisory proposals */
+        get: operations["listInstructorPlans"];
+        put?: never;
+        /** Start a native global Instructor strategic or intake dialogue over a frozen portfolio */
+        post: operations["createInstructorPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/plans/{planId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a durable global Instructor dialogue without admitting its proposals */
+        get: operations["getInstructorPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read effective governance policy for new work */
+        get: operations["instructorPolicy"];
+        /** Validate and persist governance policy for future work */
+        put: operations["setInstructorPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve one uncertain native submission from an explicit observation */
+        post: operations["reconcileInstructorDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report work progress and claims without forging verified evidence */
+        post: operations["reportInstructorWork"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capture a stable work snapshot and available actions */
+        get: operations["instructorStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register work under an explicit governance policy */
+        post: operations["registerInstructorWork"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read work history, gates, evidence and command delivery */
+        get: operations["instructorWorkDetails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run bounded approved checks in the attached worktree */
+        post: operations["runInstructorChecks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}/evidence/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify exact-commit evidence against daemon-owned provenance */
+        post: operations["verifyInstructorEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach an existing session to a stable work identity */
+        post: operations["attachInstructorSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/link-preview": {
         parameters: {
             query?: never;
@@ -2938,6 +3230,8 @@ export interface components {
         };
         AgentModelInfo: {
             defaultEffort?: string;
+            /** @enum {string} */
+            effortSupport?: "unknown" | "supported" | "none";
             efforts?: string[];
             id: string;
             isDefault?: boolean;
@@ -3062,6 +3356,7 @@ export interface components {
             status: "pending" | "spawning" | "running" | "completed" | "failed";
             /** Format: date-time */
             updatedAt: string;
+            workId?: string;
         };
         AutomationRunSummaryResponse: {
             errorMessage?: string;
@@ -3075,6 +3370,7 @@ export interface components {
             startedAt?: null | string;
             /** @enum {string} */
             status: "pending" | "spawning" | "running" | "completed" | "failed";
+            workId?: string;
         };
         AutomationV2Config: {
             enabled?: boolean;
@@ -3728,6 +4024,8 @@ export interface components {
             model?: string;
             projectId: string;
             taskPreparation?: string;
+            workId?: string;
+            workRole?: string;
         };
         DelegateTaskResponse: {
             ok: boolean;
@@ -3964,6 +4262,505 @@ export interface components {
             target: "tmux" | "gh" | "claude" | "claude-code" | "codex" | "cursor" | "opencode" | "aider" | "copilot" | "grok" | "kimi" | "pi" | "amp" | "auggie" | "droid" | "crush" | "cline" | "goose" | "qwen" | "gemini" | "continue" | "devin" | "kiro" | "kilocode" | "vibe" | "muse" | "agy" | "autohand" | "kimchi" | "prime-agent" | "omp" | "fx" | "unreal-agent" | "cloudflared";
             /** Format: date-time */
             updatedAt?: null | string;
+        };
+        InstructorAgentSelection: {
+            effort: string;
+            harness: string;
+            model: string;
+        };
+        InstructorAttachSessionRequest: {
+            sessionId: string;
+        };
+        InstructorAttribution: {
+            authorEmail: string;
+            authorName: string;
+            coAuthorEmail: string;
+            coAuthorName: string;
+            issueTrailer: string;
+            sessionTrailer: string;
+        };
+        InstructorCapabilitiesResponse: {
+            commands: components["schemas"]["InstructorCommandSpec"][];
+            enabled: boolean;
+            reason?: string;
+            schema: string;
+        };
+        InstructorChecksRequest: {
+            profiles: string[];
+            sessionId: string;
+        };
+        InstructorCommandParameter: {
+            enum?: string[];
+            name: string;
+            required: boolean;
+            type: string;
+        };
+        InstructorCommandRequest: {
+            approval?: string;
+            command: string;
+            idempotencyKey?: string;
+            new?: components["schemas"]["InstructorRegisterRequest"];
+            snapshotId?: string;
+            workIds?: string[];
+        };
+        InstructorCommandResult: {
+            batchId?: string;
+            details?: components["schemas"]["InstructorDetails"][];
+            dispatches: components["schemas"]["InstructorDispatch"][];
+            skipped: string[];
+            snapshot?: components["schemas"]["InstructorSnapshot"];
+        };
+        InstructorCommandSpec: {
+            action: string;
+            aliases: string[];
+            authority: string;
+            description: string;
+            mutates: boolean;
+            name: string;
+            parameters: components["schemas"]["InstructorCommandParameter"][];
+            preconditions: string[];
+            scopes: string[];
+            snapshotRequired: boolean;
+        };
+        InstructorCommandsResponse: {
+            commands: components["schemas"]["InstructorCommandSpec"][];
+        };
+        InstructorDetails: {
+            dispatches: components["schemas"]["InstructorDispatch"][];
+            events: components["schemas"]["InstructorEvent"][];
+            work: components["schemas"]["InstructorWork"];
+        };
+        InstructorDispatch: {
+            action: string;
+            attempts: number;
+            batchId: string;
+            commandDigest?: string;
+            /** Format: date-time */
+            createdAt: string;
+            error?: string;
+            id: string;
+            message: string;
+            position: number;
+            projectId: string;
+            /** Format: date-time */
+            queuedAt?: null | string;
+            snapshotId: string;
+            state: string;
+            targetSessionId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            workId: string;
+            /** Format: int64 */
+            workRevision: number;
+        };
+        InstructorEvent: {
+            /** Format: date-time */
+            at: string;
+            detail: string;
+            id: string;
+            kind: string;
+            workId: string;
+        };
+        InstructorEvidence: {
+            /** Format: date-time */
+            createdAt: string;
+            criticalFindings?: number;
+            effort?: string;
+            harness?: string;
+            id: string;
+            kind: string;
+            model?: string;
+            outcome?: string;
+            phase: string;
+            /** Format: int64 */
+            phaseSequence: number;
+            policyVersion: string;
+            producer: string;
+            profile?: string;
+            ref: string;
+            revocationReason?: string;
+            revoked?: boolean;
+            role: string;
+            sha: string;
+            verified: boolean;
+            workId: string;
+        };
+        InstructorException: {
+            afterPolicyVersion: string;
+            approval: string;
+            beforePolicyVersion: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            grantedAt: string;
+            id: string;
+            kind: string;
+            maxFixRounds?: number;
+            proposalHash: string;
+            reason: string;
+            role?: string;
+            selection?: components["schemas"]["InstructorAgentSelection"];
+            sha?: string;
+            snapshotId: string;
+            superseded: boolean;
+        };
+        InstructorExceptionPreview: {
+            effectivePolicy: components["schemas"]["InstructorPolicy"];
+            exactApproval: string;
+            policyVersion: string;
+            proposalHash: string;
+            workId: string;
+        };
+        InstructorExceptionRequest: {
+            approval?: string;
+            /** Format: date-time */
+            expiresAt: string;
+            maxFixRounds?: null | number;
+            reason: string;
+            role?: string;
+            selection?: components["schemas"]["InstructorAgentSelection"];
+            snapshotId: string;
+            workId: string;
+        };
+        InstructorGate: {
+            dispatchId?: string;
+            exactApproval?: string;
+            id: string;
+            kind: string;
+            /** Format: date-time */
+            openedAt: string;
+            targetSessionId?: string;
+            title: string;
+            transitionTo?: string;
+        };
+        InstructorGitResourceInventory: {
+            /** @enum {string} */
+            assignment: "linked" | "unassigned" | "unknown";
+            branch?: string;
+            dirty: boolean;
+            error?: string;
+            /** Format: date-time */
+            firstSeenAt: string;
+            id: string;
+            /** @enum {string} */
+            kind: "repository" | "worktree" | "branch" | "uncommitted";
+            /** Format: date-time */
+            lastSeenAt: string;
+            /** Format: date-time */
+            notObservedSince?: null | string;
+            path: string;
+            projectId: string;
+            /** Format: date-time */
+            reconciledAt?: null | string;
+            repositoryPath: string;
+            sessionIds: string[];
+            sha?: string;
+            status: string;
+            workIds: string[];
+        };
+        InstructorHeartbeat: {
+            /** Format: date-time */
+            at: string;
+            role: string;
+            sessionId: string;
+            summary?: string;
+            workId: string;
+        };
+        InstructorInventoryReconcileRequest: {
+            /** Format: date-time */
+            lastSeenAt: string;
+            resourceId: string;
+        };
+        InstructorInventoryResponse: {
+            atomic: boolean;
+            cached: boolean;
+            /** Format: date-time */
+            capturedAt: string;
+            enabled: boolean;
+            /** Format: date-time */
+            nextScanAt?: null | string;
+            projects: components["schemas"]["InstructorProjectInventory"][];
+            resources: components["schemas"]["InstructorGitResourceInventory"][];
+            scanError?: string;
+            sessions: components["schemas"]["InstructorSessionInventory"][];
+            unassignedCount: number;
+            unassignedResourceCount: number;
+        };
+        InstructorLaunch: {
+            confirmed?: components["schemas"]["InstructorAgentSelection"];
+            /** Format: date-time */
+            launchedAt: string;
+            phase: string;
+            /** Format: int64 */
+            phaseSequence: number;
+            requested: components["schemas"]["InstructorAgentSelection"];
+            reviewId?: string;
+            reviewRunId?: string;
+            role: string;
+            sent?: components["schemas"]["InstructorAgentSelection"];
+            sessionId?: string;
+            sha?: string;
+            status: string;
+        };
+        InstructorMetrics: {
+            active: number;
+            closedLast7Days: number;
+            gated: number;
+            gatesClearedLast24Hours: number;
+            parked: number;
+            recordedViolations: number;
+            stalled: number;
+            verificationFailures: number;
+        };
+        InstructorOKResponse: {
+            ok: boolean;
+        };
+        InstructorPlanInput: {
+            idempotencyKey: string;
+            request: string;
+            snapshotId: string;
+            timeoutSeconds?: number;
+        };
+        InstructorPlanIntake: {
+            goal: string;
+            issueId?: string;
+            name: string;
+            projectId: string;
+        };
+        InstructorPlanJob: {
+            confirmed?: components["schemas"]["InstructorAgentSelection"];
+            /** Format: date-time */
+            createdAt: string;
+            error?: string;
+            id: string;
+            input: components["schemas"]["InstructorPlanInput"];
+            output?: components["schemas"]["InstructorPlanOutput"];
+            policyVersion: string;
+            requestHash: string;
+            requested: components["schemas"]["InstructorAgentSelection"];
+            sent?: components["schemas"]["InstructorAgentSelection"];
+            state: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        InstructorPlanOutput: {
+            intake: components["schemas"]["InstructorPlanIntake"][];
+            proposals: components["schemas"]["InstructorProposal"][];
+            questions: string[];
+            summary: string;
+        };
+        InstructorPlansResponse: {
+            jobs: components["schemas"]["InstructorPlanJob"][];
+        };
+        InstructorPolicy: {
+            attribution: components["schemas"]["InstructorAttribution"];
+            closeoutRequires: string[];
+            commands?: components["schemas"]["InstructorCommandSpec"][];
+            escalateAfterSeconds: number;
+            exceptionVersion?: string;
+            initialPhase: string;
+            maxFixRounds: number;
+            nudgeAfterSeconds: number;
+            profiles: {
+                [key: string]: components["schemas"]["InstructorProfile"];
+            } | null;
+            roles: {
+                [key: string]: components["schemas"]["InstructorRole"];
+            } | null;
+            schema: number;
+            traceability: components["schemas"]["InstructorTraceability"];
+            transitions: components["schemas"]["InstructorTransition"][];
+            version: string;
+        };
+        InstructorProfile: {
+            command: string[];
+            timeoutSeconds: number;
+        };
+        InstructorProjectInventory: {
+            id: string;
+            kind: string;
+            name: string;
+            path: string;
+        };
+        InstructorProposal: {
+            command: string;
+            reason: string;
+            workIds: string[];
+        };
+        InstructorPublicationGrant: {
+            approval: string;
+            /** Format: date-time */
+            approvedAt: string;
+            branch: string;
+            gateId: string;
+            policyVersion: string;
+            sha: string;
+            snapshotId: string;
+            workId: string;
+            /** Format: int64 */
+            workRevision: number;
+        };
+        InstructorReconcileRequest: {
+            accepted: null | boolean;
+            dispatchId: string;
+            note: string;
+            snapshotId: string;
+            workId: string;
+        };
+        InstructorRegisterRequest: {
+            branch?: string;
+            goal: string;
+            issueId?: string;
+            name: string;
+            policy?: components["schemas"]["InstructorPolicy"];
+            projectId: string;
+            source: string;
+            sourceRef: string;
+        };
+        InstructorReportRequest: {
+            branch?: string;
+            dispatchId?: string;
+            evidence?: components["schemas"]["InstructorEvidence"][];
+            gate?: components["schemas"]["InstructorGate"];
+            kind: string;
+            next?: string;
+            openCriticalFindings?: null | number;
+            phase?: string;
+            sessionId: string;
+            sha?: string;
+            summary?: string;
+            waitCondition?: string;
+            /** Format: date-time */
+            waitUntil?: null | string;
+            workId: string;
+        };
+        InstructorRole: {
+            effort: string;
+            effortByModel?: {
+                [key: string]: string;
+            };
+            harness: string;
+            independent?: boolean;
+            model: string;
+        };
+        InstructorSessionInventory: {
+            activityState: string;
+            /** @enum {string} */
+            assignment: "linked" | "unassigned";
+            branch?: string;
+            /** Format: date-time */
+            createdAt: string;
+            displayName?: string;
+            harness: string;
+            id: string;
+            isTerminated: boolean;
+            issueId?: string;
+            kind: string;
+            mode: string;
+            projectId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            workIds: string[];
+            workspacePath?: string;
+            workspaceRepoPath?: string;
+        };
+        InstructorSnapshot: {
+            baseId?: string;
+            commandConflicts: string[];
+            commands: components["schemas"]["InstructorCommandSpec"][];
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            metrics: components["schemas"]["InstructorMetrics"];
+            works: components["schemas"]["InstructorWork"][];
+        };
+        InstructorTraceability: {
+            allowedBaseBranches: string[];
+            allowedRepositories: string[];
+            boardStatuses?: {
+                [key: string]: string;
+            };
+            phaseLabels?: {
+                [key: string]: string;
+            };
+            projectNumber: number;
+            projectOwner?: string;
+            requireAssignee: boolean;
+            required: boolean;
+            requiredPhases: string[];
+        };
+        InstructorTransition: {
+            from: string;
+            humanGate?: boolean;
+            requires: string[];
+            role: string;
+            to: string;
+        };
+        InstructorVerification: {
+            claims: number;
+            error?: string;
+            inspected: boolean;
+            key: string;
+            /** Format: date-time */
+            lastRunAt: string;
+            maxPasses: number;
+            /** Format: date-time */
+            nextRunAt: string;
+            passes: number;
+            status: string;
+            verified: number;
+        };
+        InstructorWork: {
+            actions: string[];
+            approvedTransitions?: string[];
+            branch?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            deltaPhaseSequence: number;
+            evidence: components["schemas"]["InstructorEvidence"][];
+            exceptions?: components["schemas"]["InstructorException"][];
+            /** Format: int64 */
+            fixPhaseSequence: number;
+            fixRounds: number;
+            gate?: components["schemas"]["InstructorGate"];
+            goal: string;
+            heartbeat?: components["schemas"]["InstructorHeartbeat"];
+            id: string;
+            issueId?: string;
+            launches: components["schemas"]["InstructorLaunch"][];
+            name: string;
+            next: string;
+            /** Format: date-time */
+            nudgedAt?: null | string;
+            openCriticalFindings: number;
+            phase: string;
+            /** Format: int64 */
+            phaseSequence: number;
+            /** Format: date-time */
+            phaseStartedAt: string;
+            policy: components["schemas"]["InstructorPolicy"];
+            policyVersion: string;
+            /** Format: date-time */
+            progressAt: string;
+            projectId: string;
+            publicationGrants?: components["schemas"]["InstructorPublicationGrant"][];
+            /** Format: int64 */
+            revision: number;
+            sessionIds: string[];
+            sha?: string;
+            source: string;
+            sourceRef: string;
+            state: string;
+            summary: string;
+            suspendedGate?: components["schemas"]["InstructorGate"];
+            uncertainDispatchIds?: string[];
+            /** Format: date-time */
+            updatedAt: string;
+            verification?: components["schemas"]["InstructorVerification"];
+            waitCondition?: string;
+            /** Format: date-time */
+            waitUntil?: null | string;
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -4269,6 +5066,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            governanceFile?: string;
             governanceManaged?: boolean;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
@@ -4443,6 +5241,7 @@ export interface components {
             id: string;
             prUrl: string;
             reviewId: string;
+            scopeKey?: string;
             sessionId: string;
             status: string;
             targetSha: string;
@@ -4817,6 +5616,8 @@ export interface components {
             prompt?: string;
             /** @enum {string} */
             trackerProvider?: "github" | "gitlab";
+            workId?: string;
+            workRole?: string;
         };
         SpawnSessionResponse: {
             promptBytes: number;
@@ -7557,6 +8358,1439 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorCapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    instructorCommands: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorCommandsResponse"];
+                };
+            };
+        };
+    };
+    instructorCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorCommandResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    applyInstructorException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorExceptionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    previewInstructorException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorExceptionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorExceptionPreview"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorInventory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorInventoryResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    reconcileInstructorInventory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorInventoryReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorOKResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listInstructorPlans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorPlansResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createInstructorPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorPlanInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorPlanJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getInstructorPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorPlanJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorPolicy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setInstructorPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorPolicy"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorPolicy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    reconcileInstructorDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    reportInstructorWork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorReportRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorStatus: {
+        parameters: {
+            query?: {
+                /** @description Previous snapshot identifier for a change comparison. */
+                baseId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorSnapshot"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    registerInstructorWork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorWorkDetails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorDetails"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    runInstructorChecks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorChecksRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    verifyInstructorEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorEvidence"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    attachInstructorSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorAttachSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorOKResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

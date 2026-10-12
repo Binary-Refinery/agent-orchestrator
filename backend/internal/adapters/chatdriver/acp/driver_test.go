@@ -4066,3 +4066,30 @@ func TestACPCompactionRestoredOnLiveReconnect(t *testing.T) {
 		t.Errorf("compactingTurnID = %q, want durable-compaction-turn", compacting)
 	}
 }
+
+func TestACPRequiredNativeOptionsRefuseUnsupportedSetterAtStartAndResume(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		t.Run(map[bool]string{false: "start", true: "resume"}[resume], func(t *testing.T) {
+			agent := &fakeAgent{configNotFound: true}
+			driver := New(Config{
+				Harness: domain.HarnessOpenCode, RequireSessionOptions: true,
+				Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+				Probe:        func(context.Context) error { return nil },
+				Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+				SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+					return []SessionOption{{ID: "effort", Value: settings.Effort}}
+				},
+			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			driver.useTestProcess(fakeSpawn(agent))
+			var err error
+			if resume {
+				_, err = driver.Resume(context.Background(), ports.ChatResumeConfig{WorkspacePath: t.TempDir(), Effort: "contributor", ProviderConversationID: "s1"})
+			} else {
+				_, err = driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir(), Effort: "contributor"})
+			}
+			if !errors.Is(err, ErrACPSetterUnsupported) {
+				t.Fatalf("required native effort silently ignored: %v", err)
+			}
+		})
+	}
+}

@@ -274,6 +274,18 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if err != nil {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: project: %w", id, err)
 	}
+	if m.instructor != nil {
+		if err := m.validateInstructorResume(ctx, id); err != nil {
+			return domain.AgentSwitch{}, nil, err
+		}
+		config, err := m.resolveAgentConfig(ctx, ports.SpawnConfig{ProjectID: rec.ProjectID, Kind: rec.Kind, Harness: cfg.TargetHarness, AgentConfig: ports.AgentConfig{Model: strings.TrimSpace(cfg.Model)}}, project.Config)
+		if err != nil {
+			return domain.AgentSwitch{}, nil, err
+		}
+		if err := m.validateInstructorAgentChange(ctx, id, cfg.TargetHarness, config); err != nil {
+			return domain.AgentSwitch{}, nil, err
+		}
+	}
 	sourceAgent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w: %q", id, ErrUnknownHarness, rec.Harness)
@@ -1381,6 +1393,9 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	}, project.Config)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("target config: %w", err)
+	}
+	if err := m.validateInstructorAgentChange(ctx, rec.ID, harness, config); err != nil {
+		return preparedTargetActivation{}, err
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	pinRuntimePermissionEnv(env, config.Permissions)

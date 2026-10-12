@@ -66,6 +66,7 @@ type Launcher interface {
 type LaunchSpec struct {
 	RunID           string
 	BatchID         string
+	ScopeKey        string
 	ReviewSessionID string
 	LaunchID        string
 	WorkerID        domain.SessionID
@@ -101,6 +102,8 @@ type ReviewerChatStart struct {
 	WorkerID               domain.SessionID
 	ProjectID              domain.ProjectID
 	Harness                domain.AgentHarness
+	Model                  string
+	Effort                 string
 	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
@@ -141,6 +144,7 @@ type reviewerRuntime interface {
 // runtime. The reviewer reuses the worker's worktree (a fresh session worktree
 // would branch off the default branch and so would not contain the PR changes).
 type agentLauncher struct {
+	governance ReviewerGovernance
 	reviewers  ports.ReviewerResolver
 	runtime    reviewerRuntime
 	dataDir    string
@@ -441,7 +445,15 @@ func truncateReviewHistoryBody(body string) string {
 	return strings.TrimSpace(body[:maxBody]) + "..."
 }
 
-func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
+func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (result LaunchResult, returnErr error) {
+	if err := l.validateInstructorLaunch(ctx, spec); err != nil {
+		return LaunchResult{}, err
+	}
+	defer func() {
+		if returnErr == nil {
+			returnErr = l.recordInstructorLaunchOrStop(ctx, spec, result.HandleID)
+		}
+	}()
 	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return LaunchResult{}, err
@@ -458,7 +470,15 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResul
 	return l.launchReviewerTerminalWithMode(ctx, spec, inv, strings.TrimSpace(spec.AgentSessionID) != "")
 }
 
-func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
+func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (result LaunchResult, returnErr error) {
+	if err := l.validateInstructorLaunch(ctx, spec); err != nil {
+		return LaunchResult{}, err
+	}
+	defer func() {
+		if returnErr == nil {
+			returnErr = l.recordInstructorLaunchOrStop(ctx, spec, result.HandleID)
+		}
+	}()
 	inv, err := l.prepareIdleInvocation(spec)
 	if err != nil {
 		return LaunchResult{}, err
@@ -480,7 +500,7 @@ func (l *agentLauncher) startReviewerChat(ctx context.Context, spec LaunchSpec, 
 	if providerID == "" {
 		providerID = strings.TrimSpace(spec.AgentSessionID)
 	}
-	start := ReviewerChatStart{ReviewID: spec.ReviewSessionID, WorkerID: spec.WorkerID, ProjectID: spec.ProjectID, Harness: profile.ReviewChatHarness(), DataDir: l.dataDir, WorkspacePath: spec.WorkspacePath, Env: l.runtimeEnv(ctx, spec, nil, nil), Prompt: inv.Prompt, SystemPrompt: string(systemPrompt), ProviderConversationID: providerID}
+	start := ReviewerChatStart{ReviewID: spec.ReviewSessionID, WorkerID: spec.WorkerID, ProjectID: spec.ProjectID, Harness: profile.ReviewChatHarness(), Model: spec.AgentConfig.Model, Effort: spec.AgentConfig.Effort, DataDir: l.dataDir, WorkspacePath: spec.WorkspacePath, Env: l.runtimeEnv(ctx, spec, nil, nil), Prompt: inv.Prompt, SystemPrompt: string(systemPrompt), ProviderConversationID: providerID}
 	if restore {
 		providerID, err = l.chat.RestoreReviewChat(ctx, start)
 	} else {
@@ -708,7 +728,18 @@ func prependPathDir(dir, path string) string {
 	return dir + string(os.PathListSeparator) + path
 }
 
-func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec LaunchSpec) error {
+func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec LaunchSpec) (returnErr error) {
+	if err := l.validateInstructorReuse(ctx, spec); err != nil {
+		return err
+	}
+	if err := l.validateInstructorLaunch(ctx, spec); err != nil {
+		return err
+	}
+	defer func() {
+		if returnErr == nil {
+			returnErr = l.recordInstructorLaunchOrStop(ctx, spec, handleID)
+		}
+	}()
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)

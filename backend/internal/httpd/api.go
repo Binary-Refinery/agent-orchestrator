@@ -23,24 +23,27 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents             controllers.AgentCatalog
-	CodexAccounts      controllers.CodexAccountService
-	Projects           projectsvc.Manager
-	Sessions           controllers.SessionService
-	Automations        controllers.AutomationService
-	DesktopWorkspaces  controllers.DesktopWorkspaceService
-	Activity           controllers.ActivityRecorder
-	UsageHooks         controllers.UsageHookRecorder
-	UsageSummary       controllers.UsageSummaryService
-	PRs                prsvc.ActionManager
-	Reviews            reviewsvc.Manager
-	Notifications      controllers.NotificationService
-	Reports            controllers.ReportService
-	NotificationStream controllers.NotificationStream
-	Push               controllers.PushRegistry
-	Import             controllers.ImportService
-	Directories        controllers.DirectoryBrowserService
-	ShellTerminals     controllers.ShellTerminalService
+	Agents              controllers.AgentCatalog
+	CodexAccounts       controllers.CodexAccountService
+	Projects            projectsvc.Manager
+	Sessions            controllers.SessionService
+	Automations         controllers.AutomationService
+	DesktopWorkspaces   controllers.DesktopWorkspaceService
+	Activity            controllers.ActivityRecorder
+	UsageHooks          controllers.UsageHookRecorder
+	UsageSummary        controllers.UsageSummaryService
+	PRs                 prsvc.ActionManager
+	Reviews             reviewsvc.Manager
+	Notifications       controllers.NotificationService
+	Reports             controllers.ReportService
+	Instructor          controllers.InstructorService
+	InstructorInventory controllers.InstructorInventoryReader
+	InstructorEnabled   bool
+	NotificationStream  controllers.NotificationStream
+	Push                controllers.PushRegistry
+	Import              controllers.ImportService
+	Directories         controllers.DirectoryBrowserService
+	ShellTerminals      controllers.ShellTerminalService
 	// Conversations is nil until a Chat driver is wired; the controller then
 	// answers 501 rather than panicking, matching the other optional surfaces.
 	Conversations controllers.ConversationService
@@ -123,6 +126,7 @@ type API struct {
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
 	reports       *controllers.ReportsController
+	instructor    *controllers.InstructorController
 	push          *controllers.PushController
 	imports       *controllers.ImportController
 	fs            *controllers.FSController
@@ -176,6 +180,7 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		reports:       &controllers.ReportsController{Svc: deps.Reports},
+		instructor:    &controllers.InstructorController{Svc: deps.Instructor, InventorySource: deps.InstructorInventory, Enabled: deps.InstructorEnabled},
 		push:          &controllers.PushController{Registry: deps.Push},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		fs:            &controllers.FSController{Svc: deps.Directories},
@@ -235,6 +240,7 @@ func (a *API) Register(root chi.Router) {
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.reports.Register(r)
+			a.instructor.Register(r)
 			a.push.Register(r)
 			a.imports.Register(r)
 			a.fs.Register(r)

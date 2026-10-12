@@ -217,13 +217,10 @@ func TestDiscoveryWithoutASignInCheckNeverProbes(t *testing.T) {
 	}
 }
 
-func TestOpenCodeDiscoveryUsesStableModelsCommand(t *testing.T) {
-	// Must be the bare `models` subcommand. `--pure` is a global flag some
-	// opencode builds reject ("Unrecognized flag: --pure"), which would empty the
-	// picker; the stable contract is `opencode models` with no rejectable flag.
+func TestOpenCodeDiscoveryIncludesNativeVariants(t *testing.T) {
 	spec := commandSpecs["opencode"]
-	if len(spec.args) != 1 || spec.args[0] != "models" {
-		t.Fatalf("opencode discovery args = %q, want [models]", spec.args)
+	if !reflect.DeepEqual(spec.args, []string{"models", "--verbose"}) {
+		t.Fatalf("opencode discovery args = %q, want [models --verbose]", spec.args)
 	}
 }
 

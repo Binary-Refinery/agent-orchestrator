@@ -211,13 +211,14 @@ type AgentModelInfo struct {
 	Label     string `json:"label"`
 	Provider  string `json:"provider,omitempty"`
 	IsDefault bool   `json:"isDefault,omitempty"`
-	// Efforts are the reasoning levels this specific model accepts, in the
-	// provider's own ascending order. Empty means the model takes no effort
-	// setting, which is a real answer rather than a missing one — Sonnet 4.5
-	// and Haiku 4.5 accept none while the 5 family accepts five — so a picker
-	// must render no effort control at all rather than an empty one.
+	// Efforts are native variants this specific model accepts, in the provider's
+	// advertised order. Names and order do not imply a universal quality ranking.
 	Efforts       []string `json:"efforts,omitempty"`
 	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	// EffortSupport distinguishes an explicit empty native capability from a
+	// legacy ID-only catalog. Empty retains existing adapters' interpretation;
+	// unknown must never be used to validate a required effort setting.
+	EffortSupport string `json:"effortSupport,omitempty" enum:"unknown,supported,none"`
 }
 
 // AgentModelCatalog is AO's normalized model-picker response.

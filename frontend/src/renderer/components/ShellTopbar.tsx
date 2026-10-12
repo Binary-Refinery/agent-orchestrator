@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, CalendarClock, Folder, LayoutDashboard, Plus } from "lucide-react";
+import { Archive, CalendarClock, Compass, Folder, LayoutDashboard, Plus } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -115,6 +115,7 @@ export function ShellTopbar({
 	const session = workspaceScope?.session;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isAutomationsRoute = location.pathname === "/automations";
+	const isInstructorRoute = location.pathname === "/instructor";
 	const isStandaloneBoardRoute = location.pathname === "/sessions" || location.pathname === "/sessions/";
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	const isInspectorOpen = useUiStore((state) =>
@@ -127,7 +128,7 @@ export function ShellTopbar({
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
-	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute && !isAutomationsRoute && !isStandaloneBoardRoute;
+	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute && !isAutomationsRoute && !isInstructorRoute && !isStandaloneBoardRoute;
 	const project = workspaceScope?.project;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
 	const orchestrator = workspaceScope?.orchestrator;
@@ -175,6 +176,13 @@ export function ShellTopbar({
 						)}
 						<span aria-hidden="true" className="workspace-topbar__identity-separator" />
 						<SessionStatusPill session={session} />
+					</div>
+				) : isInstructorRoute ? (
+					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="instructor-topbar-label">
+						<span className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}>
+							<Compass aria-hidden="true" className="size-icon-md" />
+							{t("instructor.title")}
+						</span>
 					</div>
 				) : isAutomationsRoute ? (
 					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="automations-topbar-label">

@@ -45,7 +45,7 @@ func TestDelegateTaskSpawnsWorkerAndRefinesTitleThroughBackgroundHarness(t *test
 			brief := "  Fix the renderer\nwithout changing the API.  "
 
 			out, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
-				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model,
+				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model, WorkID: "work-1", WorkRole: "triage",
 				Effort: effort, RequestedMode: tt.mode, TaskPreparation: "prep-token",
 			})
 			if err != nil {
@@ -53,6 +53,9 @@ func TestDelegateTaskSpawnsWorkerAndRefinesTitleThroughBackgroundHarness(t *test
 			}
 			if out.WorkerID != "mer-9" || out.OrchestratorID != "" {
 				t.Fatalf("out = %#v, want worker mer-9 only", out)
+			}
+			if cmd.spawnedCfg.WorkID != "work-1" || cmd.spawnedCfg.WorkRole != "triage" {
+				t.Fatalf("work selection=%+v", cmd.spawnedCfg)
 			}
 			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "Fix the renderer without changing the API." {
 				t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)

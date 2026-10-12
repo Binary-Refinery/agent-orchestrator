@@ -114,7 +114,7 @@ func (q *Queries) ClearReviewerHandleByHarness(ctx context.Context, arg ClearRev
 }
 
 const getReviewByID = `-- name: GetReviewByID :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at
 FROM review WHERE id = ?
 `
 
@@ -132,6 +132,8 @@ type GetReviewByIDRow struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -153,6 +155,8 @@ func (q *Queries) GetReviewByID(ctx context.Context, id string) (GetReviewByIDRo
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
 		&i.ControllerError,
+		&i.LaunchAgentConfig,
+		&i.LaunchScopeKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -160,7 +164,7 @@ func (q *Queries) GetReviewByID(ctx context.Context, id string) (GetReviewByIDRo
 }
 
 const getReviewBySession = `-- name: GetReviewBySession :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at
 FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1
 `
 
@@ -178,6 +182,8 @@ type GetReviewBySessionRow struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -199,6 +205,8 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
 		&i.ControllerError,
+		&i.LaunchAgentConfig,
+		&i.LaunchScopeKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -206,7 +214,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 }
 
 const getReviewBySessionAndHarness = `-- name: GetReviewBySessionAndHarness :one
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at
 FROM review WHERE session_id = ? AND harness = ?
 `
 
@@ -229,6 +237,8 @@ type GetReviewBySessionAndHarnessRow struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -250,6 +260,8 @@ func (q *Queries) GetReviewBySessionAndHarness(ctx context.Context, arg GetRevie
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
 		&i.ControllerError,
+		&i.LaunchAgentConfig,
+		&i.LaunchScopeKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -257,7 +269,7 @@ func (q *Queries) GetReviewBySessionAndHarness(ctx context.Context, arg GetRevie
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE id = ?
 `
 
@@ -280,12 +292,60 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 		&i.BatchID,
 		&i.AutoInjectReview,
 		&i.TriggerSource,
+		&i.ScopeKey,
+	)
+	return i, err
+}
+
+const getReviewRunByScope = `-- name: GetReviewRunByScope :one
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
+FROM review_run
+WHERE session_id = ?1 AND pr_url = ?2
+  AND target_sha = ?3 AND harness = ?4
+  AND scope_key = ?5
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetReviewRunByScopeParams struct {
+	SessionID domain.SessionID
+	PRURL     string
+	TargetSha string
+	Harness   domain.ReviewerHarness
+	ScopeKey  string
+}
+
+func (q *Queries) GetReviewRunByScope(ctx context.Context, arg GetReviewRunByScopeParams) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRunByScope,
+		arg.SessionID,
+		arg.PRURL,
+		arg.TargetSha,
+		arg.Harness,
+		arg.ScopeKey,
+	)
+	var i ReviewRun
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.SessionID,
+		&i.Harness,
+		&i.PRURL,
+		&i.TargetSha,
+		&i.Status,
+		&i.Verdict,
+		&i.Body,
+		&i.CreatedAt,
+		&i.GithubReviewID,
+		&i.DeliveredAt,
+		&i.BatchID,
+		&i.AutoInjectReview,
+		&i.TriggerSource,
+		&i.ScopeKey,
 	)
 	return i, err
 }
 
 const getReviewRunBySessionPRAndSHA = `-- name: GetReviewRunBySessionPRAndSHA :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
 `
 
@@ -314,12 +374,13 @@ func (q *Queries) GetReviewRunBySessionPRAndSHA(ctx context.Context, arg GetRevi
 		&i.BatchID,
 		&i.AutoInjectReview,
 		&i.TriggerSource,
+		&i.ScopeKey,
 	)
 	return i, err
 }
 
 const getReviewRunBySessionPRSHAAndHarness = `-- name: GetReviewRunBySessionPRSHAAndHarness :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? AND harness = ? ORDER BY created_at DESC LIMIT 1
 `
 
@@ -354,13 +415,14 @@ func (q *Queries) GetReviewRunBySessionPRSHAAndHarness(ctx context.Context, arg 
 		&i.BatchID,
 		&i.AutoInjectReview,
 		&i.TriggerSource,
+		&i.ScopeKey,
 	)
 	return i, err
 }
 
 const insertReviewRun = `-- name: InsertReviewRun :exec
-INSERT INTO review_run (id, review_id, session_id, batch_id, harness, trigger_source, pr_url, target_sha, status, verdict, body, github_review_id, created_at, auto_inject_review)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review_run (id, review_id, session_id, batch_id, harness, trigger_source, pr_url, target_sha, status, verdict, body, github_review_id, created_at, auto_inject_review, scope_key)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertReviewRunParams struct {
@@ -378,6 +440,7 @@ type InsertReviewRunParams struct {
 	GithubReviewID   string
 	CreatedAt        time.Time
 	AutoInjectReview bool
+	ScopeKey         string
 }
 
 func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) error {
@@ -396,6 +459,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 		arg.GithubReviewID,
 		arg.CreatedAt,
 		arg.AutoInjectReview,
+		arg.ScopeKey,
 	)
 	return err
 }
@@ -534,7 +598,7 @@ func (q *Queries) ListCurrentHeadReviewRunsBySessions(ctx context.Context, jsonE
 }
 
 const listRecoverableChatReviews = `-- name: ListRecoverableChatReviews :many
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at
 FROM review WHERE interface_mode = 'chat' AND provider_conversation_id != '' ORDER BY updated_at, id
 `
 
@@ -552,6 +616,8 @@ type ListRecoverableChatReviewsRow struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -579,6 +645,8 @@ func (q *Queries) ListRecoverableChatReviews(ctx context.Context) ([]ListRecover
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
 			&i.ControllerError,
+			&i.LaunchAgentConfig,
+			&i.LaunchScopeKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -596,7 +664,7 @@ func (q *Queries) ListRecoverableChatReviews(ctx context.Context) ([]ListRecover
 }
 
 const listReviewRunsByBatch = `-- name: ListReviewRunsByBatch :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE session_id = ? AND batch_id = ? ORDER BY created_at ASC, id ASC
 `
 
@@ -630,6 +698,7 @@ func (q *Queries) ListReviewRunsByBatch(ctx context.Context, arg ListReviewRunsB
 			&i.BatchID,
 			&i.AutoInjectReview,
 			&i.TriggerSource,
+			&i.ScopeKey,
 		); err != nil {
 			return nil, err
 		}
@@ -645,7 +714,7 @@ func (q *Queries) ListReviewRunsByBatch(ctx context.Context, arg ListReviewRunsB
 }
 
 const listReviewRunsBySession = `-- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE session_id = ? ORDER BY created_at DESC
 `
 
@@ -674,6 +743,7 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 			&i.BatchID,
 			&i.AutoInjectReview,
 			&i.TriggerSource,
+			&i.ScopeKey,
 		); err != nil {
 			return nil, err
 		}
@@ -689,7 +759,7 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 }
 
 const listReviewsBySession = `-- name: ListReviewsBySession :many
-SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at
 FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC
 `
 
@@ -707,6 +777,8 @@ type ListReviewsBySessionRow struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -734,6 +806,8 @@ func (q *Queries) ListReviewsBySession(ctx context.Context, sessionID domain.Ses
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
 			&i.ControllerError,
+			&i.LaunchAgentConfig,
+			&i.LaunchScopeKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -751,7 +825,7 @@ func (q *Queries) ListReviewsBySession(ctx context.Context, sessionID domain.Ses
 }
 
 const listRunningReviewRunsBySession = `-- name: ListRunningReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, auto_inject_review, trigger_source, scope_key
 FROM review_run WHERE session_id = ? AND status = 'running' AND verdict = '' ORDER BY created_at DESC
 `
 
@@ -780,6 +854,7 @@ func (q *Queries) ListRunningReviewRunsBySession(ctx context.Context, sessionID 
 			&i.BatchID,
 			&i.AutoInjectReview,
 			&i.TriggerSource,
+			&i.ScopeKey,
 		); err != nil {
 			return nil, err
 		}
@@ -854,6 +929,25 @@ func (q *Queries) SetReviewInterfaceMode(ctx context.Context, arg SetReviewInter
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setReviewLaunchConfig = `-- name: SetReviewLaunchConfig :execrows
+UPDATE review SET launch_agent_config = ?1, launch_scope_key = ?2
+WHERE id = ?3
+`
+
+type SetReviewLaunchConfigParams struct {
+	LaunchAgentConfig string
+	LaunchScopeKey    string
+	ID                string
+}
+
+func (q *Queries) SetReviewLaunchConfig(ctx context.Context, arg SetReviewLaunchConfigParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setReviewLaunchConfig, arg.LaunchAgentConfig, arg.LaunchScopeKey, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -968,8 +1062,8 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 }
 
 const upsertReview = `-- name: UpsertReview :exec
-INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, reviewer_activity_state, reviewer_launch_id, interface_mode, provider_conversation_id, controller_generation, controller_error, launch_agent_config, launch_scope_key, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, harness) DO UPDATE SET
     project_id = excluded.project_id,
     pr_url = excluded.pr_url,
@@ -981,6 +1075,8 @@ ON CONFLICT (session_id, harness) DO UPDATE SET
 	provider_conversation_id = CASE WHEN excluded.provider_conversation_id != '' THEN excluded.provider_conversation_id ELSE review.provider_conversation_id END,
 	controller_generation = CASE WHEN excluded.controller_generation != '' THEN excluded.controller_generation ELSE review.controller_generation END,
 	controller_error = excluded.controller_error,
+	launch_agent_config = CASE WHEN excluded.launch_agent_config != '' THEN excluded.launch_agent_config ELSE review.launch_agent_config END,
+	launch_scope_key = CASE WHEN excluded.launch_agent_config != '' THEN excluded.launch_scope_key ELSE review.launch_scope_key END,
     updated_at = excluded.updated_at
 `
 
@@ -998,6 +1094,8 @@ type UpsertReviewParams struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	LaunchAgentConfig      string
+	LaunchScopeKey         string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -1017,6 +1115,8 @@ func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) erro
 		arg.ProviderConversationID,
 		arg.ControllerGeneration,
 		arg.ControllerError,
+		arg.LaunchAgentConfig,
+		arg.LaunchScopeKey,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

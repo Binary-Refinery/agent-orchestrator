@@ -442,6 +442,10 @@ func (m *Manager) resumeChatController(
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
 	}
+	agentConfig, err = m.validateRestoredAgentConfig(ctx, rec, agentConfig)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: native model configuration: %w", operation, rec.ID, err)
+	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)

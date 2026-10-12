@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1114,5 +1115,60 @@ func TestGetLaunchCommandBypassesEvenAWorktreePolicy(t *testing.T) {
 	}
 	if config.Permission != nil {
 		t.Fatalf("config permission = %#v, want the rule on the agent alone", config.Permission)
+	}
+}
+
+func TestTUILaunchAndRestorePinModelNativeVariant(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	for _, restore := range []bool{false, true} {
+		t.Run(map[bool]string{false: "launch", true: "restore"}[restore], func(t *testing.T) {
+			promptFile := filepath.Join(t.TempDir(), "system.md")
+			config := ports.AgentConfig{Model: "custom/reasoner", Effort: "contributor"}
+			var argv []string
+			var err error
+			if restore {
+				var ok bool
+				argv, ok, err = plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+					Session:          ports.SessionRef{ID: "native-choice", Metadata: map[string]string{opencodeAgentSessionIDMetadataKey: "native-id"}},
+					SystemPromptFile: promptFile, Config: config,
+				})
+				if !ok {
+					t.Fatal("restore must preserve native conversation")
+				}
+			} else {
+				argv, err = plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "native-choice", SystemPromptFile: promptFile, Config: config})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, arg := range []string{"AO_OPENCODE_MODEL=custom/reasoner", "AO_OPENCODE_EFFORT=contributor", "AO_OPENCODE_AGENT=ao-native-choice"} {
+				if !slices.Contains(argv, arg) {
+					t.Fatalf("missing %q in native argv %v", arg, argv)
+				}
+			}
+			if slices.Contains(argv, "--variant") {
+				t.Fatal("OpenCode v1 TUI has no --variant flag")
+			}
+			data, err := os.ReadFile(filepath.Join(filepath.Dir(promptFile), "opencode.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var generated opencodeInlineConfig
+			if err := json.Unmarshal(data, &generated); err != nil {
+				t.Fatal(err)
+			}
+			agent := generated.Agent["ao-native-choice"]
+			if agent.Model != "custom/reasoner" || agent.Variant != "contributor" {
+				t.Fatalf("native agent config=%+v", agent)
+			}
+		})
+	}
+}
+
+func TestTUIRefusesToDropEffortWithoutAOAgentConfig(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	_, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{Effort: "deep"}})
+	if !errors.Is(err, ports.ErrUnsupportedEffort) {
+		t.Fatalf("want missing native effort delivery error, got %v", err)
 	}
 }

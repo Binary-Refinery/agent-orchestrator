@@ -214,6 +214,7 @@ Start with the [development guide](docs/development.md) for prerequisites, local
 | [Product documentation](https://docs.aoagents.dev)                  | Installation, agent setup, and day-to-day product usage.                                     |
 | [docs/documentation-map.md](docs/documentation-map.md)           | Which docs are human-facing, which are machine-readable contracts, and which wins on drift.  |
 | [docs/architecture.md](docs/architecture.md)                     | Backend mental model, lifecycle, persistence, CDC, status derivation, and daemon boundaries. |
+| [docs/instructor.md](docs/instructor.md)                         | Instructor operating contract and acceptance coverage for portfolio-wide coordination.       |
 | [docs/backend-code-structure.md](docs/backend-code-structure.md) | Package ownership and where each backend concern belongs.                                    |
 | [docs/cli/README.md](docs/cli/README.md)                         | CLI behavior and daemon route mapping.                                                       |
 | [docs/development.md](docs/development.md)                       | Prerequisites, build steps, running tests, and troubleshooting for local development.        |

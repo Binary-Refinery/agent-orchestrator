@@ -275,7 +275,18 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getStatus: async () => currentUpdateStatus,
 					check: async () => undefined,
 					returnHome: async () => undefined,
-					download: async () => undefined,
+					download: async (requestId?: string) => {
+						// Mirror the supervisor receipt: its persisted status must agree
+						// with the push when the renderer performs its next local read.
+						if (currentUpdateStatus.state === "available") {
+							emitUpdateStatus({
+								state: "downloading",
+								version: currentUpdateStatus.version,
+								requestId,
+								percent: 0,
+							});
+						}
+					},
 					install: async () => undefined,
 					isPostUpdateRelaunch: async () => false,
 					relaunch: async () => undefined,

@@ -48,6 +48,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agentauth"
@@ -57,6 +58,7 @@ import (
 	fsbrowsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/fsbrowser"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/githubpat"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
+	instructorsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/instructor"
 	linkpreviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/linkpreview"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
@@ -469,16 +471,9 @@ func Run() error {
 			}
 			agentSvc.ObserveActiveCodexAccountCapacity(observation)
 		},
-		// Sync ChatUI's model choice, including clearing its override, before a
-		// later TUI rebuild reads the session metadata.
-		OnModelChanged: func(sessionID domain.SessionID, model string) {
-			if sessMgr == nil {
-				return
-			}
-			if err := sessMgr.PersistChatModel(ctx, sessionID, model); err != nil {
-				log.Warn("persist ChatUI model on session failed; a TUI rebuild may resume with a different model",
-					"sessionID", sessionID, "model", model, "error", err)
-			}
+		// Snapshot both native choices atomically before a later TUI rebuild.
+		OnAgentConfigChanged: func(sessionID domain.SessionID, model, effort string) error {
+			return persistChatAgentConfig(ctx, store, sessMgr, sessionID, model, effort)
 		},
 	})
 
@@ -556,6 +551,34 @@ func Run() error {
 		})
 	}); ok {
 		tunable.SetModelCatalog(agentSvc)
+	}
+	instructorEnabled := envEnabled(os.Getenv("AO_INSTRUCTOR"))
+	concreteManager, ok := wiredSessMgr.(*sessionmanager.Manager)
+	if !ok {
+		return errors.New("wire Instructor: session manager implementation is unavailable")
+	}
+	concreteManager.SetSemanticDeliveryLedger(store)
+	instructorSvc, instructorBridge, instructorInventorySource := newInstructorRuntime(store, concreteManager, instructorEvidenceVerifier{store: store})
+	if instructorEnabled {
+		instructorSvc.SetPlanner(instructorNativePlanner{drivers: chatDrivers, dataDir: cfg.StateDir, projects: store})
+		concreteManager.SetInstructorGovernance(instructorBridge)
+		chatSvc.SetAgentConfigValidator(instructorBridge.ValidateChatAgentConfig)
+		chatSvc.SetAgentConfigObserver(instructorBridge.ObserveChatAgentConfig)
+		chatSvc.SetSemanticDispatchValidator(func(ctx context.Context, target domain.SessionID, key string) error {
+			err := instructorSvc.ValidateDispatchAdmission(ctx, target, key)
+			if errors.Is(err, instructorsvc.ErrEvidencePending) {
+				return fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryDeferred, err)
+			}
+			return err
+		})
+		sessionSvc.SetInstructorWorkReader(instructorSvc)
+		governedReviews, ok := reviewSvc.(interface {
+			SetInstructorGovernance(reviewcore.ReviewerGovernance)
+		})
+		if !ok {
+			return errors.New("wire Instructor: review service lacks governance support")
+		}
+		governedReviews.SetInstructorGovernance(instructorBridge)
 	}
 
 	// servers isn't clobbered. See preview_wiring.go (issue #4500).
@@ -762,6 +785,20 @@ func Run() error {
 	if reconcileErr := reviewSvc.RecoverChatReviewers(ctx); reconcileErr != nil {
 		log.Warn("reviewer chat recovery deferred", "err", reconcileErr)
 	}
+	if instructorEnabled {
+		instructorDone := startInstructor(ctx, instructorSvc, log)
+		inventoryDone := startInstructorInventory(ctx, instructorInventorySource, log)
+		defer func() {
+			stop()
+			<-instructorDone
+			<-inventoryDone
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := instructorSvc.Shutdown(shutdownCtx); err != nil {
+				log.Error("Instructor verification shutdown", "error", err)
+			}
+		}()
+	}
 	agentSvc.WarmCodexAccounts()
 	automationSvc, automationDone := startAutomations(ctx, store, sessionSvc, log)
 	lcStack.automationDone = automationDone
@@ -853,39 +890,42 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectSvc,
-		HostID:             hostIdentity.HostID,
-		Endpoints:          bs,
-		Agents:             agentSvc,
-		CodexAccounts:      agentSvc,
-		SystemChecks:       systemChecks,
-		Installer:          systemInstall,
-		Sessions:           sessionSvc,
-		Automations:        automationSvc,
-		DesktopWorkspaces:  sessionSvc,
-		PRs:                prActions,
-		Reviews:            reviewSvc,
-		Notifications:      notifier,
-		Reports:            reportSvc,
-		NotificationStream: notificationHub,
-		Push:               pushRegistry,
-		Presence:           presenceTracker,
-		DeviceRoster:       deviceRoster,
-		DeviceLive:         presenceTracker,
-		Import:             importsvc.New(importsvc.Deps{Store: store}),
-		Directories:        fsbrowsersvc.New(),
-		ShellTerminals:     shellTermSvc,
-		AgentAuth:          agentAuthSvc,
-		GitHub:             githubpat.New(cfg.DataDir),
-		Conversations:      chatSvc,
-		Settings:           settingsSvc,
-		CDC:                store,
-		Events:             cdcPipe.Broadcaster,
-		Activity:           lcStack.LCM,
-		UsageHooks:         usageCollector,
-		UsageSummary:       usagesvc.NewSummaryReader(store),
-		Telemetry:          telemetrySink,
-		Mobile:             mc,
+		Projects:            projectSvc,
+		HostID:              hostIdentity.HostID,
+		Endpoints:           bs,
+		Agents:              agentSvc,
+		CodexAccounts:       agentSvc,
+		SystemChecks:        systemChecks,
+		Installer:           systemInstall,
+		Sessions:            sessionSvc,
+		Automations:         automationSvc,
+		DesktopWorkspaces:   sessionSvc,
+		PRs:                 prActions,
+		Reviews:             reviewSvc,
+		Notifications:       notifier,
+		Reports:             reportSvc,
+		Instructor:          instructorSvc,
+		InstructorInventory: instructorInventorySource,
+		InstructorEnabled:   instructorEnabled,
+		NotificationStream:  notificationHub,
+		Push:                pushRegistry,
+		Presence:            presenceTracker,
+		DeviceRoster:        deviceRoster,
+		DeviceLive:          presenceTracker,
+		Import:              importsvc.New(importsvc.Deps{Store: store}),
+		Directories:         fsbrowsersvc.New(),
+		ShellTerminals:      shellTermSvc,
+		AgentAuth:           agentAuthSvc,
+		GitHub:              githubpat.New(cfg.DataDir),
+		Conversations:       chatSvc,
+		Settings:            settingsSvc,
+		CDC:                 store,
+		Events:              cdcPipe.Broadcaster,
+		Activity:            lcStack.LCM,
+		UsageHooks:          usageCollector,
+		UsageSummary:        usagesvc.NewSummaryReader(store),
+		Telemetry:           telemetrySink,
+		Mobile:              mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{
 			Store:         store,
 			TargetDataDir: cfg.DataDir,

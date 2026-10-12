@@ -230,6 +230,10 @@ type Controller struct {
 	// well as on disk so a dispatch does not need a read, and updated together with
 	// the row so the two cannot drift.
 	settings domain.ConversationSettings
+	// configFailure closes local intake after an unverified native mutation or
+	// failed bookkeeping, even if provider termination cannot be confirmed.
+	configFailure            error
+	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
@@ -1377,7 +1381,11 @@ func (c *Controller) sendLocked(
 ) (domain.ConversationTurn, error) {
 	c.mu.Lock()
 	handoff := c.handoff != controllerHandoffNone
+	configFailure := c.configFailure
 	c.mu.Unlock()
+	if configFailure != nil {
+		return domain.ConversationTurn{}, configFailure
+	}
 	if handoff {
 		return domain.ConversationTurn{}, ErrControllerHandoff
 	}
@@ -1672,7 +1680,25 @@ func (c *Controller) dispatch(
 	// the user's behalf: a queued message draining, or a relay from `ao send`. A
 	// setting that only applied when the user pressed send would silently stop
 	// applying exactly when they were not watching.
+	c.mu.Lock()
+	configFailure := c.configFailure
+	semanticValidator := c.validateSemanticDispatch
+	c.mu.Unlock()
+	if configFailure != nil {
+		return domain.ConversationTurn{}, configFailure
+	}
 	msg.Settings = c.turnSettings()
+	if semanticValidator != nil {
+		if err := semanticValidator(ctx, c.sessionID, msg.ClientMessageID); err != nil {
+			if errors.Is(err, ports.ErrSemanticDeliveryDeferred) {
+				return domain.ConversationTurn{}, err
+			}
+			if settleErr := c.store.SettleTurnByID(ctx, turnID, domain.TurnStateCancelled, "governed directive no longer admitted", c.now()); settleErr != nil {
+				return domain.ConversationTurn{}, fmt.Errorf("cancel inadmissible directive: %w", settleErr)
+			}
+			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryRejected, err)
+		}
+	}
 
 	c.mu.Lock()
 	c.dispatchingTurnID = turnID
@@ -1742,6 +1768,8 @@ func (c *Controller) dispatch(
 			}
 			return domain.ConversationTurn{}, fmt.Errorf("start turn: %w", err)
 		}
+	} else if err := c.recordSemanticAcceptance(ctx, ref.ProviderTurnID); err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: persist native Chat acceptance: %w", ports.ErrSemanticDeliveryUncertain, err)
 	}
 
 	return domain.ConversationTurn{
@@ -1825,7 +1853,10 @@ func (c *Controller) drainLocked(ctx context.Context, allowDispatch bool) error 
 		Origin:          queued.Origin,
 		ClientMessageID: queued.ClientMessageID,
 	}, c.now()); err != nil {
-		// dispatch already settled this turn as failed. Stopping here rather than
+		if errors.Is(err, ports.ErrSemanticDeliveryDeferred) {
+			return err
+		}
+		// dispatch already settled this turn as failed or cancelled. Stopping here rather than
 		// walking the rest of the queue: whatever broke the send is likely to break
 		// the next one too, and failing them all on one bad provider state would
 		// discard messages the user can otherwise still see waiting.
@@ -2704,6 +2735,14 @@ func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
 
 func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 	now := c.now()
+	// ACP turn.started is local request preparation, before session/prompt has
+	// reached the provider. Actual response content or successful completion is
+	// proof of acceptance; eager protocols also have their native send reply.
+	if c.nativeSemanticAcceptance(event) {
+		if err := c.recordSemanticAcceptance(ctx, event.ProviderTurnID); err != nil {
+			return err
+		}
+	}
 
 	switch event.Kind {
 	case ports.ChatEventTurnStarted:

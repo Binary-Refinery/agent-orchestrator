@@ -227,6 +227,14 @@ surface (`npm run sqlc`, `npm run api`).
 
 ## In flight / not yet a runtime feature
 
+- **Instructor control plane**: the opt-in daemon/GUI implementation includes
+  stable work identity, native asynchronous strategic planning, typed commands,
+  governed launch/review/evidence, durable delivery and background inventory.
+  The portfolio-wide contract is consolidated in
+  [the Rulebook](artifaktory/instructor/RULEBOOK.md). The
+  [acceptance matrix](instructor-acceptance.md) records source/regression coverage;
+  frozen-head verification and publication remain pending.
+
 - **Browser automation acceptance**: the runtime implementation is complete.
   AO packages one
   checksum-pinned Vercel `agent-browser` Rust binary and routes a deliberately

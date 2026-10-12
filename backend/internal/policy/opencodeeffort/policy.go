@@ -1,9 +1,8 @@
 // Package opencodeeffort implements the opt-in opencode effort-floor policy.
 //
 // When enabled, spawns for the opencode harnesses with a missing or
-// below-maximum effort are raised to maximum. The policy never lowers an
-// effort, never acts while disabled (default off), and fails closed on
-// unknown variant values instead of guessing.
+// omitted effort use the native "max" variant only when that specific model
+// advertises it. Otherwise an explicit model-supported choice is required.
 package opencodeeffort
 
 import (
@@ -15,25 +14,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Floor is the effort level missing or lower values are raised to.
+// Floor is the legacy opt-in variant, never an assumed universal model level.
 const Floor = "max"
 
 // ErrUnknownEffort fails a spawn closed when the requested variant is not in
-// the known vocabulary, so AO rejects instead of guessing a mapping.
+// the model's native vocabulary, so AO rejects instead of guessing a mapping.
 var ErrUnknownEffort = errors.New("opencode effort floor: unknown effort variant")
 
-// rank orders the known effort vocabulary from lowest to highest. "default"
-// and "minimal" are the provider reset values observed when no explicit
-// effort is given; empty means omitted and is also raised to Floor.
-var rank = map[string]int{
-	"default": 0,
-	"minimal": 0,
-	"low":     1,
-	"medium":  2,
-	"high":    3,
-	"xhigh":   4,
-	"max":     5,
-}
+// ErrEffortRequired rejects a missing choice when no native default is safe.
+var ErrEffortRequired = errors.New("opencode effort floor: select an explicit native effort for this model")
 
 // AuditEntry records one floor raise with session, before/after and reason.
 type AuditEntry struct {
@@ -65,38 +54,33 @@ func IsOpenCodeHarness(h domain.AgentHarness) bool {
 	return h == domain.HarnessOpenCode || string(h) == "opencode-v2"
 }
 
-// Apply raises effort to Floor when the policy is enabled and the harness is
-// an opencode harness. It returns raised=false when nothing changed.
-// Unknown non-empty variants fail closed with ErrUnknownEffort. When enabled
-// is false, or the harness is not opencode, the input is returned unchanged
-// and no audit entry is produced. Effort is never lowered.
-func Apply(enabled bool, harness domain.AgentHarness, session, effort string, automation bool) (raised bool, out string, audit *AuditEntry, err error) {
+// Apply uses only the chosen model's advertised variants. Explicit native
+// choices remain authoritative; the legacy switch supplies max only when
+// omitted and supported. No ordering is guessed for custom variant names.
+func Apply(enabled bool, harness domain.AgentHarness, session, effort string, automation bool, supported []string) (raised bool, out string, audit *AuditEntry, err error) {
 	if !enabled || !IsOpenCodeHarness(harness) {
 		return false, effort, nil, nil
 	}
 	before := effort
 	trimmed := strings.TrimSpace(effort)
-	lowered := strings.ToLower(trimmed)
-	if trimmed == "" {
-		reason := "interactive-spawn"
-		if automation {
-			reason = "automation-dispatch"
+	hasMax := false
+	for _, variant := range supported {
+		if variant == trimmed && trimmed != "" {
+			return false, trimmed, nil, nil
 		}
-		entry := &AuditEntry{Session: session, Harness: harness, Before: before, After: Floor, Reason: "effort-floor:" + reason + ":missing-raised-to-max"}
-		return true, Floor, entry, nil
+		hasMax = hasMax || variant == Floor
 	}
-	r, ok := rank[lowered]
-	if !ok {
+	if trimmed != "" {
 		return false, effort, nil, ErrUnknownEffort
 	}
-	if r >= rank[Floor] {
-		return false, effort, nil, nil
+	if !hasMax {
+		return false, effort, nil, ErrEffortRequired
 	}
 	reason := "interactive-spawn"
 	if automation {
 		reason = "automation-dispatch"
 	}
-	entry := &AuditEntry{Session: session, Harness: harness, Before: before, After: Floor, Reason: "effort-floor:" + reason + ":raised-to-max"}
+	entry := &AuditEntry{Session: session, Harness: harness, Before: before, After: Floor, Reason: "effort-floor:" + reason + ":missing-native-max"}
 	return true, Floor, entry, nil
 }
 

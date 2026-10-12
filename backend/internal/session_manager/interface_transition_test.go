@@ -2816,6 +2816,7 @@ func TestInterfaceTransitionChatToTUIRebuildUsesChatModel(t *testing.T) {
 	seedSessionModel := store.sessions["session-1"]
 	seedSessionModel.Metadata.Model = "5.6-luna"
 	store.sessions["session-1"] = seedSessionModel
+	manager.modelCatalog = tuningCatalog{catalog: ports.AgentModelCatalog{Models: []ports.AgentModelInfo{{ID: "5.6-luna"}}}}
 	agent := &modelRecordingTransitionAgent{}
 	manager.agents = singleAgent{agent: agent}
 

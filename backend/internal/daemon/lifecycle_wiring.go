@@ -626,7 +626,7 @@ func (c chatLauncher) RestoreReviewChat(ctx context.Context, cfg reviewcore.Revi
 
 func (c chatLauncher) startReviewChat(ctx context.Context, cfg reviewcore.ReviewerChatStart, sendPrompt bool) (string, error) {
 	owner := domain.ReviewConversationOwner(cfg.ReviewID)
-	started, err := c.svc.StartChat(ctx, chatsvc.StartConfig{Owner: owner, SessionID: cfg.WorkerID, ProjectID: cfg.ProjectID, Kind: domain.KindWorker, Harness: cfg.Harness, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env, Permissions: ports.PermissionModeAuto, SystemPrompt: cfg.SystemPrompt, ProviderConversationID: cfg.ProviderConversationID})
+	started, err := c.svc.StartChat(ctx, chatsvc.StartConfig{Owner: owner, SessionID: cfg.WorkerID, ProjectID: cfg.ProjectID, Kind: domain.KindWorker, Harness: cfg.Harness, Model: cfg.Model, Effort: cfg.Effort, PinModelSettings: cfg.Model != "" || cfg.Effort != "", DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env, Permissions: ports.PermissionModeAuto, SystemPrompt: cfg.SystemPrompt, ProviderConversationID: cfg.ProviderConversationID})
 	if err != nil {
 		return "", err
 	}
@@ -683,6 +683,14 @@ func (c chatLauncher) RelayChatTurnWithID(
 	text, clientMessageID string,
 ) (string, error) {
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
+func (c chatLauncher) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID, text, key string) (domain.SemanticDelivery, error) {
+	return c.svc.RelaySemanticChatTurn(ctx, id, text, key)
+}
+
+func (c chatLauncher) ReconcileSemanticChatTurn(ctx context.Context, id domain.SessionID, key string, accepted bool) error {
+	return c.svc.ReconcileSemanticChatTurn(ctx, id, key, accepted)
 }
 
 func (c chatLauncher) QueueChatPrompt(ctx context.Context, id domain.SessionID, text string) (string, error) {

@@ -67,10 +67,13 @@ type AutomationPage struct {
 
 // AutomationRun is the durable execution record for one scheduled occurrence.
 type AutomationRun struct {
-	ID             AutomationRunID     `json:"id"`
-	AutomationID   AutomationID        `json:"automationId"`
-	ScheduledFor   time.Time           `json:"scheduledFor"`
-	SessionID      *SessionID          `json:"sessionId,omitempty"`
+	ID           AutomationRunID `json:"id"`
+	AutomationID AutomationID    `json:"automationId"`
+	ScheduledFor time.Time       `json:"scheduledFor"`
+	SessionID    *SessionID      `json:"sessionId,omitempty"`
+	// WorkID is a service read projection from durable Instructor intake identity;
+	// it is not persisted on automation_runs or inferred from the current session.
+	WorkID         string              `json:"workId,omitempty"`
 	Status         AutomationRunStatus `json:"status"`
 	AttemptCount   int64               `json:"attemptCount"`
 	ClaimedAt      *time.Time          `json:"claimedAt,omitempty"`

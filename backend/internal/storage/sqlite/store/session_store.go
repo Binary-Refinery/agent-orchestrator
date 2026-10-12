@@ -213,6 +213,15 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// UpdateSessionModelEffort changes only the selected native choices, preserving
+// concurrent activity, termination, and controller generation updates.
+func (s *Store) UpdateSessionModelEffort(ctx context.Context, id domain.SessionID, model, effort string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateSessionModelEffort(ctx, gen.UpdateSessionModelEffortParams{ID: id, Model: model, Effort: effort})
+	return rows > 0, err
+}
+
 // UpdateSessionModel changes only the selected model, leaving concurrent
 // lifecycle and controller ownership updates intact.
 func (s *Store) UpdateSessionModel(ctx context.Context, id domain.SessionID, model string) (bool, error) {

@@ -31,7 +31,10 @@ type ChatControllerStart struct {
 	Env           map[string]string
 	Model         string
 	Effort        string
-	Permissions   PermissionMode
+	// PinModelSettings makes an explicitly configured reviewer launch authoritative
+	// over old conversation settings on restore. It does not confirm inference.
+	PinModelSettings bool
+	Permissions      PermissionMode
 	// ReadOnly forces the provider's native sandbox to reject workspace writes.
 	// Reviewer-owned conversations set this independently of approval behavior.
 	ReadOnly              bool

@@ -20,6 +20,186 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
+// InstructorCapabilitiesResponse reports the available Instructor contract and opt-in state.
+type InstructorCapabilitiesResponse struct {
+	Schema   string                         `json:"schema"`
+	Enabled  bool                           `json:"enabled"`
+	Reason   string                         `json:"reason,omitempty"`
+	Commands []domain.InstructorCommandSpec `json:"commands"`
+}
+
+// InstructorCommandsResponse lists the daemon's typed operator command catalog.
+type InstructorCommandsResponse struct {
+	Commands []domain.InstructorCommandSpec `json:"commands"`
+}
+
+// InstructorStatusQuery selects a prior portfolio snapshot for comparison.
+type InstructorStatusQuery struct {
+	BaseID string `query:"baseId,omitempty" description:"Previous snapshot identifier for a change comparison."`
+}
+
+// InstructorWorkIDParam identifies a durable work in the URL.
+type InstructorWorkIDParam struct {
+	WorkID string `path:"workId"`
+}
+
+// InstructorPlanIDParam identifies a durable global planning job in the URL.
+type InstructorPlanIDParam struct {
+	PlanID string `path:"planId"`
+}
+
+// InstructorPlansResponse lists durable planning jobs.
+type InstructorPlansResponse struct {
+	Jobs []domain.InstructorPlanJob `json:"jobs"`
+}
+
+// InstructorRegisterRequest defines one project work and its optional pinned policy.
+type InstructorRegisterRequest struct {
+	ProjectID string                  `json:"projectId"`
+	Name      string                  `json:"name"`
+	Goal      string                  `json:"goal"`
+	Source    string                  `json:"source"`
+	SourceRef string                  `json:"sourceRef"`
+	IssueID   string                  `json:"issueId,omitempty"`
+	Branch    string                  `json:"branch,omitempty"`
+	Policy    domain.InstructorPolicy `json:"policy,omitempty"`
+}
+
+// InstructorAttachSessionRequest links an existing project session to a work.
+type InstructorAttachSessionRequest struct {
+	SessionID string `json:"sessionId"`
+}
+
+// InstructorChecksRequest selects approved check profiles for an attached session.
+type InstructorChecksRequest struct {
+	SessionID string   `json:"sessionId"`
+	Profiles  []string `json:"profiles"`
+}
+
+// InstructorOKResponse acknowledges a completed metadata operation.
+type InstructorOKResponse struct {
+	OK bool `json:"ok"`
+}
+
+// InstructorCommandRequest submits a command against an explicitly captured work scope.
+type InstructorCommandRequest struct {
+	Command        string                     `json:"command"`
+	SnapshotID     string                     `json:"snapshotId,omitempty"`
+	WorkIDs        []string                   `json:"workIds,omitempty"`
+	Approval       string                     `json:"approval,omitempty"`
+	IdempotencyKey string                     `json:"idempotencyKey,omitempty"`
+	New            *InstructorRegisterRequest `json:"new,omitempty"`
+}
+
+// InstructorReconcileRequest records an explicit decision about one uncertain native delivery.
+type InstructorReconcileRequest struct {
+	SnapshotID string `json:"snapshotId"`
+	WorkID     string `json:"workId"`
+	DispatchID string `json:"dispatchId"`
+	Accepted   *bool  `json:"accepted"`
+	Note       string `json:"note"`
+}
+
+// InstructorInventoryReconcileRequest acknowledges a missing resource using its last-seen fence.
+type InstructorInventoryReconcileRequest struct {
+	ResourceID string    `json:"resourceId"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+}
+
+// InstructorExceptionRequest proposes or approves an expiring exception for one work.
+type InstructorExceptionRequest struct {
+	SnapshotID   string                           `json:"snapshotId"`
+	WorkID       string                           `json:"workId"`
+	Role         string                           `json:"role,omitempty"`
+	Selection    *domain.InstructorAgentSelection `json:"selection,omitempty"`
+	MaxFixRounds *int                             `json:"maxFixRounds,omitempty"`
+	Reason       string                           `json:"reason"`
+	ExpiresAt    time.Time                        `json:"expiresAt"`
+	Approval     string                           `json:"approval,omitempty"`
+}
+
+// InstructorReportRequest records progress claims without attesting their evidence.
+type InstructorReportRequest struct {
+	WorkID               string                      `json:"workId"`
+	SessionID            string                      `json:"sessionId"`
+	Kind                 string                      `json:"kind"`
+	Summary              string                      `json:"summary,omitempty"`
+	Next                 string                      `json:"next,omitempty"`
+	SHA                  string                      `json:"sha,omitempty"`
+	Branch               string                      `json:"branch,omitempty"`
+	Phase                string                      `json:"phase,omitempty"`
+	WaitCondition        string                      `json:"waitCondition,omitempty"`
+	WaitUntil            *time.Time                  `json:"waitUntil,omitempty"`
+	Gate                 *domain.InstructorGate      `json:"gate,omitempty"`
+	Evidence             []domain.InstructorEvidence `json:"evidence,omitempty"`
+	OpenCriticalFindings *int                        `json:"openCriticalFindings,omitempty"`
+	DispatchID           string                      `json:"dispatchId,omitempty"`
+}
+
+// InstructorProjectInventory exposes registered project metadata.
+type InstructorProjectInventory struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+// InstructorSessionInventory exposes actual session facts and honest work associations.
+type InstructorSessionInventory struct {
+	ID                string    `json:"id"`
+	ProjectID         string    `json:"projectId,omitempty"`
+	Kind              string    `json:"kind"`
+	Harness           string    `json:"harness"`
+	Mode              string    `json:"mode"`
+	DisplayName       string    `json:"displayName,omitempty"`
+	ActivityState     string    `json:"activityState"`
+	IsTerminated      bool      `json:"isTerminated"`
+	IssueID           string    `json:"issueId,omitempty"`
+	Branch            string    `json:"branch,omitempty"`
+	WorkspacePath     string    `json:"workspacePath,omitempty"`
+	WorkspaceRepoPath string    `json:"workspaceRepoPath,omitempty"`
+	WorkIDs           []string  `json:"workIds"`
+	Assignment        string    `json:"assignment" enum:"linked,unassigned"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+// InstructorInventoryResponse combines current daemon metadata with the latest bounded resource scan.
+type InstructorInventoryResponse struct {
+	CapturedAt              time.Time                        `json:"capturedAt"`
+	Atomic                  bool                             `json:"atomic"`
+	Projects                []InstructorProjectInventory     `json:"projects"`
+	Sessions                []InstructorSessionInventory     `json:"sessions"`
+	UnassignedCount         int                              `json:"unassignedCount"`
+	Resources               []InstructorGitResourceInventory `json:"resources"`
+	UnassignedResourceCount int                              `json:"unassignedResourceCount"`
+	Enabled                 bool                             `json:"enabled"`
+	Cached                  bool                             `json:"cached"`
+	ScanError               string                           `json:"scanError,omitempty"`
+	NextScanAt              *time.Time                       `json:"nextScanAt,omitempty"`
+}
+
+// InstructorGitResourceInventory retains observed repository facts, associations and stale-resource history.
+type InstructorGitResourceInventory struct {
+	ID               string     `json:"id"`
+	Kind             string     `json:"kind" enum:"repository,worktree,branch,uncommitted"`
+	ProjectID        string     `json:"projectId"`
+	RepositoryPath   string     `json:"repositoryPath"`
+	Path             string     `json:"path"`
+	Branch           string     `json:"branch,omitempty"`
+	SHA              string     `json:"sha,omitempty"`
+	Dirty            bool       `json:"dirty"`
+	Status           string     `json:"status"`
+	SessionIDs       []string   `json:"sessionIds"`
+	WorkIDs          []string   `json:"workIds"`
+	Assignment       string     `json:"assignment" enum:"linked,unassigned,unknown"`
+	Error            string     `json:"error,omitempty"`
+	FirstSeenAt      time.Time  `json:"firstSeenAt"`
+	LastSeenAt       time.Time  `json:"lastSeenAt"`
+	NotObservedSince *time.Time `json:"notObservedSince,omitempty"`
+	ReconciledAt     *time.Time `json:"reconciledAt,omitempty"`
+}
+
 // CreateReportRequest is the local caller-to-daemon report submission contract.
 // SessionID attributes the report; like the rest of AO's unauthenticated
 // loopback API, it is not cryptographic proof of worker authorship. Reports do
@@ -369,6 +549,8 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
+	WorkID   string `json:"workId,omitempty" maxLength:"128"`
+	WorkRole string `json:"workRole,omitempty" maxLength:"64"`
 	// ProjectID is omitted for a standalone worker session.
 	ProjectID domain.ProjectID `json:"projectId,omitempty"`
 	IssueID   domain.IssueID   `json:"issueId,omitempty"`
@@ -975,6 +1157,8 @@ type SendSessionMessageResponse struct {
 // DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
 // An omitted agent tells the orchestrator to use the project's worker default.
 type DelegateTaskRequest struct {
+	WorkID    string              `json:"workId,omitempty" maxLength:"128"`
+	WorkRole  string              `json:"workRole,omitempty" maxLength:"64"`
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"16384"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,gemini,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,fx,prime-agent,autohand,unreal-agent,fake"`
@@ -1717,6 +1901,7 @@ type AutomationRunSummaryResponse struct {
 	Status       string     `json:"status" enum:"pending,spawning,running,completed,failed"`
 	ScheduledFor time.Time  `json:"scheduledFor"`
 	SessionID    string     `json:"sessionId,omitempty"`
+	WorkID       string     `json:"workId,omitempty"`
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
@@ -1757,6 +1942,7 @@ type AutomationRunResponse struct {
 	AutomationID   string     `json:"automationId"`
 	ScheduledFor   time.Time  `json:"scheduledFor"`
 	SessionID      string     `json:"sessionId,omitempty"`
+	WorkID         string     `json:"workId,omitempty"`
 	Status         string     `json:"status" enum:"pending,spawning,running,completed,failed"`
 	AttemptCount   int64      `json:"attemptCount"`
 	ClaimedAt      *time.Time `json:"claimedAt,omitempty"`

@@ -6994,3 +6994,114 @@ func TestReservedBoundaryAdoptsSuccessorHandleWithoutRewritingHistory(t *testing
 		t.Fatalf("ancestor branch = %+v, want the recorded handle untouched", keptSource)
 	}
 }
+
+func TestPinnedReviewerModelAndEffortOverrideOldSettingsAtRestore(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	conversation, err := st.CreateConversation(ctx, "old-reviewer-settings", domain.ConversationScopeProject, testProject, testSession, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{Model: "old-model", ReasoningEffort: "low"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var resumed ports.ChatResumeConfig
+	conv := newFakeConversation()
+	conv.providerConversationID = "native-review"
+	svc := chatsvc.New(chatsvc.Options{Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv, resumeCfg: &resumed}}, NewID: func() string { return "pinned-review-id" }})
+	t.Cleanup(func() { _ = svc.Stop(ctx, testSession) })
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(), ProviderConversationID: "native-review", Model: "approved-model", Effort: "high", PinModelSettings: true}); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Model != "approved-model" || resumed.Effort != "high" {
+		t.Fatalf("reviewer restore downgraded pinned choices: %+v", resumed)
+	}
+	controller, err := svc.Controller(testSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings := controller.Settings(); settings.Model != "approved-model" || settings.ReasoningEffort != "high" {
+		t.Fatalf("stored controller differs from actual launch: %+v", settings)
+	}
+}
+
+func TestNativeConfigGovernorRejectsBeforeProviderMutationOrPersistence(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	conv := &configOptionConversation{fakeConversation: newFakeConversation()}
+	var changes []string
+	svc := chatsvc.New(chatsvc.Options{Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv}}, NewID: func() string { return "governed-settings" }, OnAgentConfigChanged: func(_ domain.SessionID, model, effort string) error {
+		changes = append(changes, model+":"+effort)
+		return nil
+	}})
+	t.Cleanup(func() { _ = svc.Stop(ctx, testSession) })
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, WorkspacePath: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	controller, err := svc.Controller(testSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := controller.Settings()
+	denied := errors.New("managed role does not approve this native effort")
+	svc.SetAgentConfigValidator(func(context.Context, domain.SessionID, string, string) error { return denied })
+	if _, err := svc.SetTurnSettings(ctx, testSession, domain.ConversationSettings{Model: "other-model", ReasoningEffort: "low"}); !errors.Is(err, denied) {
+		t.Fatalf("turn mutation guard: %v", err)
+	}
+	if _, err := svc.SetConfigOption(ctx, testSession, "model", ports.ChatConfigOptionValue{Select: "other-model"}); !errors.Is(err, denied) {
+		t.Fatalf("native RPC guard: %v", err)
+	}
+	if len(conv.applied) != 0 {
+		t.Fatalf("refused mutation called native provider: %+v", conv.applied)
+	}
+	if controller.Settings() != previous || len(changes) != 0 {
+		t.Fatalf("refused mutation persisted settings: settings=%+v changes=%v", controller.Settings(), changes)
+	}
+}
+
+func TestNativeConfigPostValidationAndObserverFailureStopController(t *testing.T) {
+	for _, stage := range []string{"post-validation", "native-observer", "desired-observer", "native-metadata", "desired-metadata"} {
+		t.Run(stage, func(t *testing.T) {
+			st := openStore(t)
+			ctx := context.Background()
+			conv := &configOptionConversation{fakeConversation: newFakeConversation()}
+			failed := errors.New("configuration provenance could not be verified")
+			opts := chatsvc.Options{Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv}}, NewID: func() string { return "failed-config-" + stage }}
+			if strings.HasSuffix(stage, "metadata") {
+				opts.OnAgentConfigChanged = func(domain.SessionID, string, string) error { return failed }
+			}
+			svc := chatsvc.New(opts)
+			t.Cleanup(func() { _ = svc.Stop(ctx, testSession) })
+			if _, err := svc.Start(ctx, chatsvc.StartConfig{SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, WorkspacePath: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			if stage == "post-validation" {
+				svc.SetAgentConfigValidator(func(context.Context, domain.SessionID, string, string) error {
+					calls++
+					if calls > 1 {
+						return failed
+					}
+					return nil
+				})
+			} else if !strings.HasSuffix(stage, "metadata") {
+				svc.SetAgentConfigObserver(func(context.Context, domain.SessionID, string, string, string) error { return failed })
+			}
+			var err error
+			if strings.HasPrefix(stage, "desired-") {
+				_, err = svc.SetTurnSettings(ctx, testSession, domain.ConversationSettings{Model: "other-model", ReasoningEffort: "high"})
+			} else {
+				_, err = svc.SetConfigOption(ctx, testSession, "model", ports.ChatConfigOptionValue{Select: "other-model"})
+			}
+			if !errors.Is(err, failed) {
+				t.Fatalf("missing surfaced configuration failure: %v", err)
+			}
+			if svc.HasLiveChatController(testSession) {
+				t.Fatal("failed native config left a usable controller")
+			}
+			if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "must not run"}); err == nil {
+				t.Fatal("failed config accepted another inference")
+			}
+		})
+	}
+}

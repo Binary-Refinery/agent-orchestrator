@@ -101,14 +101,9 @@ var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
 	"aider": {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
-	// `models` alone, never `--pure models`: `--pure` (skip external plugins) is
-	// a global flag whose acceptance varies across opencode builds — a binary that
-	// does not take it globally aborts with "Unrecognized flag: --pure in command
-	// opencode" and empties the picker. The `models` subcommand is the stable
-	// contract every opencode ships; dropping the flag lists an identical catalog
-	// (and still honors the provider-presence env used for cloud scoping) without
-	// betting on a flag that can be rejected.
-	"opencode":    {args: []string{"models"}, parser: parseIDLines},
+	// Verbose metadata contains provider-native variants; --pure is intentionally
+	// absent because older builds reject that global flag.
+	"opencode":    {args: []string{"models", "--verbose"}, parser: parseOpenCodeModels},
 	"grok":        {args: []string{"models"}, parser: parseGrokModels},
 	"cursor":      {args: []string{"models"}, parser: parseCursorModels},
 	"agy":         {args: []string{"models"}, parser: parseAgyModels},
@@ -473,6 +468,25 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	if len(models) == 0 {
 		return base, fmt.Errorf("%s model discovery returned no models", agentID)
 	}
+	if agentID == "opencode" {
+		// Clear generic display-name defaults after the final normalization.
+		// Only resolved native cfg.model may select the default for AO roles.
+		clearOpenCodeDefaults(models)
+		configured, configErr := openCodeConfiguredModel(ctx, binary, workingDir, env)
+		if ctx.Err() != nil {
+			return base, ctx.Err()
+		}
+		base.Warning = openCodeDefaultUnknown
+		if configErr == nil && configured != "" {
+			for i := range models {
+				if models[i].ID == configured {
+					models[i].IsDefault = true
+					base.Warning = ""
+					break
+				}
+			}
+		}
+	}
 	base.Models = models
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
@@ -767,6 +781,11 @@ func BinaryVersion(ctx context.Context, binary string) string {
 func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string, env map[string]string) string {
 	binaryVersion := BinaryVersion(ctx, binary)
 	config := discoveryConfigInputs(ctx, agentID, workingDir, env)
+	if agentID == "opencode" {
+		// An old ID-only cache cannot validate native variants. Invalidate it
+		// once even when the installed binary and project config are unchanged.
+		config += "\x00opencode-native-variants-v2-configured-default"
+	}
 	if config == "" {
 		// Keep the executable-only fingerprint byte-identical to what earlier
 		// daemons wrote, so upgrading does not invalidate every cached catalog.
@@ -782,6 +801,9 @@ func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string,
 // discoveryConfigInputs returns the configuration an agent's discovery consults,
 // or "" when the catalog depends on the binary alone.
 func discoveryConfigInputs(ctx context.Context, agentID, workingDir string, env map[string]string) string {
+	if agentID == "opencode" {
+		return "config=" + openCodeConfigFingerprint(ctx, workingDir, env)
+	}
 	if agentID == "unreal-agent" {
 		provider, selected := unrealConfiguredModel(env)
 		return "provider=" + provider + ";model=" + selected

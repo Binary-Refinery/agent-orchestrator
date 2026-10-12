@@ -816,6 +816,10 @@ func (m *Manager) preflightInterfaceTarget(
 		return err
 	}
 	config := restoredAgentConfig(rec, project.Config)
+	config, err = m.validateRestoredAgentConfig(ctx, rec, config)
+	if err != nil {
+		return err
+	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
@@ -828,10 +832,14 @@ func (m *Manager) preflightInterfaceTarget(
 			return ports.ErrAgentAuthRequired
 		}
 	}
+	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	if err != nil {
+		return err
+	}
 	var cmd []string
 	if transition.NativeConversationID == "" {
 		cmd, _, _, err = freshLaunchArgv(ctx, agent, rec.ID, rec.Metadata.WorkspacePath,
-			rec.Metadata, systemPrompt, "", config, rec.Kind, m.dataDir, true)
+			rec.Metadata, systemPrompt, systemPromptFile, config, rec.Kind, m.dataDir, true)
 	} else {
 		var resumable bool
 		cmd, resumable, err = agent.GetRestoreCommand(ctx, ports.RestoreConfig{
@@ -839,7 +847,7 @@ func (m *Manager) preflightInterfaceTarget(
 				ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
 				Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
 			},
-			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
+			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile,
 			Config: config, Permissions: config.Permissions,
 		})
 		if err == nil && !resumable {

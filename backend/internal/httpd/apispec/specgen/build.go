@@ -15,10 +15,12 @@ import (
 	openapi "github.com/swaggest/openapi-go"
 	"github.com/swaggest/openapi-go/openapi31"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/githubpat"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
+	instructorsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/instructor"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -75,6 +77,8 @@ func Build() ([]byte, error) {
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "reports"}).WithDescription(
 			"Durable worker reports"),
+		*(&openapi31.Tag{Name: "instructor"}).WithDescription(
+			"Governed portfolio work, scoped commands and durable project orchestration"),
 		*(&openapi31.Tag{Name: "usage"}).WithDescription(
 			"Token usage telemetry for AO sessions"),
 		*(&openapi31.Tag{Name: "push"}).WithDescription(
@@ -153,7 +157,58 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // schemaNames is the exhaustive default→clean mapping for every type reflected
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
-var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
+var schemaNames = map[string]string{ // #nosec G101 -- Type-name registry contains no credential values.
+	"DomainInstructorPlanInput":        "InstructorPlanInput",
+	"DomainInstructorProposal":         "InstructorProposal",
+	"DomainInstructorPlanOutput":       "InstructorPlanOutput",
+	"DomainInstructorPlanIntake":       "InstructorPlanIntake",
+	"DomainInstructorPlanJob":          "InstructorPlanJob",
+	"DomainInstructorPublicationGrant": "InstructorPublicationGrant",
+	"DomainInstructorHeartbeat":        "InstructorHeartbeat",
+
+	"ControllersInstructorPlanIDParam":               "InstructorPlanIDParam",
+	"ControllersInstructorPlansResponse":             "InstructorPlansResponse",
+	"ControllersInstructorInventoryReconcileRequest": "InstructorInventoryReconcileRequest",
+	"DomainInstructorException":                      "InstructorException",
+
+	"ControllersInstructorExceptionRequest": "InstructorExceptionRequest",
+	"InstructorExceptionPreview":            "InstructorExceptionPreview",
+	"DomainInstructorVerification":          "InstructorVerification",
+	//nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
+	"ControllersInstructorReconcileRequest":                "InstructorReconcileRequest",
+	"DomainInstructorCommandParameter":                     "InstructorCommandParameter",
+	"DomainInstructorMetrics":                              "InstructorMetrics",
+	"ControllersInstructorGitResourceInventory":            "InstructorGitResourceInventory",
+	"DomainInstructorAttribution":                          "InstructorAttribution",
+	"DomainInstructorTraceability":                         "InstructorTraceability",
+	"ControllersInstructorCapabilitiesResponse":            "InstructorCapabilitiesResponse",
+	"ControllersInstructorCommandsResponse":                "InstructorCommandsResponse",
+	"ControllersInstructorStatusQuery":                     "InstructorStatusQuery",
+	"ControllersInstructorWorkIDParam":                     "InstructorWorkIDParam",
+	"ControllersInstructorRegisterRequest":                 "InstructorRegisterRequest",
+	"ControllersInstructorAttachSessionRequest":            "InstructorAttachSessionRequest",
+	"ControllersInstructorChecksRequest":                   "InstructorChecksRequest",
+	"ControllersInstructorOKResponse":                      "InstructorOKResponse",
+	"ControllersInstructorCommandRequest":                  "InstructorCommandRequest",
+	"ControllersInstructorReportRequest":                   "InstructorReportRequest",
+	"ControllersInstructorProjectInventory":                "InstructorProjectInventory",
+	"ControllersInstructorSessionInventory":                "InstructorSessionInventory",
+	"ControllersInstructorInventoryResponse":               "InstructorInventoryResponse",
+	"DomainInstructorWork":                                 "InstructorWork",
+	"DomainInstructorLaunch":                               "InstructorLaunch",
+	"DomainInstructorAgentSelection":                       "InstructorAgentSelection",
+	"DomainInstructorGate":                                 "InstructorGate",
+	"DomainInstructorEvidence":                             "InstructorEvidence",
+	"DomainInstructorPolicy":                               "InstructorPolicy",
+	"DomainInstructorRole":                                 "InstructorRole",
+	"DomainInstructorProfile":                              "InstructorProfile",
+	"DomainInstructorTransition":                           "InstructorTransition",
+	"DomainInstructorCommandSpec":                          "InstructorCommandSpec",
+	"DomainInstructorEvent":                                "InstructorEvent",
+	"DomainInstructorSnapshot":                             "InstructorSnapshot",
+	"DomainInstructorDispatch":                             "InstructorDispatch",
+	"DomainInstructorCommandResult":                        "InstructorCommandResult",
+	"DomainInstructorDetails":                              "InstructorDetails",
 	"ControllersSettingsResponse":                          "SettingsResponse",
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
@@ -599,6 +654,7 @@ func operations() []operation {
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
 	ops = append(ops, reportOperations()...)
+	ops = append(ops, instructorOperations()...)
 	ops = append(ops, usageOperations()...)
 	ops = append(ops, pushOperations()...)
 	ops = append(ops, importOperations()...)
@@ -613,6 +669,40 @@ func operations() []operation {
 	ops = append(ops, endpointsOperations()...)
 	ops = append(ops, linkPreviewOperations()...)
 	return ops
+}
+
+func instructorOperations() []operation {
+	workID := []any{controllers.InstructorWorkIDParam{}}
+	errors := []respUnit{
+		{http.StatusBadRequest, envelope.APIError{}},
+		{http.StatusNotFound, envelope.APIError{}},
+		{http.StatusConflict, envelope.APIError{}},
+		{http.StatusServiceUnavailable, envelope.APIError{}},
+		{http.StatusNotImplemented, envelope.APIError{}},
+		{http.StatusInternalServerError, envelope.APIError{}},
+	}
+	return []operation{
+		{method: http.MethodGet, path: "/api/v1/instructor/capabilities", id: "instructorCapabilities", tag: "instructor", summary: "Inspect Instructor availability and its command registry", resps: []respUnit{{http.StatusOK, controllers.InstructorCapabilitiesResponse{}}}},
+		{method: http.MethodGet, path: "/api/v1/instructor/status", id: "instructorStatus", tag: "instructor", summary: "Capture a stable work snapshot and available actions", pathParams: []any{controllers.InstructorStatusQuery{}}, resps: append([]respUnit{{http.StatusOK, domain.InstructorSnapshot{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/inventory", id: "instructorInventory", tag: "instructor", summary: "List real runtime projects and sessions including unassigned legacy work", resps: append([]respUnit{{http.StatusOK, controllers.InstructorInventoryResponse{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/inventory/reconcile", id: "reconcileInstructorInventory", tag: "instructor", summary: "Acknowledge one no-longer-observed resource without deleting any data", reqBody: controllers.InstructorInventoryReconcileRequest{}, resps: append([]respUnit{{http.StatusOK, controllers.InstructorOKResponse{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/policy", id: "instructorPolicy", tag: "instructor", summary: "Read effective governance policy for new work", resps: append([]respUnit{{http.StatusOK, domain.InstructorPolicy{}}}, errors...)},
+		{method: http.MethodPut, path: "/api/v1/instructor/policy", id: "setInstructorPolicy", tag: "instructor", summary: "Validate and persist governance policy for future work", reqBody: domain.InstructorPolicy{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorPolicy{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/commands", id: "instructorCommands", tag: "instructor", summary: "List commands from the daemon registry", resps: []respUnit{{http.StatusOK, controllers.InstructorCommandsResponse{}}}},
+		{method: http.MethodPost, path: "/api/v1/instructor/commands", id: "instructorCommand", tag: "instructor", summary: "Apply a command to the exact observed work snapshot", reqBody: controllers.InstructorCommandRequest{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorCommandResult{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/works", id: "registerInstructorWork", tag: "instructor", summary: "Register work under an explicit governance policy", reqBody: controllers.InstructorRegisterRequest{}, resps: append([]respUnit{{http.StatusCreated, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/works/{workId}", id: "instructorWorkDetails", tag: "instructor", summary: "Read work history, gates, evidence and command delivery", pathParams: workID, resps: append([]respUnit{{http.StatusOK, domain.InstructorDetails{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/works/{workId}/sessions", id: "attachInstructorSession", tag: "instructor", summary: "Attach an existing session to a stable work identity", pathParams: workID, reqBody: controllers.InstructorAttachSessionRequest{}, resps: append([]respUnit{{http.StatusOK, controllers.InstructorOKResponse{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/works/{workId}/checks", id: "runInstructorChecks", tag: "instructor", summary: "Run bounded approved checks in the attached worktree", pathParams: workID, reqBody: controllers.InstructorChecksRequest{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/works/{workId}/evidence/verify", id: "verifyInstructorEvidence", tag: "instructor", summary: "Verify exact-commit evidence against daemon-owned provenance", pathParams: workID, reqBody: domain.InstructorEvidence{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/reconcile", id: "reconcileInstructorDelivery", tag: "instructor", summary: "Resolve one uncertain native submission from an explicit observation", reqBody: controllers.InstructorReconcileRequest{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/reports", id: "reportInstructorWork", tag: "instructor", summary: "Report work progress and claims without forging verified evidence", reqBody: controllers.InstructorReportRequest{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/exceptions/preview", id: "previewInstructorException", tag: "instructor", summary: "Preview one expiring work-scoped policy exception and its exact approval phrase", reqBody: controllers.InstructorExceptionRequest{}, resps: append([]respUnit{{http.StatusOK, instructorsvc.ExceptionPreview{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/exceptions", id: "applyInstructorException", tag: "instructor", summary: "Apply one expiring work-scoped policy exception after exact operator approval", reqBody: controllers.InstructorExceptionRequest{}, resps: append([]respUnit{{http.StatusOK, domain.InstructorWork{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/plans", id: "createInstructorPlan", tag: "instructor", summary: "Start a native global Instructor strategic or intake dialogue over a frozen portfolio", reqBody: domain.InstructorPlanInput{}, resps: append([]respUnit{{http.StatusAccepted, domain.InstructorPlanJob{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/plans", id: "listInstructorPlans", tag: "instructor", summary: "List durable global Instructor dialogues and advisory proposals", resps: append([]respUnit{{http.StatusOK, controllers.InstructorPlansResponse{}}}, errors...)},
+		{method: http.MethodGet, path: "/api/v1/instructor/plans/{planId}", id: "getInstructorPlan", tag: "instructor", summary: "Read a durable global Instructor dialogue without admitting its proposals", pathParams: []any{controllers.InstructorPlanIDParam{}}, resps: append([]respUnit{{http.StatusOK, domain.InstructorPlanJob{}}}, errors...)},
+	}
 }
 
 func automationOperations() []operation {

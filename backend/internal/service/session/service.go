@@ -174,6 +174,7 @@ type scmProvider interface {
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
+	instructor          InstructorWorkReader
 	manager             commander
 	store               Store
 	prClaimer           ports.PRClaimer
@@ -1364,6 +1365,8 @@ func toSpawnAPIError(err error) error {
 		return mapped
 	}
 	switch {
+	case errors.Is(err, sessionmanager.ErrInstructorUnavailable):
+		return apierr.Unavailable("INSTRUCTOR_DISABLED", "Work delegation requires AO_INSTRUCTOR to be enabled in the daemon")
 	case errors.Is(err, context.DeadlineExceeded):
 		return apierr.Conflict("SPAWN_TIMEOUT", "Session spawn timed out before the agent could start", nil)
 	case errors.Is(err, context.Canceled):
