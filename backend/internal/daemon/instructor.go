@@ -496,17 +496,19 @@ func (g instructorGovernance) ValidateReviewerReuse(ctx context.Context, spec re
 
 func (g instructorGovernance) ReviewerRunScope(ctx context.Context, id domain.SessionID) (string, error) {
 	work, managed, err := g.svc.WorkForSession(ctx, id)
-	if err != nil || !managed || work.Phase != "delta" {
+	if err != nil || !managed {
 		return "", err
 	}
 	return instructorReviewScope(work), nil
 }
 
 func instructorReviewScope(work domain.InstructorWork) string {
-	if work.Phase != "delta" {
-		return ""
+	if work.Phase == "delta" {
+		return fmt.Sprintf("%s/delta/%d", work.ID, work.DeltaPhaseSequence)
 	}
-	return fmt.Sprintf("%s/delta/%d", work.ID, work.DeltaPhaseSequence)
+	// A managed initial pass must not reuse an unassigned worker's historical
+	// approval. Keep retries idempotent within the same durable work phase.
+	return fmt.Sprintf("%s/%s/%d", work.ID, work.Phase, work.PhaseSequence)
 }
 
 func (g instructorGovernance) RecordReviewerLaunch(ctx context.Context, spec reviewcore.LaunchSpec) error {

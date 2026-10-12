@@ -2,14 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentModelsQueryKey, type AgentModelCatalog } from "../hooks/useAgentModelsQuery";
 import type { InstructorWork } from "../hooks/useInstructor";
 import { InstructorExceptionDialog } from "./InstructorExceptionDialog";
 
-const mocks = vi.hoisted(() => ({ preview: vi.fn(), apply: vi.fn(), close: vi.fn(), applied: vi.fn() }));
+const mocks = vi.hoisted(() => ({ preview: vi.fn(), apply: vi.fn(), close: vi.fn(), applied: vi.fn(), catalog: vi.fn() }));
 vi.mock("../hooks/useInstructor", () => ({ useInstructorExceptionPreview: () => ({ mutateAsync: mocks.preview, isPending: false }), useApplyInstructorException: () => ({ mutateAsync: mocks.apply, isPending: false }) }));
 vi.mock("../hooks/useAgentReadinessQuery", () => ({ useAgentReadinessQuery: () => ({ data: { agents: [{ id: "opencode", label: "OpenCode" }] } }) }));
-vi.mock("../hooks/useAgentModelsQuery", () => ({ agentModelsQueryOptions: (harness: string) => ({ queryKey: ["models", harness], enabled: Boolean(harness), queryFn: async () => ({ models: [{ id: "provider/model", efforts: ["native-high", "native-ultra"] }] }) }) }));
-vi.mock("./settings/AgentModelCombobox", () => ({ AgentModelCombobox: ({ tuning }: { tuning: { onEffortChange: (value: string) => void } }) => <button type="button" onClick={() => tuning.onEffortChange("native-ultra")}>Choose native effort</button> }));
+vi.mock("../lib/api-client", () => ({ apiClient: { GET: mocks.catalog }, apiErrorMessage: () => "Catalog request failed" }));
 
 const at = "2026-10-11T10:00:00Z";
 const work: InstructorWork = {
@@ -17,8 +17,26 @@ const work: InstructorWork = {
 	policy: { schema: 1, version: "policy-old", initialPhase: "intake", roles: { worker: { harness: "opencode", model: "provider/model", effort: "maximum", effortByModel: { "provider/model": "native-high" } } }, profiles: { push: { command: [], timeoutSeconds: 60 } }, transitions: [], closeoutRequires: [], maxFixRounds: 2, nudgeAfterSeconds: 600, escalateAfterSeconds: 1200, attribution: { authorName: "Operator", authorEmail: "operator@example.invalid", coAuthorName: "Agent", coAuthorEmail: "agent@example.invalid", sessionTrailer: "AO-Session", issueTrailer: "Issue" }, traceability: { required: true, requireAssignee: true, projectNumber: 0, requiredPhases: [], allowedRepositories: ["owner/repo"], allowedBaseBranches: ["main"] } },
 };
 
-function view() {
-	return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><InstructorExceptionDialog open work={work} snapshotId="snapshot-frozen" onClose={mocks.close} onApplied={mocks.applied} /></QueryClientProvider>);
+function catalog(label: string, efforts: string[]): AgentModelCatalog {
+	return { agentId: "opencode", allowCustom: false, customModelEntry: "none", fetchedAt: at, selectionMode: "catalog", source: "project-config", stale: false, models: [{ id: "provider/model", label, efforts, effortSupport: "supported" }] };
+}
+
+const projectCatalog = catalog("Project model", ["native-high", "native-ultra"]);
+const otherProjectCatalog = catalog("Other project model", ["other-native"]);
+const globalCatalog = catalog("Global model", ["global-native"]);
+
+function view(selectedWork = work, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+	const dialog = (currentWork: InstructorWork) => <QueryClientProvider client={queryClient}><InstructorExceptionDialog open work={currentWork} snapshotId="snapshot-frozen" onClose={mocks.close} onApplied={mocks.applied} /></QueryClientProvider>;
+	const rendered = render(dialog(selectedWork));
+	return { ...rendered, queryClient, rerenderWork: (currentWork: InstructorWork) => rendered.rerender(dialog(currentWork)) };
+}
+
+async function chooseNativeEffort(label: string, effort: string) {
+	await userEvent.click(screen.getByRole("button", { name: "Requested model / effort" }));
+	expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+	expect(screen.queryByRole("menuitem", { name: /custom model|Use agent model/ })).not.toBeInTheDocument();
+	await userEvent.click(screen.getByRole("menuitem", { name: `${label} provider` }));
+	await userEvent.click(await screen.findByRole("menuitemradio", { name: effort }));
 }
 
 async function prepareBudget() {
@@ -28,7 +46,11 @@ async function prepareBudget() {
 }
 
 describe("InstructorExceptionDialog", () => {
-	beforeEach(() => { vi.clearAllMocks(); mocks.preview.mockResolvedValue({ workId: work.id, policyVersion: work.policyVersion, proposalHash: "proposal-exact", exactApproval: "EXCEPTION-GO work-1 proposal-exact", effectivePolicy: { ...work.policy, maxFixRounds: 4 } }); mocks.apply.mockResolvedValue(work); mocks.applied.mockResolvedValue(undefined); });
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.catalog.mockImplementation(async (_path: string, options: { params: { query: { projectId?: string } } }) => ({ data: options.params.query.projectId === "demo" ? projectCatalog : options.params.query.projectId === "other-project" ? otherProjectCatalog : globalCatalog }));
+		mocks.preview.mockResolvedValue({ workId: work.id, policyVersion: work.policyVersion, proposalHash: "proposal-exact", exactApproval: "EXCEPTION-GO work-1 proposal-exact", effectivePolicy: { ...work.policy, maxFixRounds: 4 } }); mocks.apply.mockResolvedValue(work); mocks.applied.mockResolvedValue(undefined);
+	});
 
 	it("previews a frozen bounded proposal and requires manual exact approval before granting", async () => {
 		view(); await prepareBudget();
@@ -43,14 +65,40 @@ describe("InstructorExceptionDialog", () => {
 		expect(mocks.applied).toHaveBeenCalledOnce();
 	});
 
-	it("invalidates the preview after edits and sends the explicit provider-native choice", async () => {
+	it("loads the Work project catalog, invalidates edited previews and sends its native choice without custom entry", async () => {
 		view(); await prepareBudget();
 		await userEvent.click(screen.getByRole("checkbox", { name: "Override Worker or Reviewer selection" }));
-		await userEvent.click(screen.getByRole("button", { name: "Choose native effort" }));
+		await waitFor(() => expect(mocks.catalog).toHaveBeenCalledWith("/api/v1/agents/{agent}/models", { params: { path: { agent: "opencode" }, query: { projectId: "demo" } } }));
+		await chooseNativeEffort("Project model", "Native-ultra");
 		expect(screen.queryByRole("textbox", { name: "Type the exact exception approval above" })).not.toBeInTheDocument();
 		await waitFor(() => expect(screen.getByRole("button", { name: "Preview exception" })).toBeEnabled());
 		await userEvent.click(screen.getByRole("button", { name: "Preview exception" }));
 		expect(mocks.preview.mock.calls[1][0]).toMatchObject({ role: "worker", selection: { harness: "opencode", model: "provider/model", effort: "native-ultra" } });
+		expect(mocks.apply).not.toHaveBeenCalled();
+	});
+
+	it("keeps project catalogs and native effort admission separate when the Work project changes", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(agentModelsQueryKey("opencode", ""), globalCatalog);
+		const rendered = view(work, queryClient);
+		await userEvent.click(screen.getByRole("checkbox", { name: "Override Worker or Reviewer selection" }));
+		await waitFor(() => expect(queryClient.getQueryData(agentModelsQueryKey("opencode", "demo"))).toEqual(projectCatalog));
+		await chooseNativeEffort("Project model", "Native-ultra");
+
+		const otherWork = { ...work, id: "work-2", projectId: "other-project" };
+		rendered.rerenderWork(otherWork);
+		await userEvent.click(screen.getByRole("checkbox", { name: "Override Worker or Reviewer selection" }));
+		await waitFor(() => expect(mocks.catalog).toHaveBeenCalledWith("/api/v1/agents/{agent}/models", { params: { path: { agent: "opencode" }, query: { projectId: "other-project" } } }));
+		await waitFor(() => expect(queryClient.getQueryData(agentModelsQueryKey("opencode", "other-project"))).toEqual(otherProjectCatalog));
+		expect(queryClient.getQueryData(agentModelsQueryKey("opencode", "demo"))).toEqual(projectCatalog);
+		expect(queryClient.getQueryData(agentModelsQueryKey("opencode", ""))).toEqual(globalCatalog);
+		await userEvent.type(screen.getByRole("textbox", { name: "Reason for this exception" }), "Use this project's native variant.");
+		expect(screen.getByRole("button", { name: "Preview exception" })).toBeDisabled();
+		expect(mocks.preview).not.toHaveBeenCalled();
+		await chooseNativeEffort("Other project model", "Other-native");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Preview exception" })).toBeEnabled());
+		await userEvent.click(screen.getByRole("button", { name: "Preview exception" }));
+		expect(mocks.preview).toHaveBeenCalledWith(expect.objectContaining({ workId: "work-2", role: "worker", selection: { harness: "opencode", model: "provider/model", effort: "other-native" } }));
 		expect(mocks.apply).not.toHaveBeenCalled();
 	});
 

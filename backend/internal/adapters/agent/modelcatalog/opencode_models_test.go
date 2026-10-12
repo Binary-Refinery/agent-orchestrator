@@ -7,7 +7,7 @@ import (
 
 func TestOpenCodeVerboseCatalogPreservesNativeNamesAndCapabilityUnknown(t *testing.T) {
 	models, err := parseOpenCodeModels([]byte(`custom/reasoner
-{"name":"Reasoner","variants":{"contributor":{"reasoningEffort":"high"},"ultra":{"reasoningEffort":"xhigh"},"disabled":{"disabled":true},"default":{}},"defaultVariant":"contributor"}
+{"name":"Reasoner","variants":{"contributor":{"reasoningEffort":"high"},"ultra":{"reasoningEffort":"xhigh"},"disabled":{"disabled":true},"default":{}}}
 custom/plain
 {"name":"Plain","variants":{}}
 custom/legacy
@@ -25,7 +25,7 @@ custom/v2
 		t.Fatalf("models=%+v", models)
 	}
 	reasoner := models[byID["custom/reasoner"]]
-	if reasoner.Label != "Reasoner" || reasoner.EffortSupport != "supported" || reasoner.DefaultEffort != "contributor" || !reflect.DeepEqual(reasoner.Efforts, []string{"contributor", "ultra", "default"}) {
+	if reasoner.Label != "Reasoner" || reasoner.EffortSupport != "supported" || reasoner.DefaultEffort != "" || reasoner.IsDefault || !reflect.DeepEqual(reasoner.Efforts, []string{"contributor", "ultra", "default"}) {
 		t.Fatalf("native catalog=%+v", reasoner)
 	}
 	if models[byID["custom/plain"]].EffortSupport != "none" || models[byID["custom/legacy"]].EffortSupport != "unknown" {
@@ -46,6 +46,22 @@ func TestOpenCodeVerboseCatalogRejectsInvalidVariantMetadata(t *testing.T) {
 	} {
 		if _, err := parseOpenCodeModels([]byte(output)); err == nil {
 			t.Fatalf("accepted %q", output)
+		}
+	}
+}
+
+func TestOpenCodeVerboseCatalogNeverTreatsNamesOrNonNativeFieldsAsDefaultProof(t *testing.T) {
+	models, err := parseOpenCodeModels([]byte(`custom/first
+{"name":"Default","variants":{"max":{}},"isDefault":true,"defaultVariant":"max"}
+custom/second
+{"name":"Reasoner (default)","variants":{"max":{}}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range models {
+		if model.IsDefault || model.DefaultEffort != "" {
+			t.Fatalf("unproven native default: %+v", model)
 		}
 	}
 }

@@ -559,13 +559,13 @@ func TestOpenCodeFloorRequiresActualModelNativeSupport(t *testing.T) {
 		{ID: "custom/native", Efforts: []string{"contributor", "ultra"}, EffortSupport: "supported"},
 	}}}}
 	cfg := ports.SpawnConfig{Harness: domain.HarnessOpenCode, ProjectID: "p"}
-	raised, effort, _, err := m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/legacy"}, false)
-	if err != nil || !raised || effort != "max" {
-		t.Fatalf("native legacy max: raised=%v effort=%q err=%v", raised, effort, err)
+	raised, config, _, err := m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/legacy"}, false)
+	if err != nil || !raised || config.Effort != "max" || config.Model != "custom/legacy" {
+		t.Fatalf("native legacy max: raised=%v config=%+v err=%v", raised, config, err)
 	}
-	raised, effort, _, err = m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/native", Effort: "contributor"}, false)
-	if err != nil || raised || effort != "contributor" {
-		t.Fatalf("explicit native effort: raised=%v effort=%q err=%v", raised, effort, err)
+	raised, config, _, err = m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/native", Effort: "contributor"}, false)
+	if err != nil || raised || config.Effort != "contributor" || config.Model != "custom/native" {
+		t.Fatalf("explicit native effort: raised=%v config=%+v err=%v", raised, config, err)
 	}
 	_, _, _, err = m.applyOpenCodeEffortFloor(context.Background(), cfg, ports.AgentConfig{Model: "custom/native"}, false)
 	if !errors.Is(err, ports.ErrUnsupportedEffort) {

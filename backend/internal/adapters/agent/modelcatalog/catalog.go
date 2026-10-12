@@ -468,6 +468,25 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	if len(models) == 0 {
 		return base, fmt.Errorf("%s model discovery returned no models", agentID)
 	}
+	if agentID == "opencode" {
+		// Clear generic display-name defaults after the final normalization.
+		// Only resolved native cfg.model may select the default for AO roles.
+		clearOpenCodeDefaults(models)
+		configured, configErr := openCodeConfiguredModel(ctx, binary, workingDir, env)
+		if ctx.Err() != nil {
+			return base, ctx.Err()
+		}
+		base.Warning = openCodeDefaultUnknown
+		if configErr == nil && configured != "" {
+			for i := range models {
+				if models[i].ID == configured {
+					models[i].IsDefault = true
+					base.Warning = ""
+					break
+				}
+			}
+		}
+	}
 	base.Models = models
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
@@ -765,7 +784,7 @@ func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string,
 	if agentID == "opencode" {
 		// An old ID-only cache cannot validate native variants. Invalidate it
 		// once even when the installed binary and project config are unchanged.
-		config += "\x00opencode-native-variants-v1"
+		config += "\x00opencode-native-variants-v2-configured-default"
 	}
 	if config == "" {
 		// Keep the executable-only fingerprint byte-identical to what earlier
@@ -782,6 +801,9 @@ func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string,
 // discoveryConfigInputs returns the configuration an agent's discovery consults,
 // or "" when the catalog depends on the binary alone.
 func discoveryConfigInputs(ctx context.Context, agentID, workingDir string, env map[string]string) string {
+	if agentID == "opencode" {
+		return "config=" + openCodeConfigFingerprint(ctx, workingDir, env)
+	}
 	if agentID == "unreal-agent" {
 		provider, selected := unrealConfiguredModel(env)
 		return "provider=" + provider + ";model=" + selected

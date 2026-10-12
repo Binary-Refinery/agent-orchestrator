@@ -26,10 +26,8 @@ func parseOpenCodeModels(output []byte) ([]ports.AgentModelInfo, error) {
 		item := ports.AgentModelInfo{ID: id, Label: id, EffortSupport: "unknown"}
 		if strings.HasPrefix(remaining, "{") {
 			var metadata struct {
-				Name           string          `json:"name"`
-				Variants       json.RawMessage `json:"variants"`
-				DefaultVariant string          `json:"defaultVariant"`
-				IsDefault      bool            `json:"isDefault"`
+				Name     string          `json:"name"`
+				Variants json.RawMessage `json:"variants"`
 			}
 			decoder := json.NewDecoder(strings.NewReader(remaining))
 			if err := decoder.Decode(&metadata); err != nil {
@@ -39,7 +37,6 @@ func parseOpenCodeModels(output []byte) ([]ports.AgentModelInfo, error) {
 			if metadata.Name != "" {
 				item.Label = metadata.Name
 			}
-			item.IsDefault = metadata.IsDefault
 			if len(metadata.Variants) != 0 && string(metadata.Variants) != "null" {
 				var err error
 				item.Efforts, err = openCodeVariants(metadata.Variants)
@@ -50,16 +47,22 @@ func parseOpenCodeModels(output []byte) ([]ports.AgentModelInfo, error) {
 				if len(item.Efforts) != 0 {
 					item.EffortSupport = "supported"
 				}
-				for _, variant := range item.Efforts {
-					if variant == metadata.DefaultVariant {
-						item.DefaultEffort = variant
-					}
-				}
 			}
 		}
 		models = append(models, item)
 	}
-	return normalize(models), nil
+	models = normalize(models)
+	clearOpenCodeDefaults(models)
+	return models, nil
+}
+
+// Native verbose models have no default selection fields. Generic picker name
+// heuristics are not proof of OpenCode's effective configured model or variant.
+func clearOpenCodeDefaults(models []ports.AgentModelInfo) {
+	for i := range models {
+		models[i].IsDefault = false
+		models[i].DefaultEffort = ""
+	}
 }
 
 func openCodeVariants(raw json.RawMessage) ([]string, error) {
