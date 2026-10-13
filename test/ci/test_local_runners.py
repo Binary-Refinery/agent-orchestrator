@@ -123,6 +123,37 @@ class LocalRunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 require_self_hosted(candidate)
 
+    def test_actual_renderer_mount_preflight_rejects_wrong_uid_and_write_denials(self):
+        import os
+        import tempfile
+        job = read_workflow(ROOT / '.github/workflows/frontend.yml')['jobs']['renderer-smoke']
+        step = job['steps'][0]
+        self.assertEqual(step['name'], 'Verify renderer container mount access')
+        self.assertEqual(step['working-directory'], '.')
+        shim = '''id() { printf '%s\\n' "$AO_TEST_UID"; }
+test() {
+  if [[ "$1" == -w && "$2" == "$AO_TEST_DENIED" ]]; then return 1; fi
+  builtin test "$@"
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, 'AO_TEST_UID': '1001', 'AO_TEST_DENIED': ''}
+            # HOME is inherited and only inspected; never repurpose it for a fixture.
+            for key in ('GITHUB_WORKSPACE', 'RUNNER_TEMP', 'RUNNER_TOOL_CACHE'):
+                path = Path(directory) / key
+                path.mkdir()
+                env[key] = str(path)
+            for key in ('GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY'):
+                path = Path(directory) / key
+                path.touch()
+                env[key] = str(path)
+            for uid, denial in (('1001', ''), ('1000', ''), ('1001', env['RUNNER_TOOL_CACHE']), ('1001', env['GITHUB_ENV'])):
+                with self.subTest(uid=uid, denial=denial):
+                    result = subprocess.run(['bash', '-c', shim + step['run']],
+                                            env={**env, 'AO_TEST_UID': uid, 'AO_TEST_DENIED': denial},
+                                            text=True, capture_output=True)
+                    self.assertEqual(result.returncode == 0, uid == '1001' and not denial, result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

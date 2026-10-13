@@ -21,6 +21,11 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up shell Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
       - name: Test leaderboard calculation
         run: node --test .github/scripts/pr-review-leaderboard.test.mjs
 

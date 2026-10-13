@@ -201,11 +201,34 @@ jobs:
     container:
       # Keep this aligned with Playwright in frontend/package-lock.json.
       image: mcr.microsoft.com/playwright:v1.60.0-noble
+      # ao-ci certification requires UID1001-writable runner mounts; see
+      # docs/local-runners.md. Verify access before checkout/setup.
       options: --user 1001
     defaults:
       run:
         working-directory: frontend
     steps:
+      - name: Verify renderer container mount access
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(id -u)" != 1001 ]; then
+            echo '::error::The certified renderer container must run as UID 1001.'
+            exit 1
+          fi
+          for ao_ci_dir in "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$RUNNER_TOOL_CACHE" "$HOME"; do
+            if ! test -d "$ao_ci_dir" || ! test -w "$ao_ci_dir"; then
+              echo "::error::UID 1001 cannot write required runner directory: $ao_ci_dir"
+              exit 1
+            fi
+          done
+          for ao_ci_file in "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"; do
+            if ! test -w "$ao_ci_file"; then
+              echo "::error::UID 1001 cannot write runner command file: $ao_ci_file"
+              exit 1
+            fi
+          done
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4

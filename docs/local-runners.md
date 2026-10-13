@@ -35,6 +35,13 @@ above. Windows/macOS registrations and fork access remain unverified.
 - Native hosts need Bash/Git and the toolchains selected by the existing setup
   actions. macOS also needs Xcode command-line tools, Swift and `lipo`; Windows
   needs Git Bash. Keep the OS/architecture tiers above intact.
+- Linux renderer certification requires host UID 1001 and container write access
+  to work, temp, tool-cache, HOME and action-command mounts. The actual container
+  checks these paths before checkout/setup. Test with UID1001 and an incompatible
+  owner in an isolated host; static tests cannot certify actual Docker access.
+  Fresh job workspaces must also prevent root-created package-container files
+  from breaking later jobs; verify cleanup/ownership recovery before reusing a
+  persistent workspace. Do not apply `ao-ci` on a host that lacks this evidence.
 - Candidate validation uses read-only tokens. Existing `pull_request` events and
   default merge-result checkout are preserved. Same-repository job guards mitigate
   ordinary external-fork dispatch but are editable by a candidate; they are not an
@@ -43,13 +50,42 @@ above. Windows/macOS registrations and fork access remain unverified.
   CI job records identify the intended own runners. This change does not register
   runners, change GitHub settings, merge, publish or deploy.
 
+## Certified host tool floor
+
+These are prerequisites for `ao-ci`, not observations about existing machines.
+Record executable versions, PATH resolution and actual retained command results
+before assigning the label/activating this change. Setup actions choose the
+workflow's Node/Go/Python versions; they do not install all host tools below.
+
+| Tier/path | Required host tools outside the package containers |
+| --- | --- |
+| Linux host jobs | Git, Bash, curl, GitHub CLI `gh`, `jq`, OpenSSL, archive tools, GNU make and a C/C++ toolchain; Docker and writable setup-action caches |
+| Linux Go race jobs | CGO enabled and a compatible C compiler; prove with the retained `go test -race` commands |
+| Windows host jobs | Git Bash/core archive/hash tools, PowerShell, curl, `jq`, OpenSSL, supported Python, writable action/tool caches and extraction/installation access for setup-python |
+| Windows Go race | CGO enabled and compatible MinGW-w64 C compiler/runtime; verify current Go race and DWARF5/binutils requirements and run the retained Windows race suites |
+| Windows native Electron rebuild | Supported Python and Visual Studio C++ Build Tools; verify the retained native `better-sqlite3` rebuild and unsigned installer build |
+| macOS ARM64 and Intel | Git/Bash, curl, `gh`, `jq`, OpenSSL, supported Python, Xcode command-line C/C++ tools, Swift, `lipo`, archive tools and writable action/tool caches; run each retained native build/test tier |
+
+The leaderboard now explicitly supplies pinned Node24 to the shell; the private
+Node executable used internally by JavaScript actions is not a shell PATH
+guarantee. Pricing/macOS-update jobs need native `gh`; the digest aggregate needs
+host `jq`; Windows/macOS artifact digests need native `jq`/OpenSSL. Verify those
+paths separately from the Ubuntu22.04 container that installs its own tools.
+
+References: [Go race toolchains](https://go.dev/doc/articles/race_detector#Requirements),
+[Go CGO minimum requirements](https://go.dev/wiki/MinimumRequirements#cgo),
+[native Node addon prerequisites](https://github.com/nodejs/node-gyp#installation).
+
 ## Verification
 
 `python -m unittest discover -s test/ci -v` uses PyYAML and a checkout containing
 the pinned trusted base `f60f432a32b9f72370dafab2c58b703182dc8026`. It checks every
 job selection, native matrix coverage, retained commands/events/timeouts, PR merge
 checkout, artifact identities, Ubuntu22.04 bootstrap and rejection of hosted
-fallback/missing labels/missing tiers. These are routing/contract checks, not proof
+fallback/missing labels/missing tiers. The additional mount-preflight cases execute
+the actual Bash step with an explicit test UID/permission boundary, including
+rejected UID, inaccessible directory and command-file cases. These are
+routing/contract checks, not proof
 of a real GitHub runner executing a job. Actionlint may use a local custom-label
 configuration containing `ao-ci` and `ci-heavy`.
 
