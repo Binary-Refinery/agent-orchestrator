@@ -13,6 +13,9 @@ import (
 // A late genuine receipt can settle an uncertain delivery, but it cannot grant
 // a suspended business gate or make a worker result into verified evidence.
 func (s *Service) observeWorkerWakeups(ctx context.Context, captured domain.InstructorWork) error {
+	if captured.Cancellation != nil {
+		return nil
+	}
 	dispatches, err := s.deps.Store.ListInstructorDispatches(ctx, "", captured.ID)
 	if err != nil {
 		return err

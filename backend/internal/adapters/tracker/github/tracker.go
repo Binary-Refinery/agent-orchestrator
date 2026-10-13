@@ -45,7 +45,7 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound      = errors.New("github tracker: issue not found")
+	ErrNotFound      = fmt.Errorf("github tracker: %w", ports.ErrTrackerIssueNotFound)
 	ErrRateLimited   = errors.New("github tracker: rate limited")
 	ErrAuthFailed    = errors.New("github tracker: authentication failed")
 	ErrWrongProvider = errors.New("github tracker: id is not a github tracker id")
@@ -171,6 +171,9 @@ func (t *Tracker) Get(ctx context.Context, id domain.TrackerID) (domain.Issue, e
 	var raw ghIssue
 	if err := json.Unmarshal(resp, &raw); err != nil {
 		return domain.Issue{}, fmt.Errorf("github tracker: decode issue: %w", err)
+	}
+	if raw.PullRequest != nil {
+		return domain.Issue{}, fmt.Errorf("%w: selected number is a pull request", ErrNotFound)
 	}
 	return issueFromGH(owner, repo, raw), nil
 }

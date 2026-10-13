@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
+import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { CreateProjectAgentSheet, RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -52,6 +53,71 @@ function hoursAgo(hours: number): string {
 }
 
 describe("CreateProjectAgentSheet", () => {
+	it("includes repository rules and the persistent fresh-launch task in project creation", async () => {
+		const onSubmit = renderSheet();
+		await userEvent.click(screen.getByText("Orchestrator instructions"));
+		await userEvent.type(screen.getByLabelText("Standing instructions"), "Keep the review chain.");
+		await userEvent.type(screen.getByLabelText("Rules file in repository"), " .ao/orchestrator.md ");
+		await userEvent.type(screen.getByLabelText("Initial task for new launches"), "Inspect assigned work.");
+		expect(screen.getByText(/Never replayed on resume/)).toBeVisible();
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+			orchestratorRules: "Keep the review chain.",
+			orchestratorRulesFile: ".ao/orchestrator.md",
+			orchestratorPrompt: "Inspect assigned work.",
+		}));
+	});
+
+	it("requires native effort for a new model and remembers choices by exact model and provider", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(agentReadinessQueryKey, { agents: [agentReadiness("codex", "Codex"), agentReadiness("opencode", "OpenCode")] });
+		queryClient.setQueryData(agentModelsQueryKey("codex", ""), {
+			agent: "codex", selectionMode: "catalog", allowCustom: false, stale: false,
+			models: [
+				{ id: "provider/model-a", label: "Model A", efforts: ["minimal", "native-high"], effortSupport: "supported", defaultEffort: "minimal" },
+				{ id: "provider/model-b", label: "Model B", efforts: ["minimal", "native-ultra"], effortSupport: "supported", defaultEffort: "minimal" },
+			],
+		});
+		queryClient.setQueryData(agentModelsQueryKey("opencode", ""), {
+			agent: "opencode", selectionMode: "catalog", allowCustom: false, stale: false,
+			models: [{ id: "provider/model-a", label: "Model A", efforts: ["minimal", "native-deep"], effortSupport: "supported", defaultEffort: "minimal" }],
+		});
+		const onSubmit = renderSheet(vi.fn().mockResolvedValue(undefined), queryClient);
+		const picker = await screen.findByRole("button", { name: "Orchestrator model" });
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model A" }));
+		expect(screen.getByRole("menuitemradio", { name: "Minimal" })).toHaveAttribute("aria-checked", "false");
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-high" }));
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model B" }));
+		expect(screen.getByRole("menuitemradio", { name: "Minimal" })).toHaveAttribute("aria-checked", "false");
+		await userEvent.keyboard("{Escape}{Escape}");
+		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-ultra" }));
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model A" }));
+		expect(screen.getByRole("menuitemradio", { name: "Native-high" })).toHaveAttribute("aria-checked", "true");
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-high" }));
+		await chooseOption(screen.getByLabelText("Orchestrator agent"), "OpenCode");
+		await userEvent.click(picker);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Model A" }));
+		expect(screen.getByRole("menuitemradio", { name: "Minimal" })).toHaveAttribute("aria-checked", "false");
+		expect(screen.getByRole("menuitemradio", { name: "Native-deep" })).toHaveAttribute("aria-checked", "false");
+		await userEvent.click(screen.getByRole("menuitemradio", { name: "Native-deep" }));
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+			orchestratorAgent: "opencode",
+			orchestratorAgentConfig: {
+				model: "provider/model-a", effort: "native-deep",
+				nativeEffortDefaults: { codex: { "provider/model-a": "native-high", "provider/model-b": "native-ultra" }, opencode: { "provider/model-a": "native-deep" } },
+			},
+		}));
+	});
+
 	it("shakes the active sheet when creation fails", () => {
 		renderSheet(undefined, undefined, { shake: true });
 

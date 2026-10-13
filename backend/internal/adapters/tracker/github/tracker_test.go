@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // recordedReq captures one inbound HTTP request so tests can assert against
@@ -175,6 +176,18 @@ func TestGet_HappyPath(t *testing.T) {
 	}
 	if !reflect.DeepEqual(issue, want) {
 		t.Fatalf("issue = %#v\nwant %#v", issue, want)
+	}
+}
+
+func TestGet_PullRequestNumberIsNotAnIssue(t *testing.T) {
+	f := newFakeGH(t)
+	f.on("GET", "/repos/source/repository/issues/42", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"number":42,"title":"A pull request","state":"open","pull_request":{"url":"https://api.github.com/repos/source/repository/pulls/42"}}`))
+	})
+	tracker := newTrackerForTest(t, f)
+	_, err := tracker.Get(ctx(), domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "source/repository#42"})
+	if !errors.Is(err, ErrNotFound) || !errors.Is(err, ports.ErrTrackerIssueNotFound) {
+		t.Fatalf("pull request admitted as issue: %v", err)
 	}
 }
 

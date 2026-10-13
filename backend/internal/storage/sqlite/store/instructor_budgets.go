@@ -53,6 +53,9 @@ func reserveInstructorBudgetEntry(ctx context.Context, db gen.DBTX, work domain.
 	if err := json.Unmarshal([]byte(body), &pinned); err != nil {
 		return entry, err
 	}
+	if pinned.Cancellation != nil || pinned.State == "done" || pinned.State == "cancelled" {
+		return entry, errors.New("terminal or cancelling work cannot reserve execution")
+	}
 	if pinned.PolicyVersion != entry.PolicyVersion {
 		return entry, errors.New("instructor budget policy changed before admission")
 	}

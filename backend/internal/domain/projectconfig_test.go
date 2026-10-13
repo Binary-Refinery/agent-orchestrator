@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestProjectConfigValidate(t *testing.T) {
 	tests := []struct {
@@ -42,6 +45,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"agent rules file parent escape", ProjectConfig{AgentRulesFile: "../rules.md"}, true},
 		{"agent rules file cleans to dot", ProjectConfig{AgentRulesFile: "docs/.."}, true},
 		{"agent rules file bare dot", ProjectConfig{AgentRulesFile: "."}, true},
+		{"good orchestrator rules file and kickoff", ProjectConfig{OrchestratorRulesFile: ".ao/orchestrator.md", OrchestratorPrompt: "Inspect active work."}, false},
 		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
 		{"good codex reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex}}}, false},
 		{"good copilot reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCopilot}}}, false},
@@ -83,6 +87,29 @@ func TestProjectConfigValidate(t *testing.T) {
 				t.Fatalf("Validate() err = %v, wantErr = %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestProjectConfigRulesFilesUsePortableRepoRelativeValidation(t *testing.T) {
+	for _, field := range []string{"agentRulesFile", "orchestratorRulesFile"} {
+		for _, path := range []string{"/etc/rules.md", `C:\rules.md`, `C:rules.md`, `\\server\rules.md`, "../rules.md", `..\rules.md`, "docs/../rules.md", `docs\..\rules.md`, ".", ".."} {
+			t.Run(field+"/"+path, func(t *testing.T) {
+				cfg := ProjectConfig{AgentRulesFile: path}
+				if field == "orchestratorRulesFile" {
+					cfg = ProjectConfig{OrchestratorRulesFile: path}
+				}
+				err := cfg.Validate()
+				if err == nil || !strings.Contains(err.Error(), field) || !strings.Contains(err.Error(), "repo-relative") {
+					t.Fatalf("Validate(%q) = %v, want clear %s path error", path, err, field)
+				}
+			})
+		}
+		for _, path := range []string{"", "docs/rules.md", `docs\rules.md`} {
+			cfg := ProjectConfig{AgentRulesFile: path, OrchestratorRulesFile: path}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("valid portable path %q: %v", path, err)
+			}
+		}
 	}
 }
 

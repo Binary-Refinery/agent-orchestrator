@@ -57,6 +57,7 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { CLOUD_PROJECT_KIND, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
+import type { CreateProjectAgentSelection } from "../components/CreateProjectAgentSheet";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -85,18 +86,16 @@ function findRegisteredWorkspaceByPath(workspaces: WorkspaceSummary[], path: str
 	return workspaces.find((workspace) => normalizeProjectPath(workspace.path) === normalizedPath);
 }
 
-type CreateProjectConfigInput = {
-	workerAgent: string;
-	orchestratorAgent: string;
-	trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
-	defaultBranch?: string;
-};
+type CreateProjectConfigInput = CreateProjectAgentSelection & { defaultBranch?: string };
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
 	return {
 		...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
-		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
-		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
+		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"], ...(input.workerAgentConfig ? { agentConfig: input.workerAgentConfig } : {}) },
+		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"], ...(input.orchestratorAgentConfig ? { agentConfig: input.orchestratorAgentConfig } : {}) },
+		...(input.orchestratorRules?.trim() ? { orchestratorRules: input.orchestratorRules } : {}),
+		...(input.orchestratorRulesFile?.trim() ? { orchestratorRulesFile: input.orchestratorRulesFile.trim() } : {}),
+		...(input.orchestratorPrompt?.trim() ? { orchestratorPrompt: input.orchestratorPrompt } : {}),
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
 }
@@ -500,11 +499,8 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: {
+		async (input: CreateProjectConfigInput & {
 			path: string;
-			workerAgent: string;
-			orchestratorAgent: string;
-			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
 			clonePreparationId?: string;
 		}) => {
@@ -577,12 +573,9 @@ function ShellLayout() {
 	);
 
 	const cloneProject = useCallback(
-		async (input: {
+		async (input: CreateProjectConfigInput & {
 			remoteUrl: string;
 			destinationParent: string;
-			workerAgent: string;
-			orchestratorAgent: string;
-			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			signal?: AbortSignal;
 		}) => {
 			void addRendererExceptionStep("Project clone requested", {

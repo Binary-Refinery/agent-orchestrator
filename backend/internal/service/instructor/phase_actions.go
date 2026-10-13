@@ -27,7 +27,7 @@ func (s *Service) schedulePhaseAction(ctx context.Context, id string) error {
 		s.mu.Unlock()
 		return err
 	}
-	if w.State != "ready" && w.State != "running" {
+	if w.Cancellation != nil || w.State != "ready" && w.State != "running" {
 		s.mu.Unlock()
 		return nil
 	}
@@ -147,7 +147,7 @@ func (s *Service) schedulePhaseAction(ctx context.Context, id string) error {
 		defer s.finishPhaseSlot(actionID)
 		var runErr error
 		if kind == "checks" {
-			_, runErr = s.RunChecks(runCtx, w.ID, producer, []string{"push", "full"})
+			_, runErr = s.RunChecks(context.WithValue(runCtx, phaseActionContextKey{}, actionID), w.ID, producer, []string{"push", "full"})
 		} else {
 			runErr = s.validateLocalReviewWorkspace(runCtx, w, producer)
 			if runErr == nil {

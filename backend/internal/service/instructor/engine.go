@@ -11,6 +11,9 @@ import (
 // advanceWork is the daemon-owned bounded workflow reducer. It changes one
 // business phase and queues the project orchestrator; it launches no worker.
 func (s *Service) advanceWork(ctx context.Context, captured domain.InstructorWork) error {
+	if captured.Cancellation != nil {
+		return nil
+	}
 	if captured.ApprovalDispatchID != "" && captured.State != "done" && captured.State != "cancelled" && captured.State != "parked" {
 		ready, err := s.approvalCohortReady(ctx, captured.ApprovalDispatchID)
 		if errors.Is(err, errApprovalCohortStopped) {

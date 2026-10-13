@@ -34,7 +34,7 @@ func gitFact(ctx context.Context, path string, args ...string) (string, error) {
 // RunChecks produces daemon-owned evidence only after executing approved argv
 // against the attached producer's clean, immutable commit. Agent assertions
 // never become verified check evidence.
-func (s *Service) RunChecks(ctx context.Context, id string, producer domain.SessionID, profiles []string) (domain.InstructorWork, error) {
+func (s *Service) RunChecks(ctx context.Context, id string, producer domain.SessionID, profiles []string) (result domain.InstructorWork, resultErr error) {
 	w, err := s.get(ctx, id)
 	if err != nil {
 		return w, err
@@ -138,6 +138,11 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if len(profiles) == 0 {
 		profiles = []string{"push", "full"}
 	}
+	ctx, finish, err := s.beginManualChecks(ctx, w, producer)
+	if err != nil {
+		return w, err
+	}
+	defer func() { finish(resultErr) }()
 	evidence := []domain.InstructorEvidence{}
 	for _, name := range profiles {
 		pf, ok := w.Policy.Profiles[name]

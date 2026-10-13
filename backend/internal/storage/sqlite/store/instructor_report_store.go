@@ -35,7 +35,7 @@ func (s *Store) CreateInstructorWorkerReport(ctx context.Context, rec domain.Rep
 		if err := json.Unmarshal([]byte(body), &w); err != nil {
 			return err
 		}
-		if w.ProjectID != rec.ProjectID || w.State == "done" || w.State == "cancelled" {
+		if w.Cancellation != nil || w.ProjectID != rec.ProjectID || w.State == "done" || w.State == "cancelled" {
 			return errors.New("completion claim does not belong to active work")
 		}
 		var instance string

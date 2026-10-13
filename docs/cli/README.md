@@ -220,6 +220,24 @@ PR actions are available through `ao pr merge` and
 
 ## Configuration
 
+Project config accepts `orchestratorRulesFile` alongside `orchestratorRules`.
+The daemon appends the current repository file after the inline standing rules
+at each orchestrator creation and restore; missing, unreadable, or escaping
+files fail the launch clearly. Paths use either slash style, stay relative to
+the registered repository, and cannot traverse parents or follow symlinks out
+of it. Worker rules remain separate in `agentRules` / `agentRulesFile`.
+
+`orchestratorPrompt` is an optional initial user task, separate from standing
+rules. Set it when registering or updating a project through the existing
+project config API. A fresh orchestrator uses it only when the session spawn
+request has no `prompt`; an explicit request prompt overrides it. Returning an
+existing orchestrator, restoring one, and sending follow-up messages never
+dispatch this default again. Without either new field, behavior is unchanged.
+The existing `ao project add` and `ao project set-config` commands expose
+`--orchestrator-rules`, `--orchestrator-rules-file`, and
+`--orchestrator-prompt`; `set-config --config-json` accepts the same fields.
+Legacy YAML import preserves these settings as well.
+
 The CLI and daemon share the same environment-driven config:
 
 | Var                   | Default              | Purpose                                                                                        |

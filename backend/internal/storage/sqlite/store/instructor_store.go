@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -44,6 +45,16 @@ func (s *Store) PutInstructorPolicy(ctx context.Context, p domain.InstructorPoli
 
 // CreateInstructorWork creates a durable work and intake event, reusing its existing source identity.
 func (s *Store) CreateInstructorWork(ctx context.Context, w domain.InstructorWork, event domain.InstructorEvent) (domain.InstructorWork, error) {
+	return s.createInstructorWork(ctx, w, event, nil)
+}
+
+// CreateInstructorIssueWork atomically fences the observed registered project and
+// reuses an issue-linked work, including a prior manual registration of the issue.
+func (s *Store) CreateInstructorIssueWork(ctx context.Context, w domain.InstructorWork, event domain.InstructorEvent, project domain.ProjectRecord) (domain.InstructorWork, error) {
+	return s.createInstructorWork(ctx, w, event, &project)
+}
+
+func (s *Store) createInstructorWork(ctx context.Context, w domain.InstructorWork, event domain.InstructorEvent, issueProject *domain.ProjectRecord) (domain.InstructorWork, error) {
 	if err := s.writeMu.LockContext(ctx); err != nil {
 		return w, err
 	}
@@ -56,10 +67,45 @@ func (s *Store) CreateInstructorWork(ctx context.Context, w domain.InstructorWor
 	if err != nil {
 		return w, err
 	}
-	err = s.inTxDB(ctx, "create instructor work", func(_ *gen.Queries, db gen.DBTX) error {
+	err = s.inTxDB(ctx, "create instructor work", func(q *gen.Queries, db gen.DBTX) error {
+		if issueProject != nil {
+			row, e := q.GetProject(ctx, w.ProjectID)
+			if errors.Is(e, sql.ErrNoRows) {
+				return domain.ErrInstructorIntakeChanged
+			}
+			if e != nil {
+				return e
+			}
+			if !reflect.DeepEqual(projectRowFromGen(row), *issueProject) {
+				return domain.ErrInstructorIntakeChanged
+			}
+			repository, e := domain.InstructorGitHubRepository(*issueProject)
+			if e != nil {
+				return domain.ErrInstructorIntakeChanged
+			}
+			number, valid := domain.InstructorWorkGitHubIssue(w, repository)
+			if !valid {
+				return domain.ErrInstructorIntakeChanged
+			}
+			previous, found, e := instructorIssueWorkInTx(ctx, db, w.ProjectID, repository, number)
+			if e != nil {
+				return e
+			}
+			if found {
+				w = previous
+				return nil
+			}
+		}
 		var old string
 		e := db.QueryRowContext(ctx, `SELECT body FROM instructor_works WHERE project_id=? AND source=? AND source_ref=?`, w.ProjectID, w.Source, w.SourceRef).Scan(&old)
 		if e == nil {
+			// Issue intake already resolved every valid issue association above.
+			// A matching source key left here has a conflicting saved identity;
+			// preserve that work for reconciliation instead of returning it as a
+			// successful intake of another issue.
+			if issueProject != nil {
+				return fmt.Errorf("%w: saved issue source has a conflicting issue association", domain.ErrInstructorIntakeChanged)
+			}
 			return json.Unmarshal([]byte(old), &w)
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
@@ -245,7 +291,7 @@ func preserveInstructorDirectivesAcrossAudit(ctx context.Context, db gen.DBTX, p
 		return err
 	}
 	for _, dispatch := range dispatches {
-		if dispatch.ProjectID != current.ProjectID || dispatch.WorkRevision != expected || onlyStop && dispatch.Action != "stopp" {
+		if dispatch.ProjectID != current.ProjectID || dispatch.WorkRevision != expected || onlyStop && dispatch.Action != "stopp" && dispatch.Action != "abbrechen" {
 			continue
 		}
 		dispatch.WorkRevision, dispatch.UpdatedAt = current.Revision, at

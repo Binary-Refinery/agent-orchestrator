@@ -897,6 +897,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instructor/projects/{projectId}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse actual open GitHub issues or preview an exact issue number for a registered project */
+        get: operations["instructorIssueCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/projects/{projectId}/issues/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register one real GitHub issue as durable work without launching agents or modifying GitHub */
+        post: operations["intakeInstructorIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instructor/reconcile": {
         parameters: {
             query?: never;
@@ -4351,6 +4385,14 @@ export interface components {
             maxSessions: number;
             maxTurns: number;
         };
+        InstructorCancellation: {
+            /** Format: date-time */
+            completedAt?: null | string;
+            dispatchId: string;
+            observation?: string;
+            /** Format: date-time */
+            requestedAt: string;
+        };
         InstructorCapabilitiesResponse: {
             commands: components["schemas"]["InstructorCommandSpec"][];
             enabled: boolean;
@@ -4580,6 +4622,30 @@ export interface components {
             sessions: components["schemas"]["InstructorSessionInventory"][];
             unassignedCount: number;
             unassignedResourceCount: number;
+        };
+        InstructorIssueCandidate: {
+            assignees: string[];
+            body: string;
+            bodyTruncated: boolean;
+            labels: string[];
+            linkedWorkId?: string;
+            number: number;
+            state: string;
+            title: string;
+            url: string;
+        };
+        InstructorIssueCandidates: {
+            /** Format: date-time */
+            capturedAt: string;
+            issues: components["schemas"]["InstructorIssueCandidate"][];
+            projectId: string;
+            repository: string;
+            truncated: boolean;
+        };
+        InstructorIssueIntakeRequest: {
+            name?: string;
+            number: number;
+            repository: string;
         };
         InstructorLaunch: {
             confirmed?: components["schemas"]["InstructorAgentSelection"];
@@ -4896,6 +4962,7 @@ export interface components {
             approvalDispatchId?: string;
             approvedTransitions?: string[];
             branch?: string;
+            cancellation?: components["schemas"]["InstructorCancellation"];
             /** Format: date-time */
             createdAt: string;
             /** Format: int64 */
@@ -5263,7 +5330,9 @@ export interface components {
             governanceFile?: string;
             governanceManaged?: boolean;
             orchestrator?: components["schemas"]["RoleOverride"];
+            orchestratorPrompt?: string;
             orchestratorRules?: string;
+            orchestratorRulesFile?: string;
             planReviewer?: components["schemas"]["RoleOverride"];
             planner?: components["schemas"]["RoleOverride"];
             plannerRules?: string;
@@ -9309,6 +9378,164 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstructorPolicy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorIssueCandidates: {
+        parameters: {
+            query?: {
+                number?: number;
+            };
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorIssueCandidates"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    intakeInstructorIssue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstructorIssueIntakeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorWork"];
                 };
             };
             /** @description Bad Request */

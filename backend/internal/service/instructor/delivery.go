@@ -35,14 +35,14 @@ func (s *Service) deliverNativeStop(ctx context.Context, dispatch domain.Instruc
 			if dispatch.State == "delivered" || dispatch.State == "accepted" || dispatch.State == "started" || dispatch.State == "progress" {
 				return nil // Another tick already recorded this control receipt.
 			}
-			if dispatch.Action != "stopp" || dispatch.State != "leased" {
+			if (dispatch.Action != "stopp" && dispatch.Action != "abbrechen") || dispatch.State != "leased" {
 				return ErrStopSuperseded
 			}
 			w, err := s.get(ctx, dispatch.WorkID)
 			if err != nil {
 				return err
 			}
-			if w.ProjectID != dispatch.ProjectID || w.State != "parked" || w.Revision != dispatch.WorkRevision {
+			if w.ProjectID != dispatch.ProjectID || w.State != "parked" || w.Revision != dispatch.WorkRevision || dispatch.Action == "abbrechen" && (w.Cancellation == nil || w.Cancellation.DispatchID != dispatch.ID) || dispatch.Action == "stopp" && w.Cancellation != nil {
 				return ErrStopSuperseded
 			}
 			return nil
@@ -185,7 +185,7 @@ func (s *Service) deliveryFailed(ctx context.Context, dispatch domain.Instructor
 	if err != nil {
 		return err
 	}
-	if w.State == "done" || w.State == "cancelled" || w.State == "parked" && dispatch.Action != "stopp" {
+	if w.State == "done" || w.State == "cancelled" || w.State == "parked" && dispatch.Action != "stopp" && dispatch.Action != "abbrechen" {
 		return nil
 	}
 	kind, title := "delivery", "Zustellung fehlgeschlagen; erneute Freigabe nötig"
@@ -199,7 +199,7 @@ func (s *Service) deliveryFailed(ctx context.Context, dispatch domain.Instructor
 	} else if w.Gate == nil {
 		w.Gate = &domain.InstructorGate{ID: deliveryGateID(dispatch.ID), Kind: kind, Title: title, DispatchID: dispatch.ID, TargetSessionID: dispatch.TargetSessionID, OpenedAt: s.now()}
 	}
-	if w.State != "parked" {
+	if w.State != "parked" && w.Cancellation == nil {
 		w.State = "waiting_human"
 	}
 	w.Summary = title
@@ -287,7 +287,7 @@ func (s *Service) ReconcileDelivery(ctx context.Context, in ReconcileInput) (dom
 		return w, err
 	}
 	s.clearUncertain(&w, dispatch.ID, dispatches)
-	if w.State != "parked" {
+	if w.State != "parked" && w.Cancellation == nil {
 		w.State = "ready"
 		if w.Gate != nil {
 			w.State = "waiting_human"

@@ -24,8 +24,35 @@ type InstructorReportAdmission struct {
 	Effort            string
 }
 
+// InstructorCancellation records permanent operator intent, independently of native stop proof.
+// Until CompletedAt is set the work remains visibly parked; it cannot be resumed.
+type InstructorCancellation struct {
+	DispatchID  string     `json:"dispatchId"`
+	RequestedAt time.Time  `json:"requestedAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	Observation string     `json:"observation,omitempty"`
+}
+
+// InstructorCancellationProof is internal native observation, fenced at completion.
+type InstructorCancellationProof struct {
+	Producers []InstructorReportAdmission
+	Reviews   []InstructorCancellationReviewProof
+}
+
+// InstructorCancellationReviewProof captures the exact observed reviewer epoch.
+type InstructorCancellationReviewProof struct {
+	ID                   string
+	CreatedAt            time.Time
+	RuntimeID            string
+	ControllerGeneration string
+	HandleID             string
+	InterfaceMode        ReviewerInterfaceMode
+	NativeQuiet          bool
+}
+
 // InstructorWork is durable business state, distinct from derived session status.
 type InstructorWork struct {
+	Cancellation            *InstructorCancellation           `json:"cancellation,omitempty"`
 	ID                      string                            `json:"id"`
 	ProjectID               ProjectID                         `json:"projectId"`
 	Name                    string                            `json:"name"`

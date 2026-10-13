@@ -439,9 +439,27 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 
 	// POST /projects gets the same gate, so add-time config rides the same rail.
 	otherRepo := gitRepo(t, "rejects-unknown-add")
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(otherRepo)+`,"projectId":"rej2","config":{"orchestratorRules":"x"}}`)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(otherRepo)+`,"projectId":"rej2","config":{"orchestratorRules":"x","orchestratorRulesFile":".ao/orchestrator.md","orchestratorPrompt":"Inspect pending work."}}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestratorRules add config = %d, want 201; body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/rej2", "")
+	if status != http.StatusOK {
+		t.Fatalf("get rules config = %d; body=%s", status, body)
+	}
+	var readback struct {
+		Project struct {
+			Config domain.ProjectConfig `json:"config"`
+		} `json:"project"`
+	}
+	mustJSON(t, body, &readback)
+	if readback.Project.Config.OrchestratorRulesFile != ".ao/orchestrator.md" || readback.Project.Config.OrchestratorPrompt != "Inspect pending work." {
+		t.Fatalf("orchestrator config did not round-trip: %#v", readback.Project.Config)
+	}
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej2/config", `{"config":{"orchestratorRulesFile":"../escape.md"}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_PROJECT_CONFIG")
+	if !strings.Contains(string(body), "orchestratorRulesFile") || !strings.Contains(string(body), "repo-relative") {
+		t.Fatalf("unclear invalid rules-file error: %s", body)
 	}
 }
 

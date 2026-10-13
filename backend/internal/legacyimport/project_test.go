@@ -101,9 +101,11 @@ func TestBuildProjectConfig_NonMainBranchKept(t *testing.T) {
 func TestBuildProjectConfig_CarriesPromptRules(t *testing.T) {
 	var notes []string
 	cfg := buildProjectConfig(legacyProjectConfig{
-		AgentRules:       stringNode("Run focused tests."),
-		AgentRulesFile:   stringNode(" docs/rules.md "),
-		OrchestratorRule: stringNode("Coordinate through workers."),
+		AgentRules:            stringNode("Run focused tests."),
+		AgentRulesFile:        stringNode(" docs/rules.md "),
+		OrchestratorRule:      stringNode("Coordinate through workers."),
+		OrchestratorRulesFile: stringNode(" .ao/orchestrator.md "),
+		OrchestratorPrompt:    stringNode("Inspect pending work."),
 	}, &notes)
 	if cfg.AgentRules != "Run focused tests." {
 		t.Fatalf("agentRules = %q", cfg.AgentRules)
@@ -114,10 +116,33 @@ func TestBuildProjectConfig_CarriesPromptRules(t *testing.T) {
 	if cfg.OrchestratorRules != "Coordinate through workers." {
 		t.Fatalf("orchestratorRules = %q", cfg.OrchestratorRules)
 	}
+	if cfg.OrchestratorRulesFile != ".ao/orchestrator.md" || cfg.OrchestratorPrompt != "Inspect pending work." {
+		t.Fatalf("orchestrator file and startup = %#v", cfg)
+	}
 	for _, note := range notes {
 		if strings.Contains(note, "rules") {
 			t.Fatalf("supported prompt rules should not be reported as dropped: %v", notes)
 		}
+	}
+}
+
+func TestBuildProjectConfigDecodesOrchestratorStartupYAML(t *testing.T) {
+	var legacy legacyProjectConfig
+	if err := yaml.Unmarshal([]byte("agentRules: Run tests.\nagentRulesFile: docs/worker.md\norchestratorRules: Delegate.\norchestratorRulesFile: .ao/orchestrator.md\norchestratorPrompt: |\n  Inspect pending work.\n  Use existing workers.\n"), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	cfg := buildProjectConfig(legacy, &notes)
+	if cfg.AgentRules != "Run tests." || cfg.AgentRulesFile != "docs/worker.md" || cfg.OrchestratorRules != "Delegate." || cfg.OrchestratorRulesFile != ".ao/orchestrator.md" || cfg.OrchestratorPrompt != "Inspect pending work.\nUse existing workers.\n" || len(notes) != 0 {
+		t.Fatalf("YAML startup = %#v; notes=%v", cfg, notes)
+	}
+}
+
+func TestOrchestratorStartupYAMLRejectsDuplicateFields(t *testing.T) {
+	var legacy legacyProjectConfig
+	err := yaml.Unmarshal([]byte("orchestratorRulesFile: first.md\norchestratorRulesFile: second.md\n"), &legacy)
+	if err == nil || !strings.Contains(err.Error(), "orchestratorRulesFile") {
+		t.Fatalf("duplicate YAML field error = %v", err)
 	}
 }
 

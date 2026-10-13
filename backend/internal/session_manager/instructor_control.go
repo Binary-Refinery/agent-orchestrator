@@ -47,3 +47,39 @@ func (m *Manager) InterruptInstructorProducer(ctx context.Context, id domain.Ses
 	}
 	return interrupter.Interrupt(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID})
 }
+
+// InstructorProducerQuiescent never treats a failed probe or a TUI idle hook as
+// native termination proof. Chat requires the live controller's own quiet seam.
+func (m *Manager) InstructorProducerQuiescent(ctx context.Context, id domain.SessionID, instance string) (bool, error) {
+	release, admitted := m.AcquireSessionInput(id)
+	if !admitted {
+		return false, errAgentOperationInProgress
+	}
+	defer release()
+	reader, ok := m.store.(interface {
+		InstructorSessionForMembership(context.Context, domain.SessionID) (domain.SessionRecord, string, bool, error)
+	})
+	if !ok {
+		return false, ErrSemanticAcceptanceUnsupported
+	}
+	rec, key, found, err := reader.InstructorSessionForMembership(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if !found || key != instance {
+		return false, domain.ErrInstructorProducerChanged
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+		return true, nil
+	}
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
+		return false, nil
+	}
+	observer, ok := m.chat.(interface {
+		InstructorChatQuiescent(context.Context, domain.SessionID) (bool, error)
+	})
+	if !ok {
+		return false, ErrSemanticAcceptanceUnsupported
+	}
+	return observer.InstructorChatQuiescent(ctx, id)
+}

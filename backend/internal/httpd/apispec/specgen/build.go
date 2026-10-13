@@ -193,6 +193,12 @@ var schemaNames = map[string]string{ // #nosec G101 -- Type-name registry contai
 	"ControllersInstructorCommandsResponse":                "InstructorCommandsResponse",
 	"ControllersInstructorStatusQuery":                     "InstructorStatusQuery",
 	"ControllersInstructorWorkIDParam":                     "InstructorWorkIDParam",
+	"ControllersInstructorProjectIDParam":                  "InstructorProjectIDParam",
+	"ControllersInstructorIssueCandidatesQuery":            "InstructorIssueCandidatesQuery",
+	"ControllersInstructorIssueIntakeRequest":              "InstructorIssueIntakeRequest",
+	"DomainInstructorIssueCandidate":                       "InstructorIssueCandidate",
+	"DomainInstructorIssueCandidates":                      "InstructorIssueCandidates",
+	"DomainInstructorCancellation":                         "InstructorCancellation",
 	"ControllersInstructorRegisterRequest":                 "InstructorRegisterRequest",
 	"ControllersInstructorAttachSessionRequest":            "InstructorAttachSessionRequest",
 	"ControllersInstructorChecksRequest":                   "InstructorChecksRequest",
@@ -695,6 +701,8 @@ func instructorOperations() []operation {
 	}
 	return []operation{
 		{method: http.MethodGet, path: "/api/v1/instructor/capabilities", id: "instructorCapabilities", tag: "instructor", summary: "Inspect Instructor availability and its command registry", resps: []respUnit{{http.StatusOK, controllers.InstructorCapabilitiesResponse{}}}},
+		{method: http.MethodGet, path: "/api/v1/instructor/projects/{projectId}/issues", id: "instructorIssueCandidates", tag: "instructor", summary: "Browse actual open GitHub issues or preview an exact issue number for a registered project", pathParams: []any{controllers.InstructorProjectIDParam{}, controllers.InstructorIssueCandidatesQuery{}}, resps: append([]respUnit{{http.StatusOK, domain.InstructorIssueCandidates{}}}, errors...)},
+		{method: http.MethodPost, path: "/api/v1/instructor/projects/{projectId}/issues/intake", id: "intakeInstructorIssue", tag: "instructor", summary: "Register one real GitHub issue as durable work without launching agents or modifying GitHub", pathParams: []any{controllers.InstructorProjectIDParam{}}, reqBody: controllers.InstructorIssueIntakeRequest{}, resps: append([]respUnit{{http.StatusCreated, domain.InstructorWork{}}}, errors...)},
 		{method: http.MethodGet, path: "/api/v1/instructor/status", id: "instructorStatus", tag: "instructor", summary: "Capture a stable work snapshot and available actions", pathParams: []any{controllers.InstructorStatusQuery{}}, resps: append([]respUnit{{http.StatusOK, domain.InstructorSnapshot{}}}, errors...)},
 		{method: http.MethodGet, path: "/api/v1/instructor/inventory", id: "instructorInventory", tag: "instructor", summary: "List real runtime projects and sessions including unassigned legacy work", resps: append([]respUnit{{http.StatusOK, controllers.InstructorInventoryResponse{}}}, errors...)},
 		{method: http.MethodPost, path: "/api/v1/instructor/inventory/reconcile", id: "reconcileInstructorInventory", tag: "instructor", summary: "Acknowledge one no-longer-observed resource without deleting any data", reqBody: controllers.InstructorInventoryReconcileRequest{}, resps: append([]respUnit{{http.StatusOK, controllers.InstructorOKResponse{}}}, errors...)},

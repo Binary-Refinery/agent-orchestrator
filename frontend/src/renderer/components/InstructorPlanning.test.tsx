@@ -27,7 +27,7 @@ describe("InstructorPlanning", () => {
 	it("keeps advisory proposals explicit and partial native confirmation unknown", async () => {
 		mocks.jobs = [job()]; const onProposal = vi.fn(); const onIntake = vi.fn();
 		render(<InstructorPlanning snapshotId="snapshot-1" busy={false} onProposal={onProposal} onIntake={onIntake} />);
-		await userEvent.click(screen.getByText("What should proceed?"));
+		await userEvent.click(screen.getByText("Model and request details"));
 		expect(screen.getByText("Publication needs the operator.")).toBeInTheDocument();
 		expect(screen.getByText("opencode · native/model · Unknown")).toBeInTheDocument();
 		expect(onProposal).not.toHaveBeenCalled();
@@ -39,7 +39,7 @@ describe("InstructorPlanning", () => {
 	it("keeps proposals bound to their original snapshot after Status changes", async () => {
 		mocks.jobs = [job()];
 		render(<InstructorPlanning snapshotId="snapshot-2" busy={false} onProposal={vi.fn()} onIntake={vi.fn()} />);
-		await userEvent.click(screen.getByText("What should proceed?"));
+		await userEvent.click(screen.getByText("Model and request details"));
 		expect(screen.getByRole("button", { name: "Apply proposed command" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Review intake draft" })).toBeDisabled();
 		expect(screen.getByText("This advice refers to an earlier snapshot. Ask again for the current portfolio before applying it.")).toBeInTheDocument();

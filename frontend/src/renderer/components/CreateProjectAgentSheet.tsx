@@ -33,17 +33,43 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { appI18n } from "../i18n";
 import { Button } from "./ui/button";
+import { ProjectAgentModelField } from "./settings/ProjectAgentModelField";
+import { OrchestratorInstructionsFields } from "./OrchestratorInstructionsFields";
+import { rememberNativeEffort, savedNativeEffort, type NativeEffortDefaults } from "../lib/native-effort-defaults";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
+	workerAgentConfig?: components["schemas"]["AgentConfig"];
+	orchestratorAgentConfig?: components["schemas"]["AgentConfig"];
+	orchestratorRules?: string;
+	orchestratorRulesFile?: string;
+	orchestratorPrompt?: string;
 	trackerIntake?: TrackerIntakeConfig;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 const AGENT_MENU_WIDTH = "w-56! min-w-56! max-w-56!";
+type CreationRoleTuning = {
+	model: string;
+	mode: string;
+	effort: string;
+	defaults: NativeEffortDefaults;
+};
+const emptyRoleTuning = (): CreationRoleTuning => ({ model: "", mode: "", effort: "", defaults: {} });
+
+function creationAgentConfig(tuning: CreationRoleTuning): components["schemas"]["AgentConfig"] | undefined {
+	const next = {
+		...(tuning.model ? { model: tuning.model } : {}),
+		...(tuning.mode ? { mode: tuning.mode } : {}),
+		...(tuning.effort ? { effort: tuning.effort } : {}),
+		...(Object.keys(tuning.defaults).length ? { nativeEffortDefaults: tuning.defaults } : {}),
+	};
+	return Object.keys(next).length ? next : undefined;
+}
+
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	action?: "create" | "clone";
@@ -161,6 +187,10 @@ export function CreateProjectAgentSheet({
 	const displayError = agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [workerTuning, setWorkerTuning] = useState(emptyRoleTuning);
+	const [orchestratorTuning, setOrchestratorTuning] = useState(emptyRoleTuning);
+	const [tuningValidity, setTuningValidity] = useState({ worker: true, orchestrator: true });
+	const [instructions, setInstructions] = useState({ orchestratorRules: "", orchestratorRulesFile: "", orchestratorPrompt: "" });
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	useEnsureAgentReadiness({
@@ -178,6 +208,8 @@ export function CreateProjectAgentSheet({
 			intakeAssignee: intake.assignee,
 		}) &&
 		!intakeIncomplete &&
+		tuningValidity.worker &&
+		tuningValidity.orchestrator &&
 		!isBusy &&
 		!isLoadingAgents;
 	const sheetError = displayedError.current
@@ -192,6 +224,10 @@ export function CreateProjectAgentSheet({
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
 			setIntake(EMPTY_INTAKE);
+			setWorkerTuning(emptyRoleTuning());
+			setOrchestratorTuning(emptyRoleTuning());
+			setTuningValidity({ worker: true, orchestrator: true });
+			setInstructions({ orchestratorRules: "", orchestratorRulesFile: "", orchestratorPrompt: "" });
 		}
 		wasOpen.current = open;
 	}, [open]);
@@ -217,7 +253,7 @@ export function CreateProjectAgentSheet({
 		>
 			<Dialog.Portal>
 				<Dialog.Content
-					className={cn("fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "modal-shake")}
+					className={cn("fixed left-1/2 top-1/2 z-overlay max-h-[calc(100svh-24px)] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "modal-shake")}
 					onAnimationEnd={(event) => {
 						if (!open && event.target === event.currentTarget) setIsExiting(false);
 					}}
@@ -254,38 +290,66 @@ export function CreateProjectAgentSheet({
 					<ProjectSetupFormView
 						agentControls={{
 							worker: (
-								<RequiredAgentField
-									id="newProjectWorkerAgent"
-									label={t("createProject.workerAgent")}
-									placeholder={t("createProject.selectWorker")}
-									value={workerAgent}
-									agents={agentOptions}
-									disabled={isLoadingAgents}
-									labelClassName="agents-sheet-label"
-									triggerClassName="agents-sheet-control"
-									contentClassName="agents-sheet-menu"
-									onChange={(value) => {
-										setWorkerAgent(value);
-										setWorkerAgentTouched(true);
-									}}
-								/>
+								<div className="min-w-0 space-y-2">
+									<RequiredAgentField
+										id="newProjectWorkerAgent"
+										label={t("createProject.workerAgent")}
+										placeholder={t("createProject.selectWorker")}
+										value={workerAgent}
+										agents={agentOptions}
+										disabled={isBusy || isLoadingAgents}
+										labelClassName="agents-sheet-label"
+										triggerClassName="agents-sheet-control"
+										contentClassName="agents-sheet-menu"
+										onChange={(value) => {
+											setWorkerAgent(value);
+											setWorkerTuning((previous) => ({ ...emptyRoleTuning(), defaults: previous.defaults }));
+											setWorkerAgentTouched(true);
+										}}
+									/>
+									<ProjectAgentModelField
+										role="worker"
+										agentId={workerAgent}
+										projectId=""
+										disabled={isBusy}
+										model={workerTuning.model} mode={workerTuning.mode} effort={workerTuning.effort}
+										onModelChange={(model) => { setWorkerAgentTouched(true); setWorkerTuning((previous) => ({ ...previous, model, effort: savedNativeEffort(previous.defaults, workerAgent, model) })); }}
+										onModeChange={(mode) => { setWorkerAgentTouched(true); setWorkerTuning((previous) => ({ ...previous, mode })); }}
+										onEffortChange={(effort) => { setWorkerAgentTouched(true); setWorkerTuning((previous) => ({ ...previous, effort, defaults: rememberNativeEffort(previous.defaults, workerAgent, previous.model, effort) })); }}
+										onValidityChange={(valid) => setTuningValidity((previous) => ({ ...previous, worker: valid }))}
+									/>
+								</div>
 							),
 							orchestrator: (
-								<RequiredAgentField
-									id="newProjectOrchestratorAgent"
-									label={t("createProject.orchestratorAgent")}
-									placeholder={t("createProject.selectOrchestrator")}
-									value={orchestratorAgent}
-									agents={agentOptions}
-									disabled={isLoadingAgents}
-									labelClassName="agents-sheet-label"
-									triggerClassName="agents-sheet-control"
-									contentClassName="agents-sheet-menu"
-									onChange={(value) => {
-										setOrchestratorAgent(value);
-										setOrchestratorAgentTouched(true);
-									}}
-								/>
+								<div className="min-w-0 space-y-2">
+									<RequiredAgentField
+										id="newProjectOrchestratorAgent"
+										label={t("createProject.orchestratorAgent")}
+										placeholder={t("createProject.selectOrchestrator")}
+										value={orchestratorAgent}
+										agents={agentOptions}
+										disabled={isBusy || isLoadingAgents}
+										labelClassName="agents-sheet-label"
+										triggerClassName="agents-sheet-control"
+										contentClassName="agents-sheet-menu"
+										onChange={(value) => {
+											setOrchestratorAgent(value);
+											setOrchestratorTuning((previous) => ({ ...emptyRoleTuning(), defaults: previous.defaults }));
+											setOrchestratorAgentTouched(true);
+										}}
+									/>
+									<ProjectAgentModelField
+										role="orchestrator"
+										agentId={orchestratorAgent}
+										projectId=""
+										disabled={isBusy}
+										model={orchestratorTuning.model} mode={orchestratorTuning.mode} effort={orchestratorTuning.effort}
+										onModelChange={(model) => { setOrchestratorAgentTouched(true); setOrchestratorTuning((previous) => ({ ...previous, model, effort: savedNativeEffort(previous.defaults, orchestratorAgent, model) })); }}
+										onModeChange={(mode) => { setOrchestratorAgentTouched(true); setOrchestratorTuning((previous) => ({ ...previous, mode })); }}
+										onEffortChange={(effort) => { setOrchestratorAgentTouched(true); setOrchestratorTuning((previous) => ({ ...previous, effort, defaults: rememberNativeEffort(previous.defaults, orchestratorAgent, previous.model, effort) })); }}
+										onValidityChange={(valid) => setTuningValidity((previous) => ({ ...previous, orchestrator: valid }))}
+									/>
+								</div>
 							),
 						}}
 						agents={{
@@ -315,18 +379,35 @@ export function CreateProjectAgentSheet({
 						}
 						canSubmit={canSubmit}
 						intakeControl={
-							<IntakeFields
-								form={intake}
-								onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
-								compact
-								controlClassName="agents-sheet-control"
-								labelClassName="agents-sheet-label"
-							/>
+							<div className="space-y-4">
+								<OrchestratorInstructionsFields
+									idPrefix="new-project-orchestrator"
+									rules={instructions.orchestratorRules}
+									rulesFile={instructions.orchestratorRulesFile}
+									prompt={instructions.orchestratorPrompt}
+									disabled={isBusy}
+									onChange={(patch) => setInstructions((previous) => ({ ...previous, ...patch }))}
+								/>
+								<IntakeFields
+									form={intake}
+									onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
+									compact
+									controlClassName="agents-sheet-control"
+									labelClassName="agents-sheet-label"
+								/>
+							</div>
 						}
 						isBusy={isBusy}
 						onCancel={() => onOpenChange(false)}
 						onSubmit={() =>
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) })
+							void onSubmit({
+								workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake),
+								...(creationAgentConfig(workerTuning) ? { workerAgentConfig: creationAgentConfig(workerTuning) } : {}),
+								...(creationAgentConfig(orchestratorTuning) ? { orchestratorAgentConfig: creationAgentConfig(orchestratorTuning) } : {}),
+								...(instructions.orchestratorRules.trim() ? { orchestratorRules: instructions.orchestratorRules } : {}),
+								...(instructions.orchestratorRulesFile.trim() ? { orchestratorRulesFile: instructions.orchestratorRulesFile.trim() } : {}),
+								...(instructions.orchestratorPrompt.trim() ? { orchestratorPrompt: instructions.orchestratorPrompt } : {}),
+							})
 						}
 						setupNotice={
 							repositorySetupNeeded

@@ -99,7 +99,7 @@ func (s *Service) PrepareSpawn(ctx context.Context, in SpawnInput) (string, erro
 			return "", e
 		}
 	}
-	if w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
+	if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
 		return w.ID, invalid("cannot launch work in current state")
 	}
 	if err := ValidatePolicy(w.Policy); err != nil {
@@ -210,7 +210,7 @@ func (s *Service) validateManagedResume(ctx context.Context, w domain.Instructor
 	if w.PolicyVersion != PolicyVersion(w.Policy) {
 		return invalid("pinned work policy hash mismatch")
 	}
-	if w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
+	if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
 		return invalid("work may not resume in current state")
 	}
 	role, adopted, err := s.sessionRole(ctx, w, id)
@@ -321,12 +321,18 @@ func (s *Service) SpawnFailed(ctx context.Context, id string, cause error) error
 	if e != nil {
 		return e
 	}
-	w.State = "blocked"
-	w.Summary = "Start abgelehnt"
-	if cause != nil {
-		w.WaitCondition = cause.Error()
+	if w.Cancellation == nil && w.State != "done" && w.State != "cancelled" {
+		w.State = "blocked"
+		w.Summary = "Start abgelehnt"
+		if cause != nil {
+			w.WaitCondition = cause.Error()
+		}
 	}
-	_, e = s.save(ctx, w, w.Revision, "launch_failed", w.WaitCondition)
+	detail := w.WaitCondition
+	if cause != nil {
+		detail = cause.Error()
+	}
+	_, e = s.save(ctx, w, w.Revision, "launch_failed", detail)
 	return e
 }
 
@@ -425,5 +431,8 @@ func (s *Service) RecordLaunch(ctx context.Context, id string, launch domain.Ins
 	launch.PhaseSequence = w.PhaseSequence
 	w.Launches = append(w.Launches, launch)
 	_, e = s.save(ctx, w, w.Revision, "launch_recorded", launch.Role)
+	if e == nil && w.Cancellation != nil {
+		return invalid("work cancellation was admitted during launch; captured native effect must stop")
+	}
 	return e
 }

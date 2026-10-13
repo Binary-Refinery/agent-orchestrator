@@ -51,6 +51,13 @@ type ProjectConfig struct {
 	// OrchestratorRules are project-specific standing instructions for
 	// orchestrator sessions.
 	OrchestratorRules string `json:"orchestratorRules,omitempty"`
+	// OrchestratorRulesFile is a repo-relative Markdown/text file whose current
+	// contents are appended to OrchestratorRules at spawn and restore.
+	OrchestratorRulesFile string `json:"orchestratorRulesFile,omitempty"`
+	// OrchestratorPrompt is the initial user task for a freshly created
+	// orchestrator when the spawn request supplies no prompt. It is separate
+	// from standing rules and is never reapplied on restore or send.
+	OrchestratorPrompt string `json:"orchestratorPrompt,omitempty"`
 	// PlannerRules are project-specific standing instructions for plan-role
 	// sessions (planner/planReviewer). Inline text only; plan roles are
 	// coordination-only and never push, merge, or confirm findings.
@@ -267,6 +274,9 @@ func (c ProjectConfig) Validate() error {
 	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
 		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
 	}
+	if err := validateRepoRelative(c.OrchestratorRulesFile); err != nil {
+		return fmt.Errorf("orchestratorRulesFile %q: %w", c.OrchestratorRulesFile, err)
+	}
 	if err := validateRepoRelative(c.GovernanceFile); err != nil {
 		return fmt.Errorf("governanceFile %q: %w", c.GovernanceFile, err)
 	}
@@ -310,21 +320,29 @@ func validateNameComponent(name, value string) error {
 // The same guard runs at spawn time as defense-in-depth, but enforcing it here
 // rejects bad config when it is set rather than at every later spawn.
 func validateRepoRelative(p string) error {
+	return ValidateRepoRelativePath(p)
+}
+
+// ValidateRepoRelativePath applies the project-config path contract on every
+// host OS. Both slash styles are separators; Windows drive paths are rejected
+// even when the daemon runs on Unix. Empty means the optional path is unset.
+func ValidateRepoRelativePath(p string) error {
 	trimmed := strings.TrimSpace(p)
 	if trimmed == "" {
 		return nil
 	}
-	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
+	normalized := strings.ReplaceAll(trimmed, `\`, "/")
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(normalized, "/") || (len(normalized) >= 2 && normalized[1] == ':') {
 		return fmt.Errorf("path must be repo-relative and must not escape the project root")
 	}
-	clean := filepath.Clean(trimmed)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path must be repo-relative and must not escape the project root")
-	}
-	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
+	for _, seg := range strings.Split(normalized, "/") {
 		if seg == ".." {
 			return fmt.Errorf("path must be repo-relative and must not escape the project root")
 		}
+	}
+	clean := filepath.Clean(filepath.FromSlash(normalized))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must be repo-relative and must not escape the project root")
 	}
 	return nil
 }

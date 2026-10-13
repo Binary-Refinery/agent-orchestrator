@@ -15,12 +15,15 @@ import (
 )
 
 type projectAddOptions struct {
-	path              string
-	id                string
-	name              string
-	workerAgent       string
-	orchestratorAgent string
-	asWorkspace       bool
+	path                  string
+	id                    string
+	name                  string
+	workerAgent           string
+	orchestratorAgent     string
+	orchestratorRules     string
+	orchestratorRulesFile string
+	orchestratorPrompt    string
+	asWorkspace           bool
 }
 
 type projectListOptions struct {
@@ -119,26 +122,28 @@ type containerReapConfig struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	ContainerReap     *containerReapConfig `json:"containerReap,omitempty"`
-	CanonicalRepoURL  string               `json:"canonicalRepoURL,omitempty"`
-	DefaultBranch     string               `json:"defaultBranch,omitempty"`
-	SessionPrefix     string               `json:"sessionPrefix,omitempty"`
-	Env               map[string]string    `json:"env,omitempty"`
-	Symlinks          []string             `json:"symlinks,omitempty"`
-	PostCreate        []string             `json:"postCreate,omitempty"`
-	AgentRules        string               `json:"agentRules,omitempty"`
-	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
-	PlannerRules      string               `json:"plannerRules,omitempty"`
-	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
-	GovernanceManaged bool                 `json:"governanceManaged,omitempty"`
-	Worker            roleOverride         `json:"worker,omitempty"`
-	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
-	Planner           roleOverride         `json:"planner,omitempty"`
-	PlanReviewer      roleOverride         `json:"planReviewer,omitempty"`
-	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
-	AutoReview        bool                 `json:"autoReview,omitempty"`
-	Reviewers         []reviewerConfig     `json:"reviewers,omitempty"`
+	ContainerReap         *containerReapConfig `json:"containerReap,omitempty"`
+	CanonicalRepoURL      string               `json:"canonicalRepoURL,omitempty"`
+	DefaultBranch         string               `json:"defaultBranch,omitempty"`
+	SessionPrefix         string               `json:"sessionPrefix,omitempty"`
+	Env                   map[string]string    `json:"env,omitempty"`
+	Symlinks              []string             `json:"symlinks,omitempty"`
+	PostCreate            []string             `json:"postCreate,omitempty"`
+	AgentRules            string               `json:"agentRules,omitempty"`
+	AgentRulesFile        string               `json:"agentRulesFile,omitempty"`
+	OrchestratorRules     string               `json:"orchestratorRules,omitempty"`
+	OrchestratorRulesFile string               `json:"orchestratorRulesFile,omitempty"`
+	OrchestratorPrompt    string               `json:"orchestratorPrompt,omitempty"`
+	PlannerRules          string               `json:"plannerRules,omitempty"`
+	AgentConfig           agentConfig          `json:"agentConfig,omitempty"`
+	GovernanceManaged     bool                 `json:"governanceManaged,omitempty"`
+	Worker                roleOverride         `json:"worker,omitempty"`
+	Orchestrator          roleOverride         `json:"orchestrator,omitempty"`
+	Planner               roleOverride         `json:"planner,omitempty"`
+	PlanReviewer          roleOverride         `json:"planReviewer,omitempty"`
+	TrackerIntake         trackerIntakeConfig  `json:"trackerIntake,omitempty"`
+	AutoReview            bool                 `json:"autoReview,omitempty"`
+	Reviewers             []reviewerConfig     `json:"reviewers,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -148,26 +153,28 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
-	canonicalRepoURL  string
-	defaultBranch     string
-	sessionPrefix     string
-	model             string
-	permission        string
-	workerAgent       string
-	orchestratorAgent string
-	agentRules        string
-	agentRulesFile    string
-	orchestratorRules string
-	env               []string
-	symlink           []string
-	postCreate        []string
-	trackerIntake     bool
-	trackerRepo       string
-	trackerAssignee   string
-	reviewers         []string
-	configJSON        string
-	clear             bool
-	json              bool
+	canonicalRepoURL      string
+	defaultBranch         string
+	sessionPrefix         string
+	model                 string
+	permission            string
+	workerAgent           string
+	orchestratorAgent     string
+	agentRules            string
+	agentRulesFile        string
+	orchestratorRules     string
+	orchestratorRulesFile string
+	orchestratorPrompt    string
+	env                   []string
+	symlink               []string
+	postCreate            []string
+	trackerIntake         bool
+	trackerRepo           string
+	trackerAssignee       string
+	reviewers             []string
+	configJSON            string
+	clear                 bool
+	json                  bool
 }
 
 type projectListResult struct {
@@ -279,10 +286,13 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 			if opts.name != "" {
 				req.Name = &opts.name
 			}
-			if opts.workerAgent != "" || opts.orchestratorAgent != "" {
+			if opts.workerAgent != "" || opts.orchestratorAgent != "" || opts.orchestratorRules != "" || opts.orchestratorRulesFile != "" || opts.orchestratorPrompt != "" {
 				req.Config = &projectConfig{
-					Worker:       roleOverride{Agent: opts.workerAgent},
-					Orchestrator: roleOverride{Agent: opts.orchestratorAgent},
+					Worker:                roleOverride{Agent: opts.workerAgent},
+					Orchestrator:          roleOverride{Agent: opts.orchestratorAgent},
+					OrchestratorRules:     opts.orchestratorRules,
+					OrchestratorRulesFile: opts.orchestratorRulesFile,
+					OrchestratorPrompt:    opts.orchestratorPrompt,
 				}
 			}
 			var res projectResult
@@ -299,6 +309,9 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.name, "name", "", "Display name")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Default worker session agent")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Default orchestrator session agent")
+	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
+	f.StringVar(&opts.orchestratorRulesFile, "orchestrator-rules-file", "", "Repo-relative file containing orchestrator standing instructions")
+	f.StringVar(&opts.orchestratorPrompt, "orchestrator-prompt", "", "Initial user task for a fresh orchestrator without an explicit spawn prompt")
 	f.BoolVar(&opts.asWorkspace, "as-workspace", false, "Register a parent folder as a workspace project (root-as-repo plus direct child repos)")
 	return cmd
 }
@@ -361,6 +374,8 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.agentRules, "agent-rules", "", "Project-specific standing instructions for worker sessions")
 	f.StringVar(&opts.agentRulesFile, "agent-rules-file", "", "Repo-relative file containing worker standing instructions")
 	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
+	f.StringVar(&opts.orchestratorRulesFile, "orchestrator-rules-file", "", "Repo-relative file containing orchestrator standing instructions")
+	f.StringVar(&opts.orchestratorPrompt, "orchestrator-prompt", "", "Initial user task for a fresh orchestrator without an explicit spawn prompt")
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
@@ -395,18 +410,20 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return projectConfig{}, err
 	}
 	cfg := projectConfig{
-		CanonicalRepoURL:  opts.canonicalRepoURL,
-		DefaultBranch:     opts.defaultBranch,
-		SessionPrefix:     opts.sessionPrefix,
-		Env:               env,
-		Symlinks:          opts.symlink,
-		PostCreate:        opts.postCreate,
-		AgentRules:        opts.agentRules,
-		AgentRulesFile:    opts.agentRulesFile,
-		OrchestratorRules: opts.orchestratorRules,
-		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission},
-		Worker:            roleOverride{Agent: opts.workerAgent},
-		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
+		CanonicalRepoURL:      opts.canonicalRepoURL,
+		DefaultBranch:         opts.defaultBranch,
+		SessionPrefix:         opts.sessionPrefix,
+		Env:                   env,
+		Symlinks:              opts.symlink,
+		PostCreate:            opts.postCreate,
+		AgentRules:            opts.agentRules,
+		AgentRulesFile:        opts.agentRulesFile,
+		OrchestratorRules:     opts.orchestratorRules,
+		OrchestratorRulesFile: opts.orchestratorRulesFile,
+		OrchestratorPrompt:    opts.orchestratorPrompt,
+		AgentConfig:           agentConfig{Model: opts.model, Permissions: opts.permission},
+		Worker:                roleOverride{Agent: opts.workerAgent},
+		Orchestrator:          roleOverride{Agent: opts.orchestratorAgent},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
 			Repo:     opts.trackerRepo,

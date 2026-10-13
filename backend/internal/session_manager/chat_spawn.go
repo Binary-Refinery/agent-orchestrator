@@ -188,6 +188,9 @@ type chatSpawn struct {
 	workspaceProject *ports.WorkspaceProjectInfo
 	prompt           string
 	systemPrompt     string
+	// A configured orchestrator kickoff belongs to creation only. Its native
+	// history is retained, but it is not a saved fallback-restore task.
+	initialPromptFromConfig bool
 	// promptQueued means the opening prompt is already a durable queued turn
 	// (asynchronous spawn). The controller drains it; sending it again here
 	// would deliver the user's brief twice.
@@ -273,6 +276,11 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				BrowserCapabilityVerifier: in.record.Metadata.BrowserCapabilityVerifier,
 				Model:                     agentConfig.Model,
 				Effort:                    agentConfig.Effort,
+			}
+			if in.initialPromptFromConfig {
+				metadata.Prompt = ""
+				metadata.LatestUserPrompt = in.prompt
+				metadata.LatestUserPromptAt = m.clock()
 			}
 			committedConversation, commitErr := m.markChatControllerSpawned(
 				ctx, id, metadata, started.Conversation, started.ProviderBoundary,

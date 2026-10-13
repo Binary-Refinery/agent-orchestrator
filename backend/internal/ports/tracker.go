@@ -2,9 +2,14 @@ package ports
 
 import (
 	"context"
+	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// ErrTrackerIssueNotFound is a read-only issue lookup with no matching issue.
+// A GitHub pull-request number is not an issue for intake purposes.
+var ErrTrackerIssueNotFound = errors.New("issue not found")
 
 // Tracker is the outbound read-only port for issue trackers:
 //
