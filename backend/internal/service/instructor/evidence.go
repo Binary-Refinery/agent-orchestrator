@@ -142,7 +142,13 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if err != nil {
 		return w, err
 	}
-	defer func() { finish(resultErr) }()
+	defer func() {
+		finished, finishErr := finish(resultErr)
+		if finished != nil {
+			result = *finished
+		}
+		resultErr = errors.Join(resultErr, finishErr)
+	}()
 	evidence := []domain.InstructorEvidence{}
 	for _, name := range profiles {
 		pf, ok := w.Policy.Profiles[name]

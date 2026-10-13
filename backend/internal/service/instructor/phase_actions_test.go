@@ -24,6 +24,57 @@ func (r mechanicalReview) ReviewLocal(ctx context.Context, w domain.InstructorWo
 	}
 }
 
+func TestInstructorFailedManualProfileRequiresApprovalBeforeAutomaticChecks(t *testing.T) {
+	ctx := context.Background()
+	f := newInstructorFixture(t)
+	path, _ := committedWorkspace(t)
+	policy := instructorsvc.DefaultPolicy()
+	role := policy.Roles["worker"]
+	role.EffortByModel = map[string]string{"provider/worker": "high"}
+	policy.Roles["worker"] = role
+	policy.Profiles["push"] = domain.InstructorProfile{Command: []string{"git", "rev-parse", "--verify", "HEAD"}, TimeoutSeconds: 10}
+	policy.Profiles["full"] = domain.InstructorProfile{Command: []string{"git", "diff", "--exit-code", "HEAD"}, TimeoutSeconds: 10}
+	policy.Profiles["operator"] = domain.InstructorProfile{Command: []string{"git", "rev-parse", "--verify", "missing-manual-check-ref"}, TimeoutSeconds: 10}
+	w := f.register(t, "mechanical", policy)
+	worker := f.attachWorker(t, w.ID)
+	w = f.trustedFacts(t, w.ID, func(w *domain.InstructorWork) { w.Phase = "implement"; w.PhaseSequence = 1; w.State = "ready" })
+	f.service = instructorsvc.New(instructorsvc.Deps{Store: f.store, Delivery: f.delivery, Workspace: fixedWorkspace(path), Clock: func() time.Time { return f.now }})
+	reviews := mechanicalReview{started: make(chan domain.InstructorWork, 2), release: make(chan struct{})}
+	f.service.SetPhaseActions(reviews)
+	defer func() { close(reviews.release); _ = f.service.Shutdown(ctx) }()
+	// A trusted native receipt, not an agent green claim, enables the result action.
+	d := domain.InstructorDispatch{ID: "mechanical-result", BatchID: "mechanical-result", WorkID: w.ID, ProjectID: w.ProjectID, WorkRevision: w.Revision, Action: "worker_result", PolicyVersion: w.PolicyVersion, ReportID: "native-done", ProducerSessionID: worker, Phase: w.Phase, PhaseSequence: w.PhaseSequence, State: "delivered", NativeReceipt: &domain.InstructorNativeReceipt{RuntimeID: "chat:orch", ProviderTurnID: "provider-turn", StartedAt: &f.now}, CreatedAt: f.now, UpdatedAt: f.now}
+	orch, err := f.store.CreateSession(ctx, domain.SessionRecord{ProjectID: w.ProjectID, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, Metadata: domain.SessionMetadata{ControllerGeneration: "orch"}, CreatedAt: f.now, UpdatedAt: f.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, _, err := f.store.InstructorSessionInstance(ctx, orch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.TargetSessionID, d.TargetSessionInstanceID, d.TargetRuntimeID, d.TargetCreatedAt = orch.ID, instance, "chat:orch", &orch.CreatedAt
+	if err := f.store.EnqueueInstructorDispatches(ctx, []domain.InstructorDispatch{d}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.service.RunChecks(ctx, w.ID, worker, []string{"operator"})
+	if err == nil || result.State != "waiting_human" || result.Gate == nil || result.Gate.Kind != "phase_action_failed" || len(result.PhaseActions) != 1 || result.PhaseActions[0].State != "failed" {
+		t.Fatalf("manual failure must return persisted failed audit and human gate: %+v err=%v", result, err)
+	}
+	stored, _, err := f.store.GetInstructorWork(ctx, w.ID)
+	if err != nil || result.Revision != stored.Revision {
+		t.Fatalf("failure response revision=%d durable=%d err=%v", result.Revision, stored.Revision, err)
+	}
+	for range 2 {
+		if err := f.service.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, _, err = f.store.GetInstructorWork(ctx, w.ID)
+	if err != nil || stored.State != "waiting_human" || len(stored.PhaseActions) != 1 || len(stored.Evidence) != 0 {
+		t.Fatalf("tick retried failed manual checks without approval: %+v err=%v", stored, err)
+	}
+}
+
 func TestInstructorMechanicalDriverRunsRealProfilesThenOneIndependentReview(t *testing.T) {
 	ctx := context.Background()
 	f := newInstructorFixture(t)

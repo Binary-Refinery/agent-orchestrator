@@ -11,9 +11,9 @@ type phaseActionContextKey struct{}
 
 // Direct HTTP/CLI checks use the same durable mechanical-action record as the
 // daemon driver. A cancellation therefore sees and interrupts either entry.
-func (s *Service) beginManualChecks(ctx context.Context, captured domain.InstructorWork, producer domain.SessionID) (context.Context, func(error), error) {
+func (s *Service) beginManualChecks(ctx context.Context, captured domain.InstructorWork, producer domain.SessionID) (context.Context, func(error) (*domain.InstructorWork, error), error) {
 	if ctx.Value(phaseActionContextKey{}) != nil {
-		return ctx, func(error) {}, nil
+		return ctx, func(error) (*domain.InstructorWork, error) { return nil, nil }, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,7 +40,7 @@ func (s *Service) beginManualChecks(ctx context.Context, captured domain.Instruc
 	s.phaseRunning[id] = true
 	s.verificationCancels[id] = cancel
 	s.verificationMu.Unlock()
-	return runCtx, func(runErr error) {
+	return runCtx, func(runErr error) (*domain.InstructorWork, error) {
 		cancel()
 		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer finishCancel()
@@ -58,12 +58,22 @@ func (s *Service) beginManualChecks(ctx context.Context, captured domain.Instruc
 					a.State, a.Error = "failed", runErr.Error()
 				}
 			}
-			_, _ = s.save(finishCtx, current, current.Revision, "phase_action_completed", id)
+			if runErr != nil && current.Cancellation == nil && (current.State == "ready" || current.State == "running") && current.PhaseSequence == captured.PhaseSequence && current.PolicyVersion == captured.PolicyVersion && current.SHA == captured.SHA {
+				current.State, current.Summary, current.WaitCondition = "waiting_human", "Phasenaktion fehlgeschlagen", runErr.Error()
+				if current.Gate == nil {
+					current.Gate = &domain.InstructorGate{ID: "retry-" + id, Kind: "phase_action_failed", Title: "Fehler beheben und Phasenaktion erneut beauftragen", OpenedAt: s.now()}
+				}
+			}
+			current, err = s.save(finishCtx, current, current.Revision, "phase_action_completed", id)
 		}
 		s.mu.Unlock()
 		s.verificationMu.Lock()
 		delete(s.phaseRunning, id)
 		delete(s.verificationCancels, id)
 		s.verificationMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		return &current, nil
 	}, nil
 }

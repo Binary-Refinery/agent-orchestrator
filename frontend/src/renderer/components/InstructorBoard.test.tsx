@@ -6,7 +6,7 @@ import { InstructorBoard } from "./InstructorBoard";
 
 const mocks = vi.hoisted(() => ({
 	orchestrator: undefined as Record<string, unknown> | undefined, enabled: true, publication: { available: true, reason: "" }, snapshot: {} as Record<string, unknown>,
-	command: vi.fn(), refetch: vi.fn(), inventoryRefetch: vi.fn(), navigate: vi.fn(), projectSettings: vi.fn(), createProject: vi.fn(), startProject: vi.fn(),
+	command: vi.fn(), reconcile: vi.fn(), refetch: vi.fn(), inventoryRefetch: vi.fn(), navigate: vi.fn(), projectSettings: vi.fn(), createProject: vi.fn(), startProject: vi.fn(),
 	membersRead: vi.fn(), members: null as Record<string, unknown> | null,
 	details: null as Record<string, unknown> | null,
 }));
@@ -29,7 +29,6 @@ vi.mock("../hooks/useProjectOrchestratorAction", () => ({ useProjectOrchestrator
 vi.mock("../lib/api-client", () => ({ apiClient: { GET: vi.fn().mockResolvedValue({ data: { status: "ok", project: { config: { orchestrator: { agent: "codex", agentConfig: { model: "project-native", effort: "project-high" } } } } } }) }, apiErrorMessage: () => "Failed" }));
 vi.mock("./InstructorNewDialog", () => ({ InstructorNewDialog: () => null }));
 vi.mock("./InstructorWorkDetails", () => ({ InstructorWorkDetails: () => null }));
-vi.mock("./InstructorDeliveryReconcile", () => ({ InstructorDeliveryReconcile: () => null }));
 vi.mock("./InstructorPolicyDialog", () => ({ InstructorPolicyDialog: () => null }));
 vi.mock("./InstructorModelDialog", () => ({ InstructorModelDialog: () => null }));
 vi.mock("./InstructorExceptionDialog", () => ({ InstructorExceptionDialog: () => null }));
@@ -42,6 +41,7 @@ vi.mock("../hooks/useInstructor", () => ({
 	useInstructorBoardSnapshot: () => ({ data: mocks.snapshot, refetch: mocks.refetch, isFetching: false, isLoading: false, error: null }),
 	useInstructorInventory: () => ({ data: { projects: [{ id: "project-a", name: "Project A" }, { id: "project-b", name: "Project B" }] }, refetch: mocks.inventoryRefetch, error: null }),
 	useInstructorPolicy: () => ({ data: { roles: { instructor: { harness: "codex", model: "native-model", effort: "maximum", effortByModel: { "native-model": "native-high" } } } } }),
+	useInstructorReconcile: () => ({ mutateAsync: mocks.reconcile, isPending: false }),
 	useInstructorCommand: () => ({ mutateAsync: mocks.command, isPending: false, data: null }),
 	useInstructorDetails: () => ({ data: mocks.details, isLoading: false, error: null }),
 }));
@@ -109,6 +109,39 @@ describe("Instructor board", () => {
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
 		expect(mocks.command).not.toHaveBeenCalled();
 	});
+	it("counts all active cards including gates, blocked work and pending cancellation", () => {
+		mocks.snapshot = { ...mocks.snapshot, metrics: { active: 1 }, works: [work(), gate({ id: "gated" }), work({ id: "blocked", state: "blocked" }), work({ id: "cancelling", state: "parked", cancellation: { dispatchId: "cancel" } }), work({ id: "parked", state: "parked" }), work({ id: "done", state: "done" }), work({ id: "cancelled", state: "cancelled" })] };
+		mount();
+		expect(screen.getAllByRole("article")).toHaveLength(4);
+		expect(screen.getByRole("button", { name: /Active work/ }).querySelector("dd")).toHaveTextContent("4");
+	});
+	it.each(["cancellation_pending", "delivery_uncertain"])("opens details for %s without offering approval", async (kind) => {
+		const current = gate({ state: kind === "cancellation_pending" ? "parked" : "blocked", actions: ["abbrechen"], cancellation: kind === "cancellation_pending" ? { dispatchId: "cancel" } : undefined, gate: { kind, title: "Waiting for native confirmation", dispatchId: "dispatch" } });
+		mocks.snapshot = { ...mocks.snapshot, works: [current] };
+		mocks.details = { work: current };
+		mount();
+		await userEvent.click(screen.getByRole("button", { name: "Details" }));
+		expect(screen.getByText("Waiting for native confirmation")).toBeVisible();
+		expect(screen.queryByRole("button", { name: "Review gate" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Review approvals" })).not.toBeInTheDocument();
+		if (kind === "delivery_uncertain") expect(screen.getByRole("button", { name: /Resolve delivery uncertainty/i })).toBeVisible();
+		expect(mocks.command).not.toHaveBeenCalled();
+	});
+	it("preserves delivery observation and its captured identity across board polling", async () => {
+		const current = gate({ actions: [], gate: { kind: "delivery_uncertain", title: "Unknown delivery", dispatchId: "dispatch-original" } });
+		mocks.snapshot = { ...mocks.snapshot, works: [current] };
+		const app = mount();
+		await userEvent.click(screen.getByRole("button", { name: "Details" }));
+		await userEvent.click(screen.getByRole("button", { name: /Resolve delivery uncertainty/i }));
+		await userEvent.selectOptions(screen.getByRole("combobox"), "received");
+		await userEvent.type(screen.getByRole("textbox"), "Observed in the native session");
+		mocks.snapshot = { ...mocks.snapshot, id: "snapshot-polled", works: [gate({ gate: { kind: "delivery_uncertain", dispatchId: "dispatch-new" } })] };
+		app.redraw();
+		expect(screen.getByRole("combobox")).toHaveValue("received");
+		expect(screen.getByRole("textbox")).toHaveValue("Observed in the native session");
+		await userEvent.click(screen.getByRole("button", { name: /Record observation/i }));
+		expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith({ snapshotId: "snapshot-a", workId: "work-1", dispatchId: "dispatch-original", accepted: true, note: "Observed in the native session" });
+	});
 	it("only runs daemon-admitted actions and refreshes live state after a command", async () => {
 		mount();
 		await userEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -143,10 +176,12 @@ describe("Instructor board", () => {
 	});
 	it("shows conditions of a non-admitted gate without inventing Go", async () => {
 		mocks.snapshot = { ...mocks.snapshot, works: [gate({ actions: [], gate: { kind: "checks", title: "Tests missing" } })] };
-		mount(); await userEvent.click(screen.getByRole("button", { name: "Review gate" }));
-		expect(screen.getByText("The daemon has not admitted approval of this gate. Resolve the displayed condition first.")).toBeVisible();
+		mocks.details = { work: (mocks.snapshot.works as Record<string, unknown>[])[0] };
+		mount(); await userEvent.click(screen.getByRole("button", { name: "Details" }));
+		expect(screen.getByText("Tests missing")).toBeVisible();
+		expect(screen.queryByRole("button", { name: "Review gate" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("checkbox", { name: "Approve Login" })).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Sign and continue" })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Sign and continue" })).not.toBeInTheDocument();
 		expect(mocks.command).not.toHaveBeenCalled();
 	});
 	it("admits mixed branch signatures as one ordered batch and retains the same intent on retry", async () => {
