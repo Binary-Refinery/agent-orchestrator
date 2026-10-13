@@ -12,8 +12,10 @@ import (
 	"testing"
 )
 
-func TestWindowsFixtureRootMatchesNativeLongPath(t *testing.T) {
-	base := filepath.Join(t.TempDir(), "long fixture directory name")
+func TestWindowsShortTempRoot(t *testing.T) {
+	// Keep nested fixture paths below Git for Windows' default MAX_PATH while
+	// retaining a long directory name with a distinct 8.3 spelling.
+	base := filepath.Join(t.TempDir(), "fixture long name")
 	must(t, os.Mkdir(base, 0o700))
 	longBase, err := filepath.EvalSymlinks(base)
 	must(t, err)
@@ -32,7 +34,7 @@ func TestWindowsFixtureRootMatchesNativeLongPath(t *testing.T) {
 	t.Setenv("TMP", shortBase)
 	t.Setenv("TEMP", shortBase)
 	// A child testing.T allocates its first TempDir after the environment change.
-	t.Run("native workspace remains inside fixture", func(t *testing.T) {
+	t.Run("native", func(t *testing.T) {
 		h := newHarness(t)
 		executable, err := os.Executable()
 		must(t, err)
