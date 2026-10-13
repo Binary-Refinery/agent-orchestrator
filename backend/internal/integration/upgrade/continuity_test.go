@@ -454,11 +454,9 @@ func (h *harness) logs() string {
 	var result strings.Builder
 	for _, path := range paths {
 		data, _ := os.ReadFile(path)
-		if len(data) > 20000 {
-			data = data[len(data)-20000:]
-		}
-		result.Write(data)
+		fmt.Fprintf(&result, "\n--- %s ---\n%s", filepath.Base(path), diagnosticLogExcerpt(data))
 	}
+	result.WriteString(h.providerDiagnostics())
 	errors, _ := filepath.Glob(filepath.Join(h.fixture, "handoff-error-*.txt"))
 	for _, path := range errors {
 		data, _ := os.ReadFile(path)

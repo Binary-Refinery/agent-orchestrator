@@ -5,6 +5,7 @@ package upgrade_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,18 +169,37 @@ func TestNativeInstructorHandoff(t *testing.T) {
 		return w.Phase == "triage" && w.State == "waiting_human" && w.Gate != nil && w.Gate.Kind == "transition" && w.Gate.TransitionTo == "fix"
 	})
 	before := h.details(work.ID)
-	h.stop()
-	h.start(binary)
-	h.await("existing orchestrator reattached", func() bool { return h.conversation().Controller == "ready" })
-	var resumedWorker controllers.ConversationSnapshotResponse
-	h.await("existing OpenCode worker reattached", func() bool {
-		h.api("GET", "/api/v1/sessions/"+worker.SessionID+"/conversation", nil, &resumedWorker)
-		return resumedWorker.Controller == "ready"
-	})
-	assertHistoryRetained(t, nativeWorker, resumedWorker)
-	after := h.details(work.ID)
-	if after.Work.Gate == nil || after.Work.Gate.ID != before.Work.Gate.ID || after.Work.State != "waiting_human" || after.Work.ID != work.ID {
-		t.Fatal("restart silently advanced or replaced the pending human gate")
+	after := before
+	for restart := 1; restart <= 3; restart++ {
+		var workerBeforeRestart controllers.ConversationSnapshotResponse
+		h.api("GET", "/api/v1/sessions/"+worker.SessionID+"/conversation", nil, &workerBeforeRestart)
+		orchestratorBeforeRestart := h.conversation()
+		t.Logf("restart %d worker before stop: %s; fixture workspace=%q nativeConversation=%q", restart, h.workerRecoveryDiagnostic(worker.SessionID, workerBeforeRestart), worker.Workspace, worker.ConversationID)
+		h.stop()
+		h.start(binary)
+		h.await(fmt.Sprintf("restart %d existing orchestrator reattached", restart), func() bool { return h.conversation().Controller == "ready" })
+		var resumedWorker controllers.ConversationSnapshotResponse
+		var lastRecoveryDiagnostic string
+		var nextRecoveryDiagnostic time.Time
+		h.await(fmt.Sprintf("restart %d existing OpenCode worker reattached", restart), func() bool {
+			h.api("GET", "/api/v1/sessions/"+worker.SessionID+"/conversation", nil, &resumedWorker)
+			if time.Now().After(nextRecoveryDiagnostic) || resumedWorker.Controller == "ready" {
+				diagnostic := h.workerRecoveryDiagnostic(worker.SessionID, resumedWorker)
+				if diagnostic != lastRecoveryDiagnostic {
+					t.Logf("restart %d worker recovery changed: %s", restart, diagnostic)
+					lastRecoveryDiagnostic = diagnostic
+				}
+				nextRecoveryDiagnostic = time.Now().Add(time.Second)
+			}
+			return resumedWorker.Controller == "ready"
+		})
+		assertHistoryRetained(t, nativeWorker, resumedWorker)
+		assertHistoryRetained(t, workerBeforeRestart, resumedWorker)
+		assertHistoryRetained(t, orchestratorBeforeRestart, h.conversation())
+		after = h.details(work.ID)
+		if after.Work.Gate == nil || after.Work.Gate.ID != before.Work.Gate.ID || after.Work.State != "waiting_human" || after.Work.ID != work.ID {
+			t.Fatalf("restart %d silently advanced or replaced the pending human gate", restart)
+		}
 	}
 	var retried domain.InstructorCommandResult
 	h.api("POST", "/api/v1/instructor/commands", command, &retried)
