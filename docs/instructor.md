@@ -15,6 +15,13 @@ The [repository policy example](artifaktory/instructor/POLICY.md) describes the
 structured fields and a Markdown-embedded contract. Adapt its native model
 values and required profiles to the repository before activation.
 
+In **Policy settings**, an unconfigured check command (`null` or `[]`) appears
+as an empty field. Enter the executable and each argument on separate lines;
+clearing the field leaves the profile unconfigured. Opening or closing the
+dialog does not save a policy. Saving an untouched profile retains its command
+value and timeout. Required checks still need configured commands before they
+can execute.
+
 ## Responsibilities
 
 | Role | Responsibility |

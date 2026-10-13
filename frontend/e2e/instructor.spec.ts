@@ -46,7 +46,7 @@ function snapshot(id = "snapshot-renderer-v1") {
 	] };
 }
 
-async function fixture(page: Page, enabled = true, uncertain = false, publication = false) {
+async function fixture(page: Page, enabled = true, uncertain = false, publication = false, profiles: Record<string, { command: string[] | null; timeoutSeconds: number }> = policy.profiles) {
 	await installFakeAgent(page, { projectId: "instructor-demo", projectName: "Instructor demo" });
 	const commands: Array<Record<string, unknown>> = [];
 	const planRequests: Array<Record<string, unknown>> = [];
@@ -55,7 +55,7 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 	const reconciliations: Array<Record<string, unknown>> = [];
 	const previews: Array<Record<string, unknown>> = [];
 	const exceptions: Array<Record<string, unknown>> = [];
-	let currentPolicy = structuredClone(policy);
+	let currentPolicy = structuredClone({ ...policy, profiles });
 	let statusReads = 0;
 	let restoredGate = publication;
 	function currentSnapshot(id?: string) {
@@ -98,7 +98,7 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 			await route.fulfill({ json: { batchId: "batch-renderer", dispatches: [{ id: `dispatch-${commands.length}`, batchId: "batch-renderer", workId: "work-login", projectId: "instructor-demo", snapshotId: body.snapshotId, workRevision: 1, position: 0, action: body.command, message: "Fixture dispatch", state: "pending", attempts: 0, createdAt: at, updatedAt: at }], skipped: body.command === "go all" ? ["work-publish: exact publication approval required"] : [] } }); return;
 		}
 		if (pathname === "/api/v1/instructor/policy") {
-			if (request.method() === "PUT") { const body = request.postDataJSON() as typeof policy; savedPolicies.push(body); currentPolicy = { ...body, version: "policy-renderer-v2" }; }
+			if (request.method() === "PUT") { const body = request.postDataJSON() as typeof currentPolicy; savedPolicies.push(body); currentPolicy = { ...body, version: "policy-renderer-v2" }; }
 			await route.fulfill({ json: currentPolicy }); return;
 		}
 		if (pathname === "/api/v1/agents/readiness" || pathname === "/api/v1/agents/readiness/ensure") { await route.fulfill({ json: { agents: [agentReadiness("opencode", "OpenCode"), agentReadiness("codex", "Codex")] } }); return; }
@@ -139,6 +139,29 @@ test("renderer: legacy links retain work selection and members without diagnosti
 	await expect(page.getByText("Closed cleanup", { exact: true })).toBeVisible();
 	await page.getByRole("tab", { name: "Parked", exact: true }).click();
 	await expect(page.getByText("Wait for database window", { exact: true })).toBeVisible();
+});
+
+test("renderer: board policy settings opens and saves null check commands @T0 @INSTRUCTOR", async ({ page }) => {
+	const profiles = { push: { command: null, timeoutSeconds: 900 }, full: { command: null, timeoutSeconds: 900 } };
+	const state = await fixture(page, true, false, false, profiles);
+	await page.goto("/#/instructor-board");
+	await page.getByRole("button", { name: "Policy settings", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Instructor policy settings" });
+	await expect(dialog.getByRole("textbox", { name: "push" })).toHaveValue("");
+	await expect(dialog.getByRole("textbox", { name: "full" })).toHaveValue("");
+	await expect(dialog.getByRole("textbox", { name: "Policy version" })).toHaveValue(policy.version);
+	await expect(dialog.getByRole("spinbutton")).toHaveCount(2);
+	await expect(dialog.getByRole("spinbutton").first()).toHaveValue("900");
+	await expect(page.getByText("Something went wrong!")).toHaveCount(0);
+	await dialog.getByRole("button", { name: "Close", exact: true }).click();
+	expect(state.savedPolicies).toHaveLength(0);
+	await page.getByRole("button", { name: "Policy settings", exact: true }).click();
+	await expect(dialog.getByRole("button", { name: "Save policy" })).toBeEnabled();
+	await dialog.getByRole("button", { name: "Save policy" }).click();
+	await expect(dialog.getByRole("status")).toBeVisible();
+	expect(state.savedPolicies).toEqual([{ ...policy, profiles }]);
+	await expect(dialog.getByRole("textbox", { name: "push" })).toHaveValue("");
+	await expect(dialog.getByRole("textbox", { name: "full" })).toHaveValue("");
 });
 
 test("renderer: policy editor keeps native effort and gates @T0 @INSTRUCTOR", async ({ page }, testInfo) => {
