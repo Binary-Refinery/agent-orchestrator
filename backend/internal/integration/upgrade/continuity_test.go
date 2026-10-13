@@ -232,7 +232,11 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	root := t.TempDir()
+	// Windows may spell TEMP with an 8.3 alias while native processes report
+	// its long name. Use one filesystem-resolved root for every fixture path so
+	// the scripted actors' containment checks compare the same directory.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
 	h := &harness{t: t, root: root, data: filepath.Join(root, "data"), repo: filepath.Join(root, "repo"), fixture: filepath.Join(root, "provider-state"), client: &http.Client{Timeout: 30 * time.Second}}
 	binDir, home := filepath.Join(root, "bin"), filepath.Join(root, "home")
 	for _, dir := range []string{h.data, h.repo, h.fixture, binDir, filepath.Join(home, ".codex"), filepath.Join(home, "AppData", "Roaming"), filepath.Join(home, "AppData", "Local")} {
