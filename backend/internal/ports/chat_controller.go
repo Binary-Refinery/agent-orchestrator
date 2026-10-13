@@ -15,7 +15,16 @@ const (
 	ChatHistoryRequired
 	// ChatHistoryDeferred is used when agent switching owns later projection.
 	ChatHistoryDeferred
+	// ChatHistoryContinuity requires verified native history after a provider
+	// restart, but permits reconnecting this session's established live owner.
+	// Unlike a TUI handoff, a daemon restart need not wait for an active turn.
+	ChatHistoryContinuity
 )
+
+// RequiresNativeHistory reports whether a new provider process must prove its history.
+func (mode ChatHistoryMode) RequiresNativeHistory() bool {
+	return mode == ChatHistoryRequired || mode == ChatHistoryContinuity
+}
 
 // ChatControllerStart is the resolved launch contract shared by the coordinator and Chat service.
 type ChatControllerStart struct {

@@ -50,13 +50,13 @@ type projectRulesConfig struct {
 
 func buildTaskPrompt(cfg taskPromptConfig) string {
 	issueContext := strings.TrimSpace(cfg.IssueContext)
-	if cfg.Prompt != "" {
+	if strings.TrimSpace(cfg.Prompt) != "" {
 		if cfg.Role == sessionPromptRoleWorker && issueContext != "" {
 			return strings.TrimRight(cfg.Prompt, "\n") + "\n\n" + issueContextSection(issueContext)
 		}
 		return cfg.Prompt
 	}
-	if cfg.IssueID == "" {
+	if strings.TrimSpace(cfg.IssueID) == "" {
 		return ""
 	}
 	if cfg.Role == sessionPromptRoleWorker && issueContext != "" {

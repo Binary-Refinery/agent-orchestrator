@@ -21,6 +21,8 @@ in [gemini-cli.md](gemini-cli.md).
 | [instructor-pilot.md](instructor-pilot.md)             | Actual launch-process activation, pilot evidence and safe database-lineage checks.                                  |
 | [instructor-upstream-plan.md](instructor-upstream-plan.md) | Recorded upstream drift, schema collisions and separately validated merge acceptance.                           |
 | [instructor-acceptance.md](instructor-acceptance.md)     | Complete approved Instructor scope and implementation/verification coverage.                                        |
+| [instructor-session-recovery.md](instructor-session-recovery.md) | Project role selection, approved Work policy changes and guided conversation recovery. |
+| [upgrade-continuity.md](upgrade-continuity.md) | Two-build Windows/Linux upgrade checks and desktop release acceptance limits. |
 | [scm-observer.md](scm-observer.md)                     | SCM subsystem: polling pipeline, durable-state invariants, PR identity model, and the rename/transfer design.         |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |

@@ -3,6 +3,7 @@ package chat_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestManagedNativeAdmissionRunsWithoutClientMessageIdentity(t *testing.T) {
 	for _, route := range []string{"ordinary-chat", "user-authored-relay"} {
 		t.Run(route, func(t *testing.T) {
 			h := newHarness(t)
-			denied := errors.New("managed worker awaits the current human fix grant")
+			denied := &ports.ChatAdmissionError{Reason: "managed worker awaits the current human fix grant"}
 			var validations atomic.Int32
 			h.svc.SetSemanticDispatchValidator(func(_ context.Context, id domain.SessionID, key string) error {
 				validations.Add(1)
@@ -35,7 +36,7 @@ func TestManagedNativeAdmissionRunsWithoutClientMessageIdentity(t *testing.T) {
 			h.conv.mu.Lock()
 			nativeSends := h.conv.sendCalls
 			h.conv.mu.Unlock()
-			if !errors.Is(err, denied) || validations.Load() != 1 || nativeSends != 0 {
+			if !errors.Is(err, ports.ErrSemanticDeliveryRejected) || !strings.Contains(err.Error(), denied.Reason) || validations.Load() != 1 || nativeSends != 0 {
 				t.Fatalf("empty message key bypassed installed policy: validations=%d nativeSends=%d err=%v", validations.Load(), nativeSends, err)
 			}
 		})

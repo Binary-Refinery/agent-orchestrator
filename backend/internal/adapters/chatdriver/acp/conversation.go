@@ -122,6 +122,7 @@ type conversation struct {
 	legacyModel           bool
 	legacyMode            bool
 	liveState             *persistenthost.ACPState
+	liveSettings          *ports.ChatTurnSettings
 	detaching             bool
 	terminalEventID       string
 	ignorePromptResult    bool
@@ -371,6 +372,14 @@ func (c *conversation) ActivateLiveReconnect(ctx context.Context, providerTurnID
 	}
 	c.mu.Unlock()
 	c.proc.gate.Open()
+	if c.liveSettings != nil {
+		settingsCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+		defer cancel()
+		if err := c.applyTurnSettings(settingsCtx, *c.liveSettings); err != nil {
+			return fmt.Errorf("%w: configure live ACP session: %w", ports.ErrChatResumeFailed, err)
+		}
+		c.liveSettings = nil
+	}
 	return nil
 }
 

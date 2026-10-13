@@ -2,15 +2,20 @@ package instructor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// ErrExecutionDeferred preserves an ordinary queued turn while its work is
+// paused. It conveys no permission to retry a previously submitted operation.
+var ErrExecutionDeferred = errors.New("managed work is paused; queued execution deferred")
+
 // ValidateDispatchAdmission is called by the native chat queue immediately
 // before submission. Unmanaged messages retain their existing behavior.
 func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.SessionID, id string) error {
-	dispatches, err := s.deps.Store.ListInstructorDispatches(ctx, "", "")
+	dispatches, w, managed, err := s.dispatchAdmissionSnapshot(ctx, target, id)
 	if err != nil {
 		return err
 	}
@@ -37,10 +42,6 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 			if previous.BatchID == d.BatchID && previous.Position < d.Position && (previous.State == "failed" || previous.State == "cancelled") {
 				return errApprovalCohortStopped
 			}
-		}
-		w, err := s.get(ctx, d.WorkID)
-		if err != nil {
-			return err
 		}
 		if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" {
 			return invalid("native submission work is already closed")
@@ -80,14 +81,34 @@ func (s *Service) ValidateDispatchAdmission(ctx context.Context, target domain.S
 	}
 	// Ordinary native turns also obey the current managed work authority,
 	// including sessions adopted without managed launch provenance.
-	w, managed, err := s.WorkForSession(ctx, target)
-	if err != nil {
-		return err
-	}
 	if managed {
+		if w.Cancellation == nil && (w.State == "parked" || w.State == "waiting_human" || w.State == "blocked") {
+			return ErrExecutionDeferred
+		}
 		return s.validateManagedResume(ctx, w, target)
 	}
 	return nil
+}
+
+// Reports can atomically carry a current directive to the next informational
+// revision. Read the directive and Work under one mutation fence, then release
+// it before native capability discovery. The immediate native budget/producer
+// admission still checks current authority before a provider turn starts.
+func (s *Service) dispatchAdmissionSnapshot(ctx context.Context, target domain.SessionID, id string) ([]domain.InstructorDispatch, domain.InstructorWork, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dispatches, err := s.deps.Store.ListInstructorDispatches(ctx, "", "")
+	if err != nil {
+		return nil, domain.InstructorWork{}, false, err
+	}
+	for _, d := range dispatches {
+		if d.ID == id {
+			w, err := s.get(ctx, d.WorkID)
+			return dispatches, w, true, err
+		}
+	}
+	w, managed, err := s.WorkForSession(ctx, target)
+	return dispatches, w, managed, err
 }
 
 // Caller holds s.mu; native cancellation is bounded by the caller context.

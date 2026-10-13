@@ -297,7 +297,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, err
 	}
 	defer gate.unlock()
-	if cfg.HistoryMode > ports.ChatHistoryDeferred {
+	if cfg.HistoryMode == ports.ChatHistoryContinuity && strings.TrimSpace(cfg.ProviderConversationID) == "" {
+		return nil, fmt.Errorf("%w: recovery requires the saved native conversation", ports.ErrChatResumeFailed)
+	}
+	if cfg.HistoryMode > ports.ChatHistoryContinuity {
 		return nil, errors.New("invalid Chat history mode")
 	}
 	if handoff := cfg.ProviderHandoff; handoff != nil {
@@ -311,7 +314,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 
 	replayCheckpoint := nativeHistoryCheckpoint{}
 	nativeEvidence := ""
-	if cfg.HistoryMode == ports.ChatHistoryRequired {
+	if cfg.HistoryMode.RequiresNativeHistory() {
 		if s.sessions == nil {
 			return nil, errors.New("native history replay requires a session reader")
 		}
@@ -404,21 +407,24 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
-	if nativeEvidence != "" {
+	verifyCheckpoint := func() error {
+		if nativeEvidence == "" {
+			return nil
+		}
 		for _, mismatch := range replayCheckpoint.hardMismatches {
 			if mismatch == ports.ChatHistoryMismatchNativeIdentity {
-				return nil, &ports.ChatHistoryUnsettledError{Dimensions: replayCheckpoint.hardMismatches}
+				return &ports.ChatHistoryUnsettledError{Dimensions: replayCheckpoint.hardMismatches}
 			}
 		}
 		verifier, ok := driver.(ports.NativeCheckpointVerifier)
 		if !ok {
-			return nil, &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{ports.ChatHistoryMismatchUnsettledBoundary}}
+			return &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{ports.ChatHistoryMismatchUnsettledBoundary}}
 		}
 		boundary, verifyErr := verifyNativeCheckpoint(ctx, verifier, ports.NativeCheckpointRequest{
 			ProviderConversationID: cfg.ProviderConversationID, Env: cfg.Env, Evidence: nativeEvidence,
 		})
 		if verifyErr != nil {
-			return nil, verifyErr
+			return verifyErr
 		}
 		// The provider proved every retained observation against exact native
 		// ancestry. Replace the hook-inferred text pair, not AO's high-water gate
@@ -434,6 +440,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			verified.assistantMismatch = replayCheckpoint.assistantMismatch
 		}
 		replayCheckpoint = verified
+
+		return nil
+	}
+	// A live continuation is already owned by its native process. Only a new
+	// process needs checkpoint replay; a native interface handoff still verifies
+	// before provider I/O.
+	if cfg.HistoryMode != ports.ChatHistoryContinuity {
+		if err := verifyCheckpoint(); err != nil {
+			return nil, err
+		}
 	}
 
 	var caps ports.ChatCapabilities
@@ -685,7 +701,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if reconnected, ok := conv.(ports.ChatLiveReconnector); ok {
 		liveReconnect = reconnected.ReconnectedLive()
 	}
-	if (cfg.HistoryMode == ports.ChatHistoryRequired) && liveReconnect {
+	if cfg.HistoryMode == ports.ChatHistoryRequired && liveReconnect {
 		// A TUI handoff needs a fresh, verified native-history admission. A host
 		// left alive by an unpublished target is not an established Chat owner,
 		// and adopting it must not take the ordinary live-reconnect fast path.
@@ -693,6 +709,21 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cleanupErr := cleanupUnpublishedConversation(conv, false)
 		return nil, errors.Join(fmt.Errorf("%w: native-history handoff cannot adopt an existing live provider; a fresh observation is required",
 			ports.ErrChatRecoveryInconclusive), cleanupErr)
+	}
+	if cfg.HistoryMode == ports.ChatHistoryContinuity && liveReconnect &&
+		(conversation.SessionID != cfg.SessionID || activeBranch.SessionID != cfg.SessionID ||
+			activeBranch.ProviderConversationID != cfg.ProviderConversationID || providerBoundaryID != "") {
+		cleanupErr := cleanupUnpublishedConversation(conv, false)
+		return nil, errors.Join(fmt.Errorf("%w: live provider does not match this session's committed conversation owner",
+			ports.ErrChatRecoveryInconclusive), cleanupErr)
+	}
+	if cfg.HistoryMode == ports.ChatHistoryContinuity && !liveReconnect {
+		if err := verifyCheckpoint(); err != nil {
+			if cleanupErr := cleanupUnpublishedConversation(conv, false); cleanupErr != nil {
+				return nil, fmt.Errorf("%w: failed history target shutdown: %w", ports.ErrChatRecoveryInconclusive, errors.Join(err, cleanupErr))
+			}
+			return nil, err
+		}
 	}
 	if cfg.ProviderConversationID != "" {
 		// Resume owns live-host adoption before installation/auth discovery. A
@@ -780,7 +811,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// it was waiting for finally arrived.
 	if !liveReconnect && cfg.ProviderHandoff == nil &&
 		owner.Kind != domain.ConversationOwnerReview &&
-		!queuedBeforeFirstController && !preserveUndispatchedQueue {
+		!queuedBeforeFirstController && !preserveUndispatchedQueue &&
+		cfg.HistoryMode != ports.ChatHistoryContinuity {
 		s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
 	}
 	// A fresh generation per launch, so events from the controller this one
@@ -844,17 +876,17 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				}
 			}
 		}
-		if cfg.HistoryMode == ports.ChatHistoryRequired {
+		if cfg.HistoryMode.RequiresNativeHistory() {
 			replayCheckpoint.captureAOHighWater(
 				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
 			)
 		}
 		events, historyErr := controller.readNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
-			(cfg.HistoryMode == ports.ChatHistoryRequired), replayCheckpoint,
+			cfg.HistoryMode.RequiresNativeHistory(), replayCheckpoint,
 		)
 		if historyErr != nil {
-			if cleanupErr := cleanupUnpublishedConversation(conv, false); cleanupErr != nil && (cfg.HistoryMode == ports.ChatHistoryRequired) {
+			if cleanupErr := cleanupUnpublishedConversation(conv, false); cleanupErr != nil && cfg.HistoryMode.RequiresNativeHistory() {
 				return nil, fmt.Errorf("%w: failed history target shutdown: %w",
 					ports.ErrChatRecoveryInconclusive, errors.Join(historyErr, cleanupErr))
 			}
@@ -962,6 +994,17 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, fmt.Errorf("record chat controller budget: %w", err)
 		}
 	}
+	if cfg.HistoryMode == ports.ChatHistoryContinuity && !liveReconnect &&
+		owner.Kind == domain.ConversationOwnerSession {
+		// A failed recovery must leave the previous queue and requests intact.
+		// Only after native history and ownership admission succeed may we retire
+		// calls held by the dead process. Unsent turns retain their queue order;
+		// their ordinary dispatch guards still decide whether they may execute.
+		if err := s.store.SettleRecoveredControllerWork(ctx, cfg.SessionID, conversation.ID, generation, s.now()); err != nil {
+			_ = cleanupUnpublishedConversation(conv, false)
+			return nil, fmt.Errorf("settle recovered controller work: %w", err)
+		}
+	}
 	s.mu.Lock()
 	s.ownerControllers[owner] = controller
 	if owner.Kind == domain.ConversationOwnerSession {
@@ -971,7 +1014,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// resume the now-current branch, not retry its old ownership snapshot.
 	cfg.ProviderHandoff = nil
 	cfg.ProviderScopeID = ""
-	cfg.HistoryMode = ports.ChatHistoryImport
+	if cfg.HistoryMode != ports.ChatHistoryContinuity {
+		cfg.HistoryMode = ports.ChatHistoryImport
+	}
 	s.startConfigs[owner] = cloneStartConfig(cfg)
 	controller.start()
 	s.mu.Unlock()

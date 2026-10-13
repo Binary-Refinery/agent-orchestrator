@@ -1048,11 +1048,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 	}
 	if m.instructor != nil {
 		launch := cfg
+		// Governance must validate the actual user task, including the existing
+		// issue-derived brief. Standing rules and attachment references are not
+		// tasks and are deliberately excluded from this admission input.
+		launch.ResolvedTaskPrompt = prompt
 		launch.AgentConfig = agentConfig
 		launch.AgentConfigResolved = true
 		workID, err := m.instructor.PrepareLaunch(ctx, launch, project)
 		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: instructor governance: %w", err)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %w", ErrInstructorLaunchBlocked, err)
 		}
 		cfg.WorkID = workID
 		cfg.AgentConfig = agentConfig
@@ -2529,7 +2533,7 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // runs before any durable session write, so a failure never resurrects the row
 // or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
-	if err := m.validateInstructorResume(ctx, id); err != nil {
+	if err := m.validateInstructorControllerRecovery(ctx, id); err != nil {
 		return RestoreResult{}, err
 	}
 	if err := m.beginAgentOperation(ctx, id, agentOperationRestore); err != nil {
@@ -2551,6 +2555,9 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	}
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
+	}
+	if err := domain.ValidateSessionRecoveryExpectation(ctx, rec); err != nil {
+		return RestoreResult{}, err
 	}
 	releaseHarness, err := m.beginHarnessUse(rec.Harness)
 	if err != nil {
@@ -2585,7 +2592,9 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
-	return m.relaunchRestoredSession(ctx, rec, project, ws)
+	result, err := m.relaunchRestoredSession(ctx, rec, project, ws)
+	m.finishStatusRecovery(ctx, rec, err)
+	return result, err
 }
 
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
@@ -2698,7 +2707,7 @@ func (m *Manager) recordAgentExited(ctx context.Context, rec domain.SessionRecor
 // identity and never changes the durable terminated flag as an intermediate
 // step.
 func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
-	if err := m.validateInstructorResume(ctx, id); err != nil {
+	if err := m.validateInstructorControllerRecovery(ctx, id); err != nil {
 		return RestoreResult{}, err
 	}
 	if err := m.beginAgentResume(ctx, id); err != nil {
@@ -2721,6 +2730,9 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrNotFound)
+	}
+	if err := domain.ValidateSessionRecoveryExpectation(ctx, rec); err != nil {
+		return RestoreResult{}, err
 	}
 	m.asyncChatSpawnsMu.Lock()
 	_, starting := m.asyncChatSpawns[id]
@@ -2777,7 +2789,9 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 		}
 	}
-	return m.resumeAgentRecordWithPolicy(ctx, "resume agent", rec, false, false)
+	result, err := m.resumeAgentRecordWithPolicy(ctx, "resume agent", rec, false, false)
+	m.finishStatusRecovery(ctx, rec, err)
+	return result, err
 }
 
 func (m *Manager) resumeAgentRecordWithPolicy(
@@ -2850,11 +2864,17 @@ func (m *Manager) relaunchSessionWithPolicy(
 }
 
 func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, reservedGeneration string, historyPolicy domain.SessionInterfaceTransitionHistoryPolicy) (RestoreResult, error) {
-	if err := m.validateInstructorResume(ctx, rec.ID); err != nil {
+	validate := m.validateInstructorControllerRecovery
+	if forceFresh || requireNativeHistory || domain.NativeHistoryRequired(ctx) || reservedGeneration != "" {
+		// Handoffs and switches may start new execution. They retain the strict
+		// work-state admission even when ordinary controller recovery is allowed.
+		validate = m.validateInstructorResume
+	}
+	if err := validate(ctx, rec.ID); err != nil {
 		return RestoreResult{}, err
 	}
-	requireNativeHistory = requireNativeHistory || domain.NativeHistoryRequired(ctx) || project.Config.GovernanceManaged
-	if requireNativeHistory {
+	requireNativeHistory = requireNativeHistory || domain.NativeHistoryRequired(ctx)
+	if requireNativeHistory || project.Config.GovernanceManaged || domain.SessionRecoveryRequested(ctx) {
 		if forceFresh {
 			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrNotResumable)
 		}
@@ -3675,7 +3695,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 // shutdown, acquiring the project workspace gate so cleanup does not tear down
 // its workspace while restore is in progress.
 func (m *Manager) restoreAllSession(ctx context.Context, rec domain.SessionRecord) {
-	if err := m.validateInstructorResume(ctx, rec.ID); err != nil {
+	if err := m.validateInstructorControllerRecovery(ctx, rec.ID); err != nil {
 		m.logger.Error("restore-all: instructor governance blocked recovery", "sessionID", rec.ID, "error", err)
 		return
 	}

@@ -62,7 +62,7 @@ func TestInstructorNativeParentCannotUseProjectOrchestratorShortcut(t *testing.T
 	if _, err = guard.PrepareLaunch(ctx, control, project); !errors.Is(err, instructorsvc.ErrValidation) || validator.calls != 0 {
 		t.Fatalf("native orchestrator kind disguised as worker role: err=%v calls=%d", err, validator.calls)
 	}
-	child := ports.SpawnConfig{ProjectID: projectID, ParentSessionID: parent.ID, Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, AgentConfig: ports.AgentConfig{Model: "provider/worker", Effort: "high"}}
+	child := ports.SpawnConfig{ProjectID: projectID, ParentSessionID: parent.ID, Kind: domain.KindWorker, Harness: domain.HarnessOpenCode, Prompt: "Inspect the delegated parser case", AgentConfig: ports.AgentConfig{Model: "provider/worker", Effort: "high"}}
 	if childWork, childErr := guard.PrepareLaunch(ctx, child, project); childErr != nil || childWork != work.ID {
 		t.Fatalf("approved ordinary child lost parent work: work=%s err=%v", childWork, childErr)
 	}

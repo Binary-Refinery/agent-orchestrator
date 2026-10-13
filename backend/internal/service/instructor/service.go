@@ -113,17 +113,21 @@ type Deps struct {
 	Verifier      EvidenceVerifier
 	Planner       Planner
 	RoleValidator RoleValidator
-	PolicyPath    string
-	Clock         func() time.Time
-	NewID         func() string
-	Publication   PublicationBoundary
-	Tracker       ports.Tracker
+	// ProjectRoleDefaults selects the current daemon baseline. Existing stored
+	// policies retain their exact legacy content and hashes.
+	ProjectRoleDefaults bool
+	PolicyPath          string
+	Clock               func() time.Time
+	NewID               func() string
+	Publication         PublicationBoundary
+	Tracker             ports.Tracker
 }
 
 // Service owns the global Instructor control plane above project orchestrators.
 type Service struct {
 	deps                Deps
 	mu                  sync.Mutex
+	configurationGate   chan struct{}
 	policy              domain.InstructorPolicy
 	verificationMu      sync.Mutex
 	verificationRunning map[string]bool
@@ -145,7 +149,11 @@ func New(deps Deps) *Service {
 	if deps.NewID == nil {
 		deps.NewID = uuid.NewString
 	}
-	return &Service{deps: deps, policy: DefaultPolicy(), verificationRunning: map[string]bool{}, verificationSlots: make(chan struct{}, 2), verificationCancels: map[string]context.CancelFunc{}, phaseRunning: map[string]bool{}, phaseSlots: make(chan struct{}, 2)}
+	policy := DefaultPolicy()
+	if deps.ProjectRoleDefaults {
+		policy = DefaultProjectPolicy()
+	}
+	return &Service{deps: deps, policy: policy, configurationGate: make(chan struct{}, 1), verificationRunning: map[string]bool{}, verificationSlots: make(chan struct{}, 2), verificationCancels: map[string]context.CancelFunc{}, phaseRunning: map[string]bool{}, phaseSlots: make(chan struct{}, 2)}
 }
 
 // RegisterInput identifies one durable work and its immutable intake origin.
@@ -212,6 +220,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 		return domain.InstructorWork{}, invalid("work name or goal is too long")
 	}
 	publicationRepositories := []domain.InstructorPublicationRepository{}
+	var policyProject *domain.ProjectRecord
 	if projects, ok := s.deps.Store.(interface {
 		GetProject(context.Context, string) (domain.ProjectRecord, bool, error)
 	}); ok {
@@ -222,27 +231,13 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 		if !found {
 			return domain.InstructorWork{}, fmt.Errorf("%w: project not found", ErrValidation)
 		}
+		policyProject = &project
 		for _, raw := range []string{project.RepoOriginURL, project.Config.CanonicalRepoURL} {
 			if repo, err := domain.ParseRepositoryIdentity(raw); err == nil {
 				publicationRepositories = append(publicationRepositories, domain.InstructorPublicationRepository{Host: repo.Host, Repository: repo.Namespace + "/" + repo.Name})
 			}
 		}
 	}
-	p := in.Policy
-	if p.Schema == 0 {
-		var err error
-		p, err = s.GetPolicy(ctx)
-		if err != nil {
-			return domain.InstructorWork{}, err
-		}
-	}
-	if err := ValidatePolicy(p); err != nil {
-		return domain.InstructorWork{}, err
-	}
-	if err := ValidateLockedPolicy(p); err != nil {
-		return domain.InstructorWork{}, err
-	}
-	p.Version = PolicyVersion(p)
 	if in.Source == "" {
 		in.Source = "manual"
 	}
@@ -260,6 +255,38 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (domain.Instru
 			return existing, nil
 		}
 	}
+	p := in.Policy
+	if p.Schema == 0 {
+		var err error
+		if policyProject != nil {
+			p, _, err = s.ProjectPolicyTemplate(ctx, *policyProject)
+		} else {
+			p, err = s.GetPolicy(ctx)
+		}
+		if err != nil {
+			return domain.InstructorWork{}, err
+		}
+	}
+	if err := ValidatePolicy(p); err != nil {
+		return domain.InstructorWork{}, err
+	}
+	if err := ValidateLockedPolicy(p); err != nil {
+		return domain.InstructorWork{}, err
+	}
+	if policyProject != nil {
+		var err error
+		p, err = s.resolveProjectSelections(ctx, *policyProject, p)
+		if err != nil {
+			return domain.InstructorWork{}, err
+		}
+	} else {
+		for _, role := range p.Roles {
+			if role.SelectionSource == "project" {
+				return domain.InstructorWork{}, invalid("project configuration lookup unavailable")
+			}
+		}
+	}
+	p.Version = PolicyVersion(p)
 	if in.issueProject == nil {
 		if err := s.uniqueWorkName(ctx, in.Name); err != nil {
 			return domain.InstructorWork{}, err
@@ -515,8 +542,21 @@ func (s *Service) Snapshot(ctx context.Context, baseID string) (domain.Instructo
 			return domain.InstructorSnapshot{}, err
 		}
 	}
+	recoveries := map[string]domain.InstructorRecoveryStatus{}
+	for i := range works {
+		status, err := s.recoveryReadiness(ctx, works[i])
+		if err != nil {
+			return domain.InstructorSnapshot{}, err
+		}
+		if status != nil {
+			recoveries[works[i].ID] = *status
+			if !status.Ready {
+				withholdDeliveryActions(&works[i])
+			}
+		}
+	}
 	commands, conflicts := s.registryForWorks(works)
-	result := domain.InstructorSnapshot{ID: "snapshot-" + s.deps.NewID(), BaseID: baseID, CreatedAt: s.now(), Works: works, Commands: commands, Metrics: metrics, CommandConflicts: conflicts}
+	result := domain.InstructorSnapshot{ID: "snapshot-" + s.deps.NewID(), BaseID: baseID, CreatedAt: s.now(), Works: works, Commands: commands, Metrics: metrics, CommandConflicts: conflicts, Recoveries: recoveries}
 	return result, s.deps.Store.PutInstructorSnapshot(ctx, result)
 }
 func (s *Service) actions(w *domain.InstructorWork) {
@@ -830,12 +870,17 @@ func (s *Service) Command(ctx context.Context, in CommandInput) (domain.Instruct
 				return domain.InstructorCommandResult{}, invalid("each approval must match its captured gate exactly")
 			}
 		}
-		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" && workInput.Approval != w.Gate.ExactApproval {
+		if action == "go" && w.Gate != nil && w.Gate.ExactApproval != "" && workInput.Approval != w.Gate.ExactApproval {
 			if all {
-				skipped = append(skipped, w.ID+": exact publication approval required")
+				skipped = append(skipped, w.ID+": exact human approval required")
 				continue
 			}
 			return domain.InstructorCommandResult{}, fmt.Errorf("%w: exact human approval required: %s", ErrValidation, w.Gate.ExactApproval)
+		}
+		if action == "go" || action == "weiter" || action == "pruefen" {
+			if err := s.requireControllerReady(ctx, w); err != nil {
+				return domain.InstructorCommandResult{}, err
+			}
 		}
 		var publicationActor PublicationAuthorization
 		if action == "go" && w.Gate != nil && w.Gate.Kind == "publication" {
@@ -1332,7 +1377,10 @@ func (s *Service) Tick(ctx context.Context) error {
 		if !ok {
 			break
 		}
-		w, err := s.get(ctx, d.WorkID)
+		d, w, current, err := s.currentClaimedDispatch(ctx, d)
+		if err == nil && !current {
+			continue // A receipt, cancellation or newer lease already settled this claim.
+		}
 		if err == nil && d.Action == "worker_result" && (w.Phase != d.Phase || w.PhaseSequence != d.PhaseSequence || d.PolicyVersion != w.PolicyVersion) {
 			err = ErrConflict
 		}
@@ -1358,6 +1406,12 @@ func (s *Service) Tick(ctx context.Context) error {
 			} else {
 				err = s.deps.Delivery.Deliver(ctx, d)
 			}
+		}
+		if errors.Is(err, ErrRecoveryRequired) && d.QueuedAt == nil {
+			if e := s.deps.Store.DeferInstructorDispatch(ctx, d.ID, err.Error(), s.now().Add(30*time.Second)); e != nil {
+				return e
+			}
+			continue
 		}
 		if errors.Is(err, ErrDeliveryRetryable) && d.Attempts < 3 && d.QueuedAt == nil {
 			if e := s.deps.Store.DeferInstructorDispatch(ctx, d.ID, err.Error(), s.now().Add(5*time.Second)); e != nil {

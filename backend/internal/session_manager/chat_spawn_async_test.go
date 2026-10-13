@@ -242,6 +242,7 @@ func TestSpawnAsyncChat_DrainFailureLeavesRetryableSession(t *testing.T) {
 func TestResumeFailedAsyncChatSpawnRetriesSameSessionAndQueue(t *testing.T) {
 	launcher := &recordingLauncher{}
 	m, st, _ := newChatManager(launcher)
+	m.SetInstructorGovernance(&taskGovernance{})
 	m.browserCapabilities = browsersvc.NewAuthority()
 	deferred := deferredBackground(m)
 	gate := &countingHarnessUseGate{}

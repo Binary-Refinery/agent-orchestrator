@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,8 +86,13 @@ func TestInstructorGovernanceReusedIDCannotInheritOldOrchestratorRole(t *testing
 	guard := instructorGovernance{svc: service, store: store, validator: validator}
 	// A readmitted worker has no launch proof yet. Its actual persisted kind
 	// determines admission; an old same-ID control launch is not authority.
-	if err := guard.ValidateAgentChange(ctx, worker.ID, domain.HarnessCodex, ports.AgentConfig{Model: "provider/control", Effort: "minimal"}); !errors.Is(err, ports.ErrUnsupportedEffort) {
+	// The pinned role check now rejects before native capability validation.
+	nativeValidations := len(validator.roles)
+	if err := guard.ValidateAgentChange(ctx, worker.ID, domain.HarnessCodex, ports.AgentConfig{Model: "provider/control", Effort: "minimal"}); !errors.Is(err, instructorsvc.ErrValidation) || !strings.Contains(err.Error(), "role worker requires harness opencode") {
 		t.Fatalf("old Codex/minimal control role was accepted for worker: %v", err)
+	}
+	if len(validator.roles) != nativeValidations {
+		t.Fatal("rejected predecessor role reached native capability validation")
 	}
 	if err := guard.ValidateResume(ctx, worker.ID); err != nil {
 		t.Fatalf("valid worker resume used the old control role: %v", err)

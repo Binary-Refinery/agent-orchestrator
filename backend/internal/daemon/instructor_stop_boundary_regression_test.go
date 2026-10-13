@@ -32,6 +32,8 @@ type stopBoundaryActualControl struct {
 	interruptError error
 }
 
+func (*stopBoundaryActualControl) InstructorControllerReady(domain.SessionRecord) bool { return true }
+
 func (c *stopBoundaryActualControl) InterruptInstructorProducer(_ context.Context, id domain.SessionID, _ string) error {
 	c.interrupts = append(c.interrupts, id)
 	if len(c.interrupts) == 1 {

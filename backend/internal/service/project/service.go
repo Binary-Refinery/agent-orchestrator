@@ -74,6 +74,8 @@ type Service struct {
 	defaultHarness      domain.AgentHarness
 	logger              *slog.Logger
 	onModelScopeChanged func(projectID string)
+	validateGovernance  func(context.Context, domain.ProjectRecord) error
+	configurationGuard  func(context.Context, func() error) error
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -100,11 +102,39 @@ type Deps struct {
 	// OnModelScopeChanged schedules non-blocking model-catalog invalidation
 	// after a project is created or its agent-relevant config changes.
 	OnModelScopeChanged func(projectID string)
+	// ValidateGovernance checks native role choices against effective policy
+	// before a candidate project configuration is persisted.
+	ValidateGovernance func(context.Context, domain.ProjectRecord) error
 }
 
 // New returns a project service backed by the given durable store.
 func New(store Store) *Service {
 	return NewWithDeps(Deps{Store: store})
+}
+
+// SetGovernanceValidator is configured before daemon handlers start.
+func (m *Service) SetGovernanceValidator(validate func(context.Context, domain.ProjectRecord) error) {
+	m.validateGovernance = validate
+}
+
+// SetGovernanceMutationGuard shares the Instructor's configuration write lock.
+// It is wired before handlers start so validation and persistence cannot race
+// a simultaneous policy edit that validated the previous project settings.
+func (m *Service) SetGovernanceMutationGuard(guard func(context.Context, func() error) error) {
+	m.configurationGuard = guard
+}
+
+func (m *Service) withConfigurationMutation(ctx context.Context, mutate func() (Project, error)) (Project, error) {
+	if m.configurationGuard == nil {
+		return mutate()
+	}
+	var result Project
+	err := m.configurationGuard(ctx, func() error {
+		var err error
+		result, err = mutate()
+		return err
+	})
+	return result, err
 }
 
 // NewWithDeps returns a project service with optional teardown dependencies.
@@ -121,6 +151,7 @@ func NewWithDeps(d Deps) *Service {
 		defaultHarness:      defaultHarness,
 		logger:              d.Logger,
 		onModelScopeChanged: d.OnModelScopeChanged,
+		validateGovernance:  d.ValidateGovernance,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
@@ -189,6 +220,10 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 // check and the store write — two concurrent calls for the same path would both
 // pass FindProjectByPath and then race on those mutations.
 func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
+	return m.withConfigurationMutation(ctx, func() (Project, error) { return m.add(ctx, in) })
+}
+
+func (m *Service) add(ctx context.Context, in AddInput) (Project, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return Project{}, err
@@ -293,6 +328,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		RegisteredAt: registeredAt,
 		Kind:         domain.ProjectKindSingleRepo,
 		Config:       projectConfig,
+	}
+	if err := m.validateProjectGovernance(ctx, row); err != nil {
+		return Project{}, err
 	}
 	if in.AsWorkspace {
 		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
@@ -701,6 +739,10 @@ func remoteHost(remote string) string {
 // UpdateSettings atomically replaces the project's stored display name and
 // config. Both values are validated before a single database update.
 func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error) {
+	return m.withConfigurationMutation(ctx, func() (Project, error) { return m.updateSettings(ctx, id, in) })
+}
+
+func (m *Service) updateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
@@ -734,6 +776,11 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 	if row.Config.GovernanceManaged != in.Config.GovernanceManaged {
 		return Project{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed mode cannot change; register a fresh project", nil)
 	}
+	candidate := row
+	candidate.Config = in.Config
+	if err := m.validateProjectGovernance(ctx, candidate); err != nil {
+		return Project{}, err
+	}
 	updated, err := m.store.UpdateProjectSettings(ctx, string(id), inDisplayName, in.Config)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
@@ -756,6 +803,10 @@ func (m *Service) modelScopeChanged(projectID string) {
 // SetConfig replaces the project's stored config. The typed config is validated
 // here so a bad value is rejected when set rather than surfacing at spawn.
 func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {
+	return m.withConfigurationMutation(ctx, func() (Project, error) { return m.setConfig(ctx, id, in) })
+}
+
+func (m *Service) setConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
@@ -783,11 +834,24 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, apierr.Conflict("MANAGED_MODE_LOCKED", "Managed mode cannot change; register a fresh project", nil)
 	}
 	row.Config = in.Config
+	if err := m.validateProjectGovernance(ctx, row); err != nil {
+		return Project{}, err
+	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	m.modelScopeChanged(row.ID)
 	return m.projectFromRow(ctx, row), nil
+}
+
+func (m *Service) validateProjectGovernance(ctx context.Context, row domain.ProjectRecord) error {
+	if m.validateGovernance == nil {
+		return nil
+	}
+	if err := m.validateGovernance(ctx, row); err != nil {
+		return apierr.Invalid("PROJECT_POLICY_CONFLICT", err.Error(), map[string]any{"projectId": row.ID, "suggestedFix": "Align project role selections with the effective policy, or explicitly select project settings as the policy role source. Existing works keep their pinned configuration."})
+	}
+	return nil
 }
 
 func validateScratchProjectConfig(cfg domain.ProjectConfig) error {

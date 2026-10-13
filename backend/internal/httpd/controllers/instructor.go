@@ -62,9 +62,14 @@ func (c *InstructorController) Register(r chi.Router) {
 	r.Post("/instructor/projects/{projectId}/issues/intake", c.intakeIssue)
 	r.Get("/instructor/policy", c.getPolicy)
 	r.Put("/instructor/policy", c.setPolicy)
+	r.Get("/instructor/projects/{projectId}/policy", c.effectiveProjectPolicy)
+	r.Post("/instructor/policy-rebind/preview", c.previewPolicyRebind)
+	r.Post("/instructor/policy-rebind", c.applyPolicyRebind)
 	r.Post("/instructor/commands", c.command)
 	r.Post("/instructor/works", c.registerWork)
 	r.Get("/instructor/works/{workId}", c.details)
+	r.Get("/instructor/works/{workId}/recovery", c.recovery)
+	r.Post("/instructor/works/{workId}/recovery", c.recoverController)
 	r.Get("/instructor/works/{workId}/members", c.members)
 	r.Post("/instructor/works/{workId}/sessions", c.attachSession)
 	r.Post("/instructor/works/{workId}/checks", c.runChecks)
@@ -108,6 +113,9 @@ func (c *InstructorController) setPolicy(w http.ResponseWriter, r *http.Request)
 }
 
 func writeInstructorError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeInstructorRecoveryError(w, r, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, instructorsvc.ErrPublicationUnavailable):
 		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "INSTRUCTOR_PUBLICATION_UNAVAILABLE", err.Error(), nil)

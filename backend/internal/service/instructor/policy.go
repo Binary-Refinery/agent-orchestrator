@@ -36,6 +36,20 @@ func DefaultPolicy() domain.InstructorPolicy {
 	return p
 }
 
+// DefaultProjectPolicy uses project settings for native role choices while
+// retaining the workflow, maximum-effort approval and independence requirements.
+// Persisted legacy policies are deliberately not converted on read.
+func DefaultProjectPolicy() domain.InstructorPolicy {
+	p := DefaultPolicy()
+	for _, name := range []string{"worker", "reviewer", "orchestrator"} {
+		role := p.Roles[name]
+		role.SelectionSource, role.Harness, role.Model = "project", "", ""
+		p.Roles[name] = role
+	}
+	p.Version = PolicyVersion(p)
+	return p
+}
+
 // PolicyVersion hashes the complete canonical policy excluding its version field.
 func PolicyVersion(p domain.InstructorPolicy) string {
 	p.Version = ""
@@ -66,7 +80,13 @@ func ValidatePolicy(p domain.InstructorPolicy) error {
 		}
 	}
 	for name, r := range p.Roles {
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Harness) == "" {
+		if r.SelectionSource != "" && r.SelectionSource != "project" {
+			return invalid(fmt.Sprintf("role %s has an unsupported selection source", name))
+		}
+		if r.SelectionSource == "project" && name != "worker" && name != "reviewer" && name != "orchestrator" {
+			return invalid(fmt.Sprintf("role %s has no project settings source", name))
+		}
+		if strings.TrimSpace(name) == "" || r.SelectionSource == "" && strings.TrimSpace(r.Harness) == "" {
 			return invalid("every role needs a name and harness")
 		}
 		if r.Effort == "" {
@@ -163,7 +183,7 @@ func ValidateLockedPolicy(p domain.InstructorPolicy) error {
 	}
 	for name, harness := range map[string]string{"worker": "opencode", "reviewer": "codex"} {
 		r, ok := p.Roles[name]
-		if !ok || r.Harness != harness || r.Effort != "maximum" {
+		if !ok || (r.SelectionSource != "project" && r.Harness != harness) || r.Effort != "maximum" {
 			return invalid(fmt.Sprintf("locked %s role requires %s and explicitly mapped maximum native effort", name, harness))
 		}
 	}
@@ -287,6 +307,16 @@ func (s *Service) GetPolicy(ctx context.Context) (domain.InstructorPolicy, error
 
 // SetPolicy validates a global replacement without altering policies pinned to existing work.
 func (s *Service) SetPolicy(ctx context.Context, p domain.InstructorPolicy) (domain.InstructorPolicy, error) {
+	var result domain.InstructorPolicy
+	err := s.WithConfigurationMutation(ctx, func() error {
+		var err error
+		result, err = s.setPolicy(ctx, p)
+		return err
+	})
+	return result, err
+}
+
+func (s *Service) setPolicy(ctx context.Context, p domain.InstructorPolicy) (domain.InstructorPolicy, error) {
 	current, err := s.GetPolicy(ctx)
 	if err != nil {
 		return p, err
@@ -298,6 +328,9 @@ func (s *Service) SetPolicy(ctx context.Context, p domain.InstructorPolicy) (dom
 		return p, err
 	}
 	if err := ValidateLockedPolicy(p); err != nil {
+		return p, err
+	}
+	if err := s.validatePolicyProjectConflicts(ctx, p); err != nil {
 		return p, err
 	}
 	p.Version = PolicyVersion(p)

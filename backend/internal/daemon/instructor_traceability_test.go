@@ -296,8 +296,9 @@ func TestInstructorRepositoryPolicyExampleLoadsWithLockedEvidence(t *testing.T) 
 
 func TestInstructorWorkInstructionsContainActionablePinnedEvidenceProtocol(t *testing.T) {
 	work, _, _, _ := instructorTraceabilityFixture()
+	work.Name, work.Goal, work.Phase = "Worker handoff", "Preserve a distinct delegated task", "implementation"
 	text := instructorWorkInstructions(work)
-	for _, required := range []string{work.ID, work.PolicyVersion, "ao instructor checks", "ao instructor verify", "<!-- ao-phase:v1 -->", "Co-authored-by", "AO-session", "Issue", "explicitly configured fork", "allowedRepositories", "projectNumber"} {
+	for _, required := range []string{work.ID, work.PolicyVersion, work.Goal, `"phase":"implementation"`, "ao spawn --prompt", "own concrete subtask", "do not create a duplicate worker", "queued, delivered, accepted or actually running", "ao instructor checks", "ao instructor verify", "<!-- ao-phase:v1 -->", "Co-authored-by", "AO-session", "Issue", "explicitly configured fork", "allowedRepositories", "projectNumber"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("instructions missing %q", required)
 		}

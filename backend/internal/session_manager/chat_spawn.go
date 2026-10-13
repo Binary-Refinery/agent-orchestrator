@@ -478,6 +478,9 @@ func (m *Manager) resumeChatController(
 		historyMode = ports.ChatHistoryRequired
 		providerHandoff, err = m.prepareLiveChatProviderHandoff(ctx, rec)
 	} else {
+		if project.Config.GovernanceManaged || domain.SessionRecoveryRequested(ctx) {
+			historyMode = ports.ChatHistoryContinuity
+		}
 		providerHandoff, err = m.prepareRecoveredChatProviderHandoff(ctx, rec)
 	}
 	if err != nil {

@@ -75,6 +75,7 @@ type Store interface {
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
+	SettleRecoveredControllerWork(ctx context.Context, session domain.SessionID, conversationID, generation string, now time.Time) error
 	CleanupOwnedControllerWork(ctx context.Context, session domain.SessionID, conversationID, generation string, now time.Time) (bool, error)
 	ListVisibleRunningTurnProviderIDs(ctx context.Context, conversationID string) ([]string, error)
 
@@ -1694,10 +1695,16 @@ func (c *Controller) dispatch(
 			if errors.Is(err, ports.ErrSemanticDeliveryDeferred) {
 				return domain.ConversationTurn{}, err
 			}
-			if settleErr := c.store.SettleTurnByID(ctx, turnID, domain.TurnStateCancelled, "governed directive no longer admitted", c.now()); settleErr != nil {
+			detail := "Admission could not be verified. Refresh the work and check controller readiness before assigning a task again."
+			var admission *ports.ChatAdmissionError
+			if errors.As(err, &admission) {
+				detail = admission.Reason
+			}
+			reason := fmt.Sprintf("governed directive no longer admitted: %.2048s", detail)
+			if settleErr := c.store.SettleTurnByID(ctx, turnID, domain.TurnStateCancelled, reason, c.now()); settleErr != nil {
 				return domain.ConversationTurn{}, fmt.Errorf("cancel inadmissible directive: %w", settleErr)
 			}
-			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryRejected, err)
+			return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ports.ErrSemanticDeliveryRejected, reason)
 		}
 	}
 
@@ -1706,6 +1713,11 @@ func (c *Controller) dispatch(
 		var err error
 		budgetToken, err = c.executionBudget.ReserveManagedTurn(ctx, c.owner(), turnID, msg.ClientMessageID)
 		if err != nil {
+			// Reconnecting a controller does not authorize its queued work. A
+			// paused work retains the unsent turn until its admission is restored.
+			if errors.Is(err, ports.ErrSemanticDeliveryDeferred) {
+				return domain.ConversationTurn{}, err
+			}
 			state := domain.TurnStateFailed
 			if errors.Is(err, domain.ErrInstructorBudgetExceeded) {
 				state = domain.TurnStateCancelled

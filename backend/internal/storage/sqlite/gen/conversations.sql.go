@@ -1633,7 +1633,8 @@ WHERE conversation_activities.conversation_id = ?1
       WHERE discarded.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
-          OR discarded.state = 'cancelled'
+          OR (discarded.state = 'cancelled'
+              AND (trim(discarded.error_message) = '' OR discarded.provider_turn_id <> ''))
         )
   ))
 ORDER BY conversation_activities.sequence
@@ -1709,7 +1710,8 @@ WHERE conversation_activities.conversation_id = ?1
       WHERE discarded.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
-          OR discarded.state = 'cancelled'
+          OR (discarded.state = 'cancelled'
+              AND (trim(discarded.error_message) = '' OR discarded.provider_turn_id <> ''))
         )
   ))
 ORDER BY conversation_activities.sequence DESC
@@ -2452,7 +2454,8 @@ WHERE conversation_messages.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
           OR discarded.promoted_to_turn_id IS NOT NULL
-          OR discarded.state = 'cancelled'
+          OR (discarded.state = 'cancelled'
+              AND (trim(discarded.error_message) = '' OR discarded.provider_turn_id <> ''))
         )
   ))
 ORDER BY conversation_messages.sequence
@@ -2464,6 +2467,8 @@ ORDER BY conversation_messages.sequence
 //
 // Undispatched queue items cancelled from the dock settle as cancelled rather
 // than interrupted. Stop and handoff still mark the queue interrupted.
+// Admission refusals retain an error before native dispatch; keep those prompts
+// visible so an empty timeline cannot hide the reason the assignment stopped.
 //
 // Rows with turn_id IS NULL survive the filter on purpose. Those are items the
 // provider never attributed to a turn, and hiding what AO cannot prove belonged to
@@ -2536,7 +2541,8 @@ WHERE conversation_messages.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
           OR discarded.promoted_to_turn_id IS NOT NULL
-          OR discarded.state = 'cancelled'
+          OR (discarded.state = 'cancelled'
+              AND (trim(discarded.error_message) = '' OR discarded.provider_turn_id <> ''))
         )
   ))
 ORDER BY conversation_messages.sequence DESC

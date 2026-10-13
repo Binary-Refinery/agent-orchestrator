@@ -138,6 +138,9 @@ func (s *Service) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID
 		}
 		turn, err := s.store.TurnByID(waitCtx, message.TurnID)
 		if err == nil && turn.State == domain.TurnStateCancelled && turn.ProviderTurnID == "" {
+			if turn.ErrorMessage != "" {
+				return receipt, fmt.Errorf("%w: %.2048s", ports.ErrSemanticDeliveryRejected, turn.ErrorMessage)
+			}
 			return receipt, ports.ErrSemanticDeliveryRejected
 		}
 		if err != nil {

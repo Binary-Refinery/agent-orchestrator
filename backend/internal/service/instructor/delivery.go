@@ -12,6 +12,30 @@ import (
 
 func deliveryGateID(dispatchID string) string { return "delivery-" + dispatchID }
 
+// Claim and delivery are separated by native I/O. A bound receipt may carry a
+// leased directive's revision forward after Claim returns. Capture its current
+// stored authority together with the Work; never authorize an older local copy
+// against a newer Work or revive a settled/replaced lease.
+func (s *Service) currentClaimedDispatch(ctx context.Context, captured domain.InstructorDispatch) (domain.InstructorDispatch, domain.InstructorWork, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.deps.Store.ListInstructorDispatches(ctx, "", captured.WorkID)
+	if err != nil {
+		return captured, domain.InstructorWork{}, false, err
+	}
+	for _, current := range rows {
+		if current.ID != captured.ID {
+			continue
+		}
+		if current.State != "leased" || current.Attempts != captured.Attempts {
+			return current, domain.InstructorWork{}, false, nil
+		}
+		w, err := s.get(ctx, current.WorkID)
+		return current, w, true, err
+	}
+	return captured, domain.InstructorWork{}, false, ErrNotFound
+}
+
 // ErrStopSuperseded certifies that current pause authority was superseded
 // before any native interrupt in this submission was attempted.
 var ErrStopSuperseded = fmt.Errorf("%w: native stop superseded before this submission", ErrConflict)
@@ -137,9 +161,10 @@ func (s *Service) deliveryQueued(ctx context.Context, dispatch domain.Instructor
 			if d.State == "accepted" || d.State == "progress" || d.State == "started" {
 				return nil
 			}
-			dispatch.TargetSessionID = d.TargetSessionID
-			dispatch.TargetSessionInstanceID = d.TargetSessionInstanceID
-			dispatch.TargetCreatedAt, dispatch.TargetRuntimeID, dispatch.NativeReceipt = d.TargetCreatedAt, d.TargetRuntimeID, d.NativeReceipt
+			if d.State != "pending" && d.State != "leased" {
+				return fmt.Errorf("%w: native queue directive is no longer pending", ErrDeliveryUncertain)
+			}
+			dispatch = d // Includes an atomically carried receipt-only revision.
 		}
 	}
 	w, err := s.get(ctx, dispatch.WorkID)

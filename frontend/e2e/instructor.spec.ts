@@ -97,6 +97,7 @@ async function fixture(page: Page, enabled = true, uncertain = false, publicatio
 			if (body.command === "status" || body.command === "delta" || body.command === "tore") { await route.fulfill({ json: { snapshot: currentSnapshot(body.command === "delta" ? "snapshot-delta-v2" : "snapshot-renderer-v2"), dispatches: [], skipped: [] } }); return; }
 			await route.fulfill({ json: { batchId: "batch-renderer", dispatches: [{ id: `dispatch-${commands.length}`, batchId: "batch-renderer", workId: "work-login", projectId: "instructor-demo", snapshotId: body.snapshotId, workRevision: 1, position: 0, action: body.command, message: "Fixture dispatch", state: "pending", attempts: 0, createdAt: at, updatedAt: at }], skipped: body.command === "go all" ? ["work-publish: exact publication approval required"] : [] } }); return;
 		}
+		if (pathname === "/api/v1/instructor/projects/instructor-demo/policy") { await route.fulfill({ json: { policy: currentPolicy, source: "global" } }); return; }
 		if (pathname === "/api/v1/instructor/policy") {
 			if (request.method() === "PUT") { const body = request.postDataJSON() as typeof currentPolicy; savedPolicies.push(body); currentPolicy = { ...body, version: "policy-renderer-v2" }; }
 			await route.fulfill({ json: currentPolicy }); return;

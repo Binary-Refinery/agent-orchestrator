@@ -142,7 +142,13 @@ func (s *Service) ResolveSpawnWork(ctx context.Context, parentID domain.SessionI
 	if err != nil {
 		return parent.ID, err
 	}
-	if role == "orchestrator" || role == "instructor" {
+	if role == "instructor" {
+		if childRole != "orchestrator" {
+			return parent.ID, invalid("instructor must delegate worker tasks through a project orchestrator")
+		}
+		return requestedWorkID, nil
+	}
+	if role == "orchestrator" {
 		return requestedWorkID, nil
 	}
 	if requestedWorkID != "" && requestedWorkID != parent.ID {
@@ -201,44 +207,96 @@ func (s *Service) ValidateResume(ctx context.Context, id domain.SessionID) error
 }
 
 func (s *Service) validateManagedResume(ctx context.Context, w domain.InstructorWork, id domain.SessionID) error {
-	if err := validateWorkExceptions(w, s.now()); err != nil {
+	role, session, err := s.validateManagedExecutionAuthority(ctx, w, id)
+	if err != nil {
 		return err
 	}
+	return s.validateManagedSessionSelection(ctx, w, id, role, session)
+}
+
+// ValidateAgentChange checks the current work authority and the proposed native
+// choice. An obsolete selection may be replaced after a rebind; it is not first
+// required to satisfy the new policy, and no old provider conversation is moved.
+func (s *Service) ValidateAgentChange(ctx context.Context, id domain.SessionID, selection domain.InstructorAgentSelection) error {
+	w, managed, err := s.WorkForSession(ctx, id)
+	if err != nil || !managed {
+		return err
+	}
+	role, _, err := s.validateManagedExecutionAuthority(ctx, w, id)
+	if err != nil {
+		return err
+	}
+	return s.validateRoleSelection(ctx, w, role, selection.Harness, selection.Model, selection.Effort)
+}
+
+// ValidateExecutionAuthority checks work gates without authorizing the owner's
+// native selection. Reviewer-only callers separately validate their reviewer;
+// the retained worker is an owner of evidence, not a resumed native producer.
+func (s *Service) ValidateExecutionAuthority(ctx context.Context, id domain.SessionID) error {
+	w, managed, err := s.WorkForSession(ctx, id)
+	if err != nil || !managed {
+		return err
+	}
+	_, _, err = s.validateManagedExecutionAuthority(ctx, w, id)
+	return err
+}
+
+func (s *Service) validateManagedExecutionAuthority(ctx context.Context, w domain.InstructorWork, id domain.SessionID) (string, *domain.SessionRecord, error) {
+	if err := validateWorkExceptions(w, s.now()); err != nil {
+		return "", nil, err
+	}
 	if e := ValidatePolicy(w.Policy); e != nil {
-		return e
+		return "", nil, e
 	}
 	if w.PolicyVersion != PolicyVersion(w.Policy) {
-		return invalid("pinned work policy hash mismatch")
+		return "", nil, invalid("pinned work policy hash mismatch")
 	}
 	if w.Cancellation != nil || w.State == "done" || w.State == "cancelled" || w.State == "parked" || w.State == "blocked" || w.State == "waiting_human" {
-		return invalid("work may not resume in current state")
+		return "", nil, invalid("work may not resume in current state")
 	}
 	role, adopted, err := s.sessionRole(ctx, w, id)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	// The orchestrator must be able to receive its own ordered Go directive.
 	// Worker/reviewer execution cannot precede that native admission receipt.
 	if role != "orchestrator" && w.ApprovalDispatchID != "" {
 		ready, err := s.approvalCohortReady(ctx, w.ApprovalDispatchID)
 		if err != nil {
-			return err
+			return "", nil, err
 		}
 		if !ready {
-			return invalid("ordered approval cohort awaits native admission")
+			return "", nil, invalid("ordered approval cohort awaits native admission")
 		}
 	}
 	if role == "worker" {
 		if err := correctiveWorkerAdmission(w); err != nil {
-			return err
+			return "", nil, err
 		}
 	}
-	if adopted != nil {
-		// Adoption establishes an assignment, not requested/sent/confirmed launch
-		// evidence. Validate the existing persisted native selection directly.
-		return s.validateRoleSelection(ctx, w, role, string(adopted.Harness), adopted.Metadata.Model, adopted.Metadata.Effort)
+	return role, adopted, nil
+}
+
+func (s *Service) validateManagedSessionSelection(ctx context.Context, w domain.InstructorWork, id domain.SessionID, role string, session *domain.SessionRecord) error {
+	if session == nil {
+		sessions, ok := s.deps.Store.(interface {
+			GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
+		})
+		if !ok {
+			return invalid("managed native session identity reader unavailable")
+		}
+		record, found, err := sessions.GetSession(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !found || record.ProjectID != w.ProjectID {
+			return invalid("managed native session identity is missing or belongs to another project")
+		}
+		session = &record
 	}
-	return nil
+	// A historical requested/sent launch never authorizes today's persisted
+	// selection under a replacement policy. The launch remains immutable audit.
+	return s.validateRoleSelection(ctx, w, role, string(session.Harness), session.Metadata.Model, session.Metadata.Effort)
 }
 
 func (s *Service) sessionRole(ctx context.Context, w domain.InstructorWork, id domain.SessionID) (string, *domain.SessionRecord, error) {

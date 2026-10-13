@@ -95,6 +95,23 @@ board status follow the phase. A work belongs to exactly one configured project
 board. Orchestrators request missing evidence and submit the bundled verified
 chain to the Instructor.
 
+Each delegated execution session needs a concrete task before it starts. The
+project orchestrator supplies the individual subtask, relevant context, scope
+limits, expected outcome and reporting obligations. A Work ID, session name or
+standing instructions do not constitute that task. The daemon rejects a
+managed worker launch without a task before creating its session or native
+process. An issue-task prompt may provide the existing issue-based assignment;
+the daemon must not silently assign the entire parent goal to every worker.
+
+When reusing a worker, inspect its existing task and delivery state. A missing
+task needs explicit delivery through the normal admitted messaging path, not a
+duplicate worker or an assertion that delegation succeeded. Preserve delivery
+identity when retrying. Distinguish queued, delivered, accepted and executing
+work; a successful spawn is not evidence that the worker accepted its task.
+Independent reviewers receive their actual review scope and code revision via
+the configured review flow. Failed admission remains visible with its reason;
+neither an initial task nor a manual follow-up bypasses current human gates.
+
 ## 5. Commands and exact publication authorization
 
 The initial vocabulary is `Status`, `Status alle`, `Status Delta`, `Tore`,

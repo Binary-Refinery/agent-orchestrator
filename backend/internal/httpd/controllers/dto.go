@@ -138,6 +138,24 @@ type InstructorInventoryReconcileRequest struct {
 	LastSeenAt time.Time `json:"lastSeenAt"`
 }
 
+// InstructorEffectivePolicyResponse identifies the resolved project contract.
+type InstructorEffectivePolicyResponse struct {
+	Policy domain.InstructorPolicy `json:"policy"`
+	Source string                  `json:"source"`
+}
+
+// InstructorPolicyRebindRequest captures an exact, human-approved replacement.
+type InstructorPolicyRebindRequest struct {
+	SnapshotID          string `json:"snapshotId"`
+	WorkID              string `json:"workId"`
+	Reason              string `json:"reason"`
+	TargetPolicyVersion string `json:"targetPolicyVersion,omitempty"`
+	Approval            string `json:"approval,omitempty"`
+}
+
+// InstructorRecoveryRequest binds recovery to the displayed controller owner.
+type InstructorRecoveryRequest domain.InstructorRecoveryInput
+
 // InstructorExceptionRequest proposes or approves an expiring exception for one work.
 type InstructorExceptionRequest struct {
 	SnapshotID       string                           `json:"snapshotId"`

@@ -840,16 +840,22 @@ export function activeTurn(snapshot: ConversationSnapshot): ConversationTurn | u
 	);
 }
 
+/** A recorded rejection before native delivery, rather than a user queue removal. */
+export function hasUndeliveredCancellationReason(turn: ConversationTurn): boolean {
+	return turn.state === "cancelled" && !turn.providerTurnId && Boolean(turn.errorMessage?.trim());
+}
+
 /**
  * Turn ids whose human prompt must not appear in the timeline.
  *
  * Queued turns live in the dock until dispatch. Turns cancelled from the dock
  * before dispatch must not reappear in the timeline after the snapshot refreshes.
+ * A daemon rejection retains its prompt and reason so an unsent task stays visible.
  */
 export function hiddenTimelineTurnIds(snapshot: ConversationSnapshot): Set<string> {
 	return new Set(
 		snapshot.turns
-			.filter((turn) => turn.state === "queued" || turn.state === "cancelled")
+			.filter((turn) => turn.state === "queued" || (turn.state === "cancelled" && !hasUndeliveredCancellationReason(turn)))
 			.map((turn) => turn.id),
 	);
 }
