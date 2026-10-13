@@ -22,7 +22,7 @@ Separate reviewers examined configuration, the Board/API and cancellation. Confi
 4. A lint correction made malformed YAML mappings look like tolerated partial decoding: corrected and the full legacy import regression suite passed.
 5. GitHub review found labeled open issues were treated as closed by the UI: intake now matches the backend open/in_progress/review states; terminal unlinked issues remain blocked and linked history remains accessible.
 
-No confirmed review findings remain open. Typecheck and plural-form failures discovered by integration checks were also corrected and their affected tests passed.
+Those review findings were closed before integration. The later post-merge findings are recorded below. Typecheck and plural-form failures discovered by integration checks were also corrected and their affected tests passed.
 
 ## Local checks
 
@@ -35,3 +35,29 @@ The Linux desktop package was attempted: initial tar extraction cannot chown map
 ## Remaining operating boundaries
 
 The installed-machine pilot and upstream rebase are separate. Protected publication stays unavailable until the isolated Publisher boundary exists. This PR does not modify the user's local PyCharm configuration, install the daemon or change live project instructions.
+
+## Post-merge review follow-up (2026-10-13)
+
+PR #17 was merged separately after all 15 CI jobs passed. Four additional P2
+findings arrived shortly before that merge and are addressed in the follow-up:
+
+- Gate review is offered only when the daemon admits `go`. Pending cancellation
+  and other non-approvable gates open details instead. Delivery uncertainty remains
+  recoverable from details using a separately captured work/snapshot dialog.
+- The active summary uses the same predicate as the active cards, including
+  blocked work, human gates and pending cancellation.
+- Direct checks return the final persisted action audit and revision. Failure to
+  persist that audit is returned as an error, leaving durable recovery intent.
+- Failed manual checks enter the existing human retry gate when the captured
+  phase/policy/SHA is still active. Scheduler-owned completion, cancellation,
+  paused work and uncertainty states retain their existing behavior.
+
+The UI delta review caught an additional polling regression: a live snapshot ID
+would reset the delivery observation form. The recovery dialog now captures its
+context on opening; a test with the real form changes the live snapshot and
+confirms both the entered observation and original dispatch identity survive.
+
+Focused checks pass: 21 Board tests; the full Instructor race suite; manual-check
+success/failure revision, failed-profile retry prevention and cleanup-error tests;
+configuration/launch/restore rules-file and initial-task tests. Broad local and
+published CI outcomes are recorded in the follow-up PR description.

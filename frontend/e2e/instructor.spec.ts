@@ -182,8 +182,11 @@ test("renderer: policy editor keeps native effort and gates @T0 @INSTRUCTOR", as
 
 test("renderer: delivery observation restores captured pending publication @T0 @INSTRUCTOR", async ({ page }) => {
 	const state = await fixture(page, true, true); await page.goto("/#/instructor-board");
-	await page.getByRole("article", { name: "Login flow" }).getByRole("button", { name: "Review gate", exact: true }).click();
-	const gate = page.getByRole("dialog", { name: "Review approvals", exact: true });
+	const card = page.getByRole("article", { name: "Login flow" });
+	await expect(card.getByRole("button", { name: "Review gate", exact: true })).toHaveCount(0);
+	await card.getByRole("button", { name: "Details", exact: true }).click();
+	await page.getByRole("dialog", { name: "Login flow", exact: true }).getByRole("button", { name: "Resolve delivery uncertainty", exact: true }).click();
+	const gate = page.getByRole("dialog", { name: "Resolve delivery uncertainty", exact: true });
 	await gate.getByRole("combobox", { name: "Observed delivery" }).selectOption("absent");
 	await expect(gate.getByText("Original Human gate remains pending: Publish login")).toBeVisible();
 	await expect(gate.getByText("dispatch-exact · orch-exact")).toBeVisible();
@@ -191,7 +194,7 @@ test("renderer: delivery observation restores captured pending publication @T0 @
 	await gate.getByRole("button", { name: "Record observation" }).click(); await expect.poll(() => state.reconciliations.length).toBe(1);
 	expect(state.reconciliations[0]).toMatchObject({ snapshotId: "snapshot-renderer-v1", workId: "work-login", dispatchId: "dispatch-exact", accepted: false });
 	await expect(gate).not.toBeVisible(); await page.getByRole("article", { name: "Login flow" }).getByRole("button", { name: "Review gate", exact: true }).click();
-	await expect(gate.getByText("Publish login", { exact: true })).toBeVisible(); expect(state.commands).toHaveLength(0);
+	await expect(page.getByRole("dialog", { name: "Review approvals", exact: true }).getByText("Publish login", { exact: true })).toBeVisible(); expect(state.commands).toHaveLength(0);
 });
 
 test("renderer: captured work exception click approval @T0 @INSTRUCTOR", async ({ page }) => {

@@ -461,6 +461,10 @@ func TestInstructorNativeChecksBindRealCleanCommitAndRejectDirtyClaims(t *testin
 	if err != nil || updated.SHA != sha || len(updated.Evidence) != 2 {
 		t.Fatalf("actual profiles did not produce exact-commit evidence: %+v err=%v", updated, err)
 	}
+	stored, _, readErr := f.store.GetInstructorWork(context.Background(), work.ID)
+	if readErr != nil || updated.Revision != stored.Revision || len(updated.PhaseActions) != 1 || updated.PhaseActions[0].State != "completed" || updated.PhaseActions[0].CompletedAt == nil {
+		t.Fatalf("checks response must include final persisted audit: response=%+v stored=%+v err=%v", updated, stored, readErr)
+	}
 	for _, evidence := range updated.Evidence {
 		if !evidence.Verified || evidence.SHA != sha || evidence.Producer != worker || evidence.Model != "provider/worker" || evidence.Effort != "high" {
 			t.Fatalf("check evidence lost actual execution provenance: %+v", evidence)
