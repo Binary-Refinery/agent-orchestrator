@@ -14,16 +14,25 @@ permissions:
 
 jobs:
   # Primary tier: the cross-platform Go E2E suite (build tag `e2e`) runs the real
-  # `ao` binary against isolated state on every OS GitHub hosts. These runners
+  # `ao` binary against isolated state on every supported native OS. These runners
   # are the "VMs" — the only place that exercises the OS-specific process-detach
   # paths (unix Setsid vs Windows CREATE_NEW_PROCESS_GROUP) and os.UserConfigDir
   # resolution. The suite builds its own binary and self-allocates a free port.
   native:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: native (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner_labels: [self-hosted, linux, x64, ao-ci, ci-heavy]
+          - os: macos-latest
+            runner_labels: [self-hosted, macOS, ARM64, ao-ci]
+          - os: windows-latest
+            runner_labels: [self-hosted, windows, x64, ao-ci]
+    runs-on: ${{ matrix.runner_labels }}
     defaults:
       run:
         working-directory: backend
@@ -44,7 +53,8 @@ jobs:
   # --init gives a real PID-1 reaper so the daemon the check starts is reaped
   # after `stop` instead of lingering as a zombie.
   container:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     steps:
       - uses: actions/checkout@v4
 

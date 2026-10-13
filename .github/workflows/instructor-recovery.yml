@@ -18,10 +18,17 @@ permissions:
 
 jobs:
   configuration-recovery:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: configuration-recovery (${{ matrix.os }})
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner_labels: [self-hosted, linux, x64, ao-ci, ci-heavy]
+          - os: windows-latest
+            runner_labels: [self-hosted, windows, x64, ao-ci]
+    runs-on: ${{ matrix.runner_labels }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

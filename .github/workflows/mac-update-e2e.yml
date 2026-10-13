@@ -83,7 +83,7 @@ permissions:
 jobs:
   update-e2e:
     # macos-latest is Apple silicon, so the arm64 asset is the one under test.
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, ao-ci]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

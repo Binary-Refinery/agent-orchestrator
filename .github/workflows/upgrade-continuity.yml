@@ -15,12 +15,18 @@ permissions:
 
 jobs:
   daemon-upgrade:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Daemon N to N+1 (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner_labels: [self-hosted, linux, x64, ao-ci, ci-heavy]
+          - os: windows-latest
+            runner_labels: [self-hosted, windows, x64, ao-ci]
+    runs-on: ${{ matrix.runner_labels }}
     timeout-minutes: 30
     defaults:
       run:

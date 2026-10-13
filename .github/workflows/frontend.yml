@@ -26,17 +26,27 @@ permissions:
 
 jobs:
   linux-desktop-package:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # Use the supported glibc baseline, as in build-artifacts.yml. This gate runs
     # the actual package lifecycle, including the native tmux socket smoke, on
     # a clean host; renderer fixtures alone cannot verify those boundaries.
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
+    container: ubuntu:22.04
     timeout-minutes: 45
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     env:
       AO_RELEASE_REPO: ${{ github.repository }}
     steps:
+      - name: Prepare Ubuntu 22.04 package environment
+        if: runner.os == 'Linux'
+        working-directory: .
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y ca-certificates curl git sudo unzip zip jq openssl build-essential bison pkg-config python3 fakeroot dpkg rpm libgtk-3-0 libnss3 libasound2 libgbm1 libxss1 libxtst6 libx11-xcb1 libsecret-1-0
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -75,7 +85,8 @@ jobs:
         run: npm run build
 
   mac-update-helper:
-    runs-on: macos-14
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, ao-ci]
     timeout-minutes: 15
     defaults:
       run:
@@ -102,7 +113,8 @@ jobs:
           "$HOME/.ao/build-cache/update-helper/state-tests"
 
   test:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     defaults:
       run:
         working-directory: frontend
@@ -176,6 +188,7 @@ jobs:
         run: npx vitest run
 
   renderer-smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # RENDERER smoke (issue #2483, renderer slice) — the Playwright specs that run
     # the renderer under `dev:web` with an injected window.ao + fake CDC/snapshot.
     # This is fast renderer-regression coverage; it is NOT the canonical T0/P0
@@ -183,7 +196,7 @@ jobs:
     # exercised by the packaged-app pod gate (#2697), not here.
     # playwright.config starts `dev:web` itself (webServer); the pinned container
     # provides Chromium and its system dependencies without a live apt install.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     timeout-minutes: 20
     container:
       # Keep this aligned with Playwright in frontend/package-lock.json.

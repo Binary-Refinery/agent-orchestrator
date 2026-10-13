@@ -31,6 +31,7 @@ env:
 
 jobs:
   build:
+    name: build (${{ matrix.os }}, ${{ matrix.platform }}, ${{ matrix.artifact }})
     strategy:
       fail-fast: false
       matrix:
@@ -40,24 +41,41 @@ jobs:
           # alias names so the cask/updater/landing stay compatible. Do not
           # rename either without updating the conductor.
           - os: macos-latest
+            runner_labels: [self-hosted, macOS, ARM64, ao-ci]
+            container: ''
             platform: darwin-arm64
             artifact: mac-arm64
           - os: macos-15-intel
+            runner_labels: [self-hosted, macOS, x64, ao-ci]
+            container: ''
             platform: darwin-x64
             artifact: mac-x64
           - os: windows-latest
+            runner_labels: [self-hosted, windows, x64, ao-ci]
+            container: ''
             platform: win32-x64
             artifact: win
           # Linux tmux links glibc dynamically (#4616). Build on the oldest
           # supported glibc baseline so the bundle also runs on Ubuntu 22.04.
           - os: ubuntu-22.04
+            runner_labels: [self-hosted, linux, x64, ao-ci, ci-heavy]
+            container: ubuntu:22.04
             platform: linux-x64
             artifact: linux
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner_labels }}
+    container: ${{ matrix.container }}
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     steps:
+      - name: Prepare Ubuntu 22.04 package environment
+        if: runner.os == 'Linux'
+        working-directory: .
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y ca-certificates curl git sudo unzip zip jq openssl build-essential bison pkg-config python3 fakeroot dpkg rpm libgtk-3-0 libnss3 libasound2 libgbm1 libxss1 libxtst6 libx11-xcb1 libsecret-1-0
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
@@ -229,7 +247,7 @@ jobs:
   # a downstream consumer reads every expected hash from a single file.
   digests:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     steps:
       - uses: actions/download-artifact@v4
         with:

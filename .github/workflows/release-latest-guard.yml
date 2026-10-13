@@ -15,7 +15,7 @@ jobs:
     # this workflow (including the hourly schedule) but have no desktop
     # release, so the check fails red every hour.
     if: github.repository == 'Untrivial-ai/agent-orchestrator'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     permissions:
       contents: read
     steps:
@@ -65,7 +65,7 @@ jobs:
     # in-app Settings -> Updates display, so main must not fall behind the
     # latest stable tag (see #4467).
     if: github.repository == 'Untrivial-ai/agent-orchestrator'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     permissions:
       contents: read
     steps:

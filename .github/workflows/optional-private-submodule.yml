@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   unauthenticated-recursive-clone:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, ao-ci, ci-heavy]
     steps:
       - uses: actions/checkout@v4
         with:
