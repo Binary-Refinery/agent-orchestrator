@@ -75,7 +75,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		Short: "Spawn an agent session",
 		Long: "Spawn an agent session in a registered project, or a standalone worker with --standalone.\n\n" +
 			"The session runs the chosen agent in a\n" +
-			"fresh isolated workspace. Git projects use worktrees; standalone agents use an AO-managed plain directory.",
+			"fresh isolated workspace. Git projects use worktrees; standalone agents use an AO-managed plain directory.\n\n" +
+			"Governed workers require a concrete --prompt or --issue. A successful spawn submits the initial task; " +
+			"it does not confirm that the agent has accepted or begun work.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.standalone && strings.TrimSpace(opts.project) != "" {
@@ -99,6 +101,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			if opts.kind != "" && opts.kind != "worker" && opts.kind != "orchestrator" {
 				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
+			}
+			if opts.kind != "orchestrator" && (strings.TrimSpace(opts.work) != "" || strings.TrimSpace(opts.workRole) != "") &&
+				strings.TrimSpace(opts.prompt) == "" && strings.TrimSpace(opts.issue) == "" {
+				return usageError{fmt.Errorf("--prompt or --issue is required for a governed worker; provide a concrete task")}
 			}
 			if opts.standalone {
 				if opts.kind == "orchestrator" {
@@ -235,7 +241,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for standalone or Scratch sessions)")
-	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
+	f.StringVar(&opts.prompt, "prompt", "", "Concrete initial task (required for governed workers unless --issue supplies the task)")
 	f.StringVar(&opts.model, "model", "", "Agent model override for this session only (e.g. sonnet, gpt-5.6-sol); overrides project/role config without changing it")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider: github or gitlab (default: github)")

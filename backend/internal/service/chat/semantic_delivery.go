@@ -138,6 +138,9 @@ func (s *Service) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID
 		}
 		turn, err := s.store.TurnByID(waitCtx, message.TurnID)
 		if err == nil && turn.State == domain.TurnStateCancelled && turn.ProviderTurnID == "" {
+			if turn.ErrorMessage != "" {
+				return receipt, fmt.Errorf("%w: %.2048s", ports.ErrSemanticDeliveryRejected, turn.ErrorMessage)
+			}
 			return receipt, ports.ErrSemanticDeliveryRejected
 		}
 		if err != nil {
@@ -147,6 +150,19 @@ func (s *Service) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID
 			return receipt, fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryUncertain, err)
 		}
 		if turn.State.Terminal() {
+			// Acceptance can commit between the receipt read above and this
+			// terminal turn read. Require a fresh receipt for the exact same
+			// operation; terminal state alone never proves native acceptance.
+			current, found, readErr := ledger.GetSemanticDelivery(waitCtx, id, key)
+			if readErr != nil {
+				if waitCtx.Err() != nil {
+					return timedOut()
+				}
+				return receipt, fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryUncertain, readErr)
+			}
+			if found && current.State == "accepted" {
+				return current, nil
+			}
 			return receipt, fmt.Errorf("%w: Chat turn ended without observed native acceptance", ports.ErrSemanticDeliveryUncertain)
 		}
 		if turn.State == domain.TurnStateQueued {

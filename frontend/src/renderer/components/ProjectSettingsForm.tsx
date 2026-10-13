@@ -581,6 +581,7 @@ function SettingsBody({
 
 			{section === "agents" && (
 				<ProjectSettingsSection title={t("settings.project.agents")} titleHidden grouped>
+					<p className="py-2 text-xs text-settings-muted">{t("instructor.configuration.projectHint")}</p>
 					<div className="grid grid-cols-[6rem_minmax(0,0.85fr)_minmax(0,1.25fr)] gap-3 py-2 text-xs font-medium text-settings-muted">
 						<span />
 						<span>{t("settings.project.agent")}</span>

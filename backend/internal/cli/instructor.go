@@ -43,6 +43,7 @@ func newInstructorCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{Use: "instructor", Short: "Inspect and direct governed work across projects"}
 	cmd.AddCommand(newInstructorStatusCommand(ctx), instructorReadCommand(ctx, "capabilities", "Inspect Instructor availability", "instructor/capabilities"), instructorReadCommand(ctx, "inventory", "List real sessions including unassigned legacy work", "instructor/inventory"), instructorReadCommand(ctx, "commands", "List the daemon's command registry", "instructor/commands"), newInstructorDetailsCommand(ctx), newInstructorActionCommand(ctx), newInstructorRegisterCommand(ctx), newInstructorReportCommand(ctx), newInstructorAttachCommand(ctx), newInstructorChecksCommand(ctx), newInstructorPolicyCommand(ctx), newInstructorVerifyCommand(ctx), newInstructorReconcileCommand(ctx), newInstructorExceptionCommand(ctx))
 	cmd.AddCommand(newInstructorInventoryReconcileCommand(ctx))
+	cmd.AddCommand(newInstructorPolicyRebindCommand(ctx), newInstructorRecoveryCommand(ctx))
 	cmd.AddCommand(newInstructorPlanCommand(ctx), instructorReadCommand(ctx, "plans", "List durable global Instructor dialogues", "instructor/plans"), newInstructorPlanStatusCommand(ctx))
 	return cmd
 }

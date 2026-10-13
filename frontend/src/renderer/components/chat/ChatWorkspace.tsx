@@ -124,6 +124,7 @@ import {
 	can,
 	isCompaction,
 	isSteer,
+	hasUndeliveredCancellationReason,
 	hiddenTimelineTurnIds,
 	queuedTurnIds,
 	type ConversationPlan,
@@ -3623,7 +3624,7 @@ type TimelineGroup = {
 	anchor: number;
 	items: ConversationItem[];
 	outcome?: {
-		state: "completed" | "recovered" | "interrupted" | "failed";
+		state: "completed" | "recovered" | "interrupted" | "failed" | "cancelled";
 		durationMs?: number;
 		error?: string;
 	};
@@ -3809,7 +3810,7 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 					item.status === "running" &&
 					item.detail?.event === "provider.failure",
 			);
-		if (turn.state === "running" || turn.state === "queued" || turn.state === "cancelled") continue;
+		if (turn.state === "running" || turn.state === "queued" || (turn.state === "cancelled" && !hasUndeliveredCancellationReason(turn))) continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
 			state: turn.state,

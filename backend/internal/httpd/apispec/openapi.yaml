@@ -2363,6 +2363,117 @@ paths:
       summary: Validate and persist governance policy for future work
       tags:
       - instructor
+  /api/v1/instructor/policy-rebind:
+    post:
+      operationId: applyInstructorPolicyRebind
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorPolicyRebindRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorWork'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Apply an explicitly approved policy replacement while preserving work
+        identity and history
+      tags:
+      - instructor
+  /api/v1/instructor/policy-rebind/preview:
+    post:
+      operationId: previewInstructorPolicyRebind
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorPolicyRebindRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorPolicyRebindPreview'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Preview a captured work policy replacement and its exact human approval
+      tags:
+      - instructor
   /api/v1/instructor/projects/{projectId}/issues:
     get:
       operationId: instructorIssueCandidates
@@ -2483,6 +2594,61 @@ paths:
           description: Service Unavailable
       summary: Register one real GitHub issue as durable work without launching agents
         or modifying GitHub
+      tags:
+      - instructor
+  /api/v1/instructor/projects/{projectId}/policy:
+    get:
+      operationId: instructorEffectiveProjectPolicy
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorEffectivePolicyResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read resolved project role choices and policy provenance
       tags:
       - instructor
   /api/v1/instructor/reconcile:
@@ -2997,6 +3163,122 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Service Unavailable
       summary: Consume an exact protected grant once through the isolated publisher
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/recovery:
+    get:
+      operationId: instructorControllerRecovery
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorRecoveryStatus'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Inspect the current exact project controller and recovery action
+      tags:
+      - instructor
+    post:
+      operationId: recoverInstructorController
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstructorRecoveryRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorRecoveryStatus'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Recover the captured existing conversation without authorizing work
+        execution
       tags:
       - instructor
   /api/v1/instructor/works/{workId}/sessions:
@@ -11271,6 +11553,10 @@ components:
           - ready
           - unavailable
           type: string
+        statusRecoveryReason:
+          type: string
+        statusRecoveryReasonCode:
+          type: string
         terminalGeneration:
           type: string
         terminalHandleId:
@@ -13169,6 +13455,16 @@ components:
       - createdAt
       - updatedAt
       type: object
+    InstructorEffectivePolicyResponse:
+      properties:
+        policy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        source:
+          type: string
+      required:
+      - policy
+      - source
+      type: object
     InstructorEvent:
       properties:
         at:
@@ -13929,6 +14225,121 @@ components:
       - attribution
       - traceability
       type: object
+    InstructorPolicyRebind:
+      properties:
+        appliedAt:
+          format: date-time
+          type: string
+        approval:
+          type: string
+        beforePolicy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        invalidatedTransitions:
+          items:
+            type: string
+          type: array
+        policySource:
+          type: string
+        previousApprovalDispatchId:
+          type: string
+        previousGate:
+          $ref: '#/components/schemas/InstructorGate'
+        previousState:
+          type: string
+        previousSuspendedGate:
+          $ref: '#/components/schemas/InstructorGate'
+        proposalHash:
+          type: string
+        reason:
+          type: string
+        snapshotId:
+          type: string
+        supersededExceptionIds:
+          items:
+            type: string
+          type: array
+        targetPolicyVersion:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - proposalHash
+      - snapshotId
+      - workRevision
+      - beforePolicy
+      - targetPolicyVersion
+      - policySource
+      - reason
+      - approval
+      - previousState
+      - appliedAt
+      type: object
+    InstructorPolicyRebindPreview:
+      properties:
+        beforePolicy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        beforePolicyVersion:
+          type: string
+        effectivePolicy:
+          $ref: '#/components/schemas/InstructorPolicy'
+        exactApproval:
+          type: string
+        historicalEvidenceCount:
+          type: integer
+        invalidatedTransitions:
+          items:
+            type: string
+          type: array
+        policySource:
+          type: string
+        proposalHash:
+          type: string
+        snapshotId:
+          type: string
+        supersededExceptionIds:
+          items:
+            type: string
+          type: array
+        targetPolicyVersion:
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - workId
+      - snapshotId
+      - workRevision
+      - beforePolicyVersion
+      - targetPolicyVersion
+      - policySource
+      - beforePolicy
+      - effectivePolicy
+      - proposalHash
+      - exactApproval
+      - invalidatedTransitions
+      - supersededExceptionIds
+      - historicalEvidenceCount
+      type: object
+    InstructorPolicyRebindRequest:
+      properties:
+        approval:
+          type: string
+        reason:
+          type: string
+        snapshotId:
+          type: string
+        targetPolicyVersion:
+          type: string
+        workId:
+          type: string
+      required:
+      - snapshotId
+      - workId
+      - reason
+      type: object
     InstructorProfile:
       properties:
         command:
@@ -14117,6 +14528,72 @@ components:
       - accepted
       - note
       type: object
+    InstructorRecoveryRequest:
+      properties:
+        controllerGeneration:
+          type: string
+        policyVersion:
+          type: string
+        providerConversationId:
+          type: string
+        sessionCreatedAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - workId
+      - workRevision
+      - policyVersion
+      - sessionId
+      - sessionCreatedAt
+      - providerConversationId
+      - controllerGeneration
+      type: object
+    InstructorRecoveryStatus:
+      properties:
+        action:
+          enum:
+          - resume
+          - restore
+          - none
+          type: string
+        controllerGeneration:
+          type: string
+        policyVersion:
+          type: string
+        providerConversationId:
+          type: string
+        ready:
+          type: boolean
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        sessionCreatedAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - workId
+      - workRevision
+      - policyVersion
+      - ready
+      - action
+      - reasonCode
+      - reason
+      type: object
     InstructorRegisterRequest:
       properties:
         branch:
@@ -14198,6 +14675,8 @@ components:
           type: boolean
         model:
           type: string
+        selectionSource:
+          type: string
       required:
       - harness
       - model
@@ -14275,6 +14754,10 @@ components:
           type: string
         metrics:
           $ref: '#/components/schemas/InstructorMetrics'
+        recoveries:
+          additionalProperties:
+            $ref: '#/components/schemas/InstructorRecoveryStatus'
+          type: object
         works:
           items:
             $ref: '#/components/schemas/InstructorWork'
@@ -14454,6 +14937,10 @@ components:
           type: string
         policy:
           $ref: '#/components/schemas/InstructorPolicy'
+        policyRebindings:
+          items:
+            $ref: '#/components/schemas/InstructorPolicyRebind'
+          type: array
         policyVersion:
           type: string
         progressAt:

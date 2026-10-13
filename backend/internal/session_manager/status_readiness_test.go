@@ -3,6 +3,8 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,5 +171,83 @@ func TestStatusReadinessFreshSpawnAfterSuccessfulRecoveryDoesNotChangeRevision(t
 	}
 	if got := m.SessionStatusReadiness(rec); got != "ready" {
 		t.Fatalf("fresh spawn readiness = %s, want ready", got)
+	}
+}
+
+func TestStatusRecoveryReasonExpiresWithOwnerAndRetry(t *testing.T) {
+	for _, replacedBeforeFinish := range []bool{false, true} {
+		t.Run(fmt.Sprint(replacedBeforeFinish), func(t *testing.T) {
+			m, st, _, _ := newManager()
+			rec := domain.SessionRecord{ID: "s1", ProjectID: "mer", Mode: domain.SessionModeChat,
+				Activity: domain.Activity{State: domain.ActivityActive},
+				Metadata: domain.SessionMetadata{ControllerGeneration: "original"}}
+			st.sessions[rec.ID] = rec
+			m.beginStatusRecovery(rec.ID)
+			if code, reason := m.SessionStatusRecoveryReason(rec); code != "" || reason != "" {
+				t.Fatalf("pending recovery published a reason: %q %q", code, reason)
+			}
+			replacement := rec
+			replacement.Metadata.ControllerGeneration = "replacement"
+			if replacedBeforeFinish {
+				st.sessions[rec.ID] = replacement
+			}
+			m.finishStatusRecovery(context.Background(), rec, fmt.Errorf("%w: work is waiting_human", ErrInstructorResumeBlocked))
+			if code, reason := m.SessionStatusRecoveryReason(rec); code != "INSTRUCTOR_RESUME_BLOCKED" || !strings.Contains(reason, "waiting_human") {
+				t.Fatalf("failed recovery cause = %q %q", code, reason)
+			}
+			if code, reason := m.SessionStatusRecoveryReason(replacement); code != "" || reason != "" {
+				t.Fatalf("new controller inherited old failure: %q %q", code, reason)
+			}
+			if got := m.SessionStatusReadiness(replacement); got != "ready" {
+				t.Fatalf("new controller readiness = %s", got)
+			}
+			m.beginStatusRecovery(rec.ID)
+			if code, reason := m.SessionStatusRecoveryReason(rec); code != "" || reason != "" {
+				t.Fatalf("retry retained old failure: %q %q", code, reason)
+			}
+			m.finishStatusRecovery(context.Background(), rec, nil)
+			if code, reason := m.SessionStatusRecoveryReason(rec); code != "" || reason != "" {
+				t.Fatalf("successful recovery retained cause: %q %q", code, reason)
+			}
+		})
+	}
+}
+
+func TestStatusRecoveryReasonIsBoundedAndPreservesOwnerUncertainty(t *testing.T) {
+	m, st, _, _ := newManager()
+	rec := domain.SessionRecord{ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}}
+	st.sessions[rec.ID] = rec
+	cause := errors.Join(ports.ErrChatRecoveryInconclusive, fmt.Errorf("history: %w\n%s", ports.ErrChatHistoryUnsettled, strings.Repeat("ä", 1000)))
+	m.finishStatusRecovery(context.Background(), rec, cause)
+	code, reason := m.SessionStatusRecoveryReason(rec)
+	if code != "CHAT_RECOVERY_INCONCLUSIVE" || !strings.Contains(reason, "may still own work") {
+		t.Fatalf("recovery cause = %q %q", code, reason)
+	}
+	if len([]rune(reason)) > 512 || strings.ContainsAny(reason, "\n\r") || strings.ContainsRune(reason, '\uFFFD') {
+		t.Fatalf("unbounded or invalid explanation: %q", reason)
+	}
+	if st.sessions[rec.ID].Activity != rec.Activity {
+		t.Fatal("unknown ownership changed durable activity")
+	}
+}
+
+func TestStatusRecoveryReasonPreservesFailedRelaunchCauseForExitedSession(t *testing.T) {
+	m, st, _, _ := newManager()
+	rec := domain.SessionRecord{ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}}
+	st.sessions[rec.ID] = rec
+	m.beginStatusRecovery(rec.ID)
+	exited := rec
+	exited.Activity.State = domain.ActivityExited
+	st.sessions[rec.ID] = exited
+	m.finishStatusRecovery(context.Background(), rec, fmt.Errorf("%w: role requires harness opencode, got codex", ErrInstructorResumeBlocked))
+	if got := m.SessionStatusReadiness(exited); got != "ready" {
+		t.Fatalf("verified exited status = %q", got)
+	}
+	if code, reason := m.SessionStatusRecoveryReason(exited); code != "INSTRUCTOR_RESUME_BLOCKED" || !strings.Contains(reason, "role requires harness opencode, got codex") {
+		t.Fatalf("exited session recovery cause = %q %q", code, reason)
+	}
+	exited.IsTerminated = true
+	if code, reason := m.SessionStatusRecoveryReason(exited); code != "" || reason != "" {
+		t.Fatalf("terminated session retained recovery cause = %q %q", code, reason)
 	}
 }

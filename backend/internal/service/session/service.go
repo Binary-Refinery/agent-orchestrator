@@ -1075,6 +1075,8 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 	if s.statusRecoveryRevision() != recoveryRevision {
 		for i := range out {
 			out[i].StatusReadiness = "checking"
+			out[i].StatusRecoveryReasonCode = ""
+			out[i].StatusRecoveryReason = ""
 		}
 	}
 	return out, nil
@@ -1145,6 +1147,8 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 	}
 	if s.statusRecoveryRevision() != recoveryRevision {
 		sess.StatusReadiness = "checking"
+		sess.StatusRecoveryReasonCode = ""
+		sess.StatusRecoveryReason = ""
 	}
 	return sess, nil
 }
@@ -1163,9 +1167,19 @@ func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFa
 	}); ok {
 		readiness = recovery.SessionStatusReadiness(rec)
 	}
+	var recoveryCode, recoveryReason string
+	if readiness != "checking" {
+		if recovery, ok := s.manager.(interface {
+			SessionStatusRecoveryReason(domain.SessionRecord) (string, string)
+		}); ok {
+			recoveryCode, recoveryReason = recovery.SessionStatusRecoveryReason(rec)
+		}
+	}
 	return domain.Session{
-		SessionRecord:   rec,
-		StatusReadiness: readiness,
+		SessionRecord:            rec,
+		StatusReadiness:          readiness,
+		StatusRecoveryReasonCode: recoveryCode,
+		StatusRecoveryReason:     recoveryReason,
 		ChatProviderPreserved: rec.Mode == domain.SessionModeChat && !rec.IsTerminated &&
 			s.chatProviderPreserved != nil && s.chatProviderPreserved(rec.ID),
 		Status:           deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
@@ -1182,6 +1196,13 @@ func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFa
 func toAPIError(err error) error {
 	original := ownership.Own(err, ownership.OwnerHTTP)
 	return ownership.Preserve(original, mapSessionError(original))
+}
+
+// MapRecoveryError shares the session API's typed errors with guided recovery
+// routes that invoke the manager through another service. Unknown errors remain
+// unclassified so genuine internal failures still use the standard 500 envelope.
+func MapRecoveryError(err error) error {
+	return toAPIError(err)
 }
 
 func mapSessionError(err error) error {
@@ -1293,6 +1314,9 @@ func mapSessionError(err error) error {
 	case errors.Is(err, domain.ErrAgentSwitchInProgress):
 		return apierr.Conflict("AGENT_SWITCH_IN_PROGRESS",
 			"This session already has an agent switch in progress", nil)
+	case errors.Is(err, domain.ErrSessionRecoveryChanged):
+		return apierr.Conflict("SESSION_RECOVERY_CHANGED",
+			"The session changed since recovery was prepared; refresh and try again", nil)
 	case errors.Is(err, sessionmanager.ErrScratchBranchUnsupported):
 		return apierr.Invalid("SCRATCH_BRANCH_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
@@ -1343,6 +1367,34 @@ func mapSessionError(err error) error {
 		return apierr.Conflict("WORKSPACE_CWD_MISMATCH", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceLocked):
 		return apierr.Conflict("WORKSPACE_LOCKED", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatRecoveryInconclusive):
+		return apierr.Conflict("CHAT_RECOVERY_INCONCLUSIVE",
+			"AO could not verify ownership of the existing provider host. Another controller cannot be started safely; check the host connection and retry recovery. "+err.Error(), nil)
+	case errors.Is(err, ports.ErrChatResumeFailed):
+		return apierr.Conflict("CHAT_RESUME_FAILED",
+			"The saved provider conversation could not be resumed. Check the provider connection and retry recovery. "+err.Error(), nil)
+	case errors.Is(err, ports.ErrChatHistoryUnsettled):
+		return apierr.Conflict("CHAT_HISTORY_UNSETTLED", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatHistoryUnavailable):
+		return apierr.Conflict("CHAT_HISTORY_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatHistoryLoadFailed):
+		return apierr.Conflict("CHAT_HISTORY_LOAD_FAILED",
+			"The saved conversation history could not be loaded. Check the provider connection and retry recovery. "+err.Error(), nil)
+	case errors.Is(err, ports.ErrSemanticDeliveryDeferred):
+		return apierr.Conflict("CHAT_EXECUTION_DEFERRED",
+			"The message is saved in the queue and awaits Work admission. Resolve the work gate before continuing. "+err.Error(), nil)
+	case errors.Is(err, ports.ErrSemanticDeliveryRejected):
+		return apierr.Conflict("CHAT_EXECUTION_REJECTED",
+			fmt.Sprintf("The message was cancelled before provider dispatch because the work no longer permits execution. %.2048s", err.Error()), nil)
+	case errors.Is(err, sessionmanager.ErrInstructorResumeBlocked):
+		return apierr.Conflict("INSTRUCTOR_RESUME_BLOCKED",
+			"Session recovery is blocked by Instructor governance. Resolve the work gate or project role configuration before retrying. "+err.Error(), nil)
+	case errors.Is(err, ports.ErrGovernedTaskRequired):
+		return apierr.Invalid("GOVERNED_TASK_REQUIRED",
+			"Provide a concrete task prompt or issue before starting a governed worker. Work goals, standing rules, and attachments alone do not assign a task.", nil)
+	case errors.Is(err, sessionmanager.ErrInstructorLaunchBlocked):
+		return apierr.Conflict("INSTRUCTOR_LAUNCH_BLOCKED",
+			"Session launch is blocked by Instructor governance. Check the work gate and project role configuration. "+err.Error(), nil)
 	default:
 		return err
 	}

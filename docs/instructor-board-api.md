@@ -28,6 +28,9 @@ Saved project settings describe future launches. Member/session receipts
 distinguish requested, passed-to-tool and provider-confirmed model/effort.
 Missing confirmation stays unknown.
 
+For policy changes on existing Work and guided controller reconnection, see
+[configuration changes and session recovery](instructor-session-recovery.md).
+
 ## Create a project and start its orchestrator
 
 Register an existing local repository with `POST /api/v1/projects`:

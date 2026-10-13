@@ -24,7 +24,8 @@ const (
 )
 
 // DelegateTaskInput describes a task AO should spawn as a worker session. Brief
-// may be empty to open an idle worker that the user can instruct later. Empty
+// may be empty to open an unmanaged idle worker that the user can instruct
+// later. Governed workers require a concrete brief before creation. Empty
 // RequestedAgent means the spawn uses the project's worker-agent default.
 type DelegateTaskInput struct {
 	WorkID          string

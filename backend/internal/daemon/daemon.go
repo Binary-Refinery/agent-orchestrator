@@ -58,7 +58,6 @@ import (
 	fsbrowsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/fsbrowser"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/githubpat"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
-	instructorsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/instructor"
 	linkpreviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/linkpreview"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
@@ -567,11 +566,7 @@ func Run() error {
 		chatSvc.SetAgentConfigObserver(instructorBridge.ObserveChatAgentConfig)
 		chatSvc.SetExecutionBudgetGuard(instructorBridge)
 		chatSvc.SetSemanticDispatchValidator(func(ctx context.Context, target domain.SessionID, key string) error {
-			err := instructorSvc.ValidateDispatchAdmission(ctx, target, key)
-			if errors.Is(err, instructorsvc.ErrEvidencePending) {
-				return fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryDeferred, err)
-			}
-			return err
+			return instructorChatAdmissionError(instructorSvc.ValidateDispatchAdmission(ctx, target, key))
 		})
 		sessionSvc.SetInstructorWorkReader(instructorSvc)
 		governedReviews, ok := reviewSvc.(interface {
@@ -598,6 +593,10 @@ func Run() error {
 	lcStack.LCM.SetSessionOperationGate(sessMgr)
 	termMgr.SetSessionInputLease(sessMgr)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log, OnModelScopeChanged: agentSvc.InvalidateProjectModelCatalogs})
+	if instructorEnabled {
+		projectSvc.SetGovernanceValidator(instructorSvc.ValidateProjectConfiguration)
+		projectSvc.SetGovernanceMutationGuard(instructorSvc.WithConfigurationMutation)
+	}
 	reportSessions, ok := sessMgr.(reportSemanticSession)
 	if !ok {
 		return errors.New("wire report delivery: session manager lacks semantic send support")

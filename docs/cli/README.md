@@ -22,6 +22,17 @@ go build -o ./bin/ao ./cmd/ao
 Every product command resolves to a daemon HTTP route. Run `ao <command>
 --help` for the authoritative flag shape.
 
+Governed worker spawns require a concrete `--prompt` or `--issue`; the daemon
+rejects an empty task with `GOVERNED_TASK_REQUIRED` before registering work or
+creating a session or workspace. This also applies to the New Task dialog when
+Instructor governance is enabled. A work goal, standing rules or attachments
+alone do not assign a worker task. Unmanaged idle sessions remain available when
+Instructor is disabled. Instructors delegate worker tasks through project
+orchestrators. A successful spawn confirms session creation and task submission,
+not that the agent has accepted or started the task. Chat's existing durable
+queue retains an asynchronous opening task across startup retry without queuing
+it twice; provider dispatch and work acceptance remain separate observations.
+
 ### Daemon control
 
 | Command                       | Purpose                                                                                                                           |

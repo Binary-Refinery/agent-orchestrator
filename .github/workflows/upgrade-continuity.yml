@@ -1,0 +1,68 @@
+name: Upgrade continuity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "backend/**"
+      - "test/upgrade/**"
+      - ".github/workflows/upgrade-continuity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  daemon-upgrade:
+    name: Daemon N to N+1 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+
+      # Frozen installed .4 baseline from the reported upgrade incident. Move
+      # this forward only after a release has passed its N->N+1 acceptance.
+      - uses: actions/checkout@v4
+        with:
+          ref: d61634321d8d3a8ba3cf933033b168331310785a
+          path: previous
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Build the frozen previous daemon
+        working-directory: previous/backend
+        env:
+          AO_UPGRADE_OLD_BINARY: ${{ runner.temp }}/ao-upgrade-N/ao${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          test "$(git rev-parse HEAD)" = d61634321d8d3a8ba3cf933033b168331310785a
+          mkdir -p "$(dirname "$AO_UPGRADE_OLD_BINARY")"
+          go build -o "$AO_UPGRADE_OLD_BINARY" ./cmd/ao
+
+      - name: Build the candidate daemon
+        working-directory: candidate/backend
+        env:
+          AO_UPGRADE_NEW_BINARY: ${{ runner.temp }}/ao-upgrade-N-plus-1/ao${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          git rev-parse HEAD
+          mkdir -p "$(dirname "$AO_UPGRADE_NEW_BINARY")"
+          go build -o "$AO_UPGRADE_NEW_BINARY" ./cmd/ao
+
+      - name: Verify upgrade continuity and native Instructor task handoff
+        working-directory: candidate/backend
+        env:
+          AO_UPGRADE_OLD_BINARY: ${{ runner.temp }}/ao-upgrade-N/ao${{ runner.os == 'Windows' && '.exe' || '' }}
+          AO_UPGRADE_NEW_BINARY: ${{ runner.temp }}/ao-upgrade-N-plus-1/ao${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: go test -tags upgrade -count=1 -timeout=8m -v ./internal/integration/upgrade

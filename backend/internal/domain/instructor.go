@@ -92,6 +92,7 @@ type InstructorWork struct {
 	Actions                 []string                          `json:"actions"`
 	ApprovedTransitions     []string                          `json:"approvedTransitions,omitempty"`
 	Exceptions              []InstructorException             `json:"exceptions,omitempty"`
+	PolicyRebindings        []InstructorPolicyRebind          `json:"policyRebindings,omitempty"`
 	PublicationGrants       []InstructorPublicationGrant      `json:"publicationGrants,omitempty"`
 	PhaseActions            []InstructorPhaseAction           `json:"phaseActions,omitempty"`
 	PublicationRepositories []InstructorPublicationRepository `json:"publicationRepositories,omitempty"`
@@ -286,11 +287,15 @@ type InstructorTraceability struct {
 
 // InstructorRole configures native choices and explicit per-model effort mappings.
 type InstructorRole struct {
-	Harness       string            `json:"harness"`
-	Model         string            `json:"model"`
-	Effort        string            `json:"effort"`
-	Independent   bool              `json:"independent,omitempty"`
-	EffortByModel map[string]string `json:"effortByModel,omitempty"`
+	// SelectionSource is project for choices resolved from project settings at
+	// work registration/rebind. Empty preserves legacy explicit policy constraints.
+	// Omit the zero value so existing pinned policy hashes remain unchanged.
+	SelectionSource string            `json:"selectionSource,omitempty"`
+	Harness         string            `json:"harness"`
+	Model           string            `json:"model"`
+	Effort          string            `json:"effort"`
+	Independent     bool              `json:"independent,omitempty"`
+	EffortByModel   map[string]string `json:"effortByModel,omitempty"`
 }
 
 // InstructorProfile declares approved check argv and its independent time budget.
@@ -353,13 +358,14 @@ type InstructorEvent struct {
 
 // InstructorSnapshot freezes the observed work cohort used for command admission.
 type InstructorSnapshot struct {
-	ID               string                  `json:"id"`
-	BaseID           string                  `json:"baseId,omitempty"`
-	CreatedAt        time.Time               `json:"createdAt"`
-	Works            []InstructorWork        `json:"works"`
-	Commands         []InstructorCommandSpec `json:"commands"`
-	Metrics          InstructorMetrics       `json:"metrics"`
-	CommandConflicts []string                `json:"commandConflicts"`
+	ID               string                              `json:"id"`
+	BaseID           string                              `json:"baseId,omitempty"`
+	CreatedAt        time.Time                           `json:"createdAt"`
+	Works            []InstructorWork                    `json:"works"`
+	Commands         []InstructorCommandSpec             `json:"commands"`
+	Metrics          InstructorMetrics                   `json:"metrics"`
+	CommandConflicts []string                            `json:"commandConflicts"`
+	Recoveries       map[string]InstructorRecoveryStatus `json:"recoveries,omitempty"`
 }
 
 // InstructorDispatch journals an ordered directive to an existing project orchestrator.

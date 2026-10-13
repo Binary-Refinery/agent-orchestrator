@@ -1013,7 +1013,7 @@ func TestSpawnModelFlagWiring(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker", "--model", "gpt-5.6-sol", "--effort", "xhigh", "--work", "work-1", "--work-role", "triage")
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker", "--model", "gpt-5.6-sol", "--effort", "xhigh", "--work", "work-1", "--work-role", "triage", "--prompt", "Inspect the failing parser test")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -1022,5 +1022,8 @@ func TestSpawnModelFlagWiring(t *testing.T) {
 	}
 	if req.Model != "gpt-5.6-sol" {
 		t.Fatalf("spawn request model = %q, want gpt-5.6-sol", req.Model)
+	}
+	if req.Prompt != "Inspect the failing parser test" {
+		t.Fatalf("spawn task = %q", req.Prompt)
 	}
 }

@@ -2,9 +2,12 @@ package sessionmanager
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // A slow or unavailable provider must not leave the board loading forever.
@@ -12,8 +15,15 @@ import (
 const statusVerificationLimit = 30 * time.Second
 
 type statusRecovery struct {
-	pending bool
-	failed  *domain.SessionRecord
+	pending    bool
+	failed     *domain.SessionRecord
+	reasonCode string
+	reason     string
+}
+
+func (r statusRecovery) matchesFailure(rec domain.SessionRecord) bool {
+	return !r.pending && r.failed != nil && !rec.IsTerminated &&
+		rec.ControllerOwner() == r.failed.ControllerOwner() && rec.Activity == r.failed.Activity
 }
 
 // StatusRecoveryRevision fences API snapshots read concurrently with recovery.
@@ -36,8 +46,7 @@ func (m *Manager) SessionStatusReadiness(rec domain.SessionRecord) string {
 		if result.pending {
 			return "checking"
 		}
-		if result.failed != nil && !rec.IsTerminated && rec.Activity.State != domain.ActivityExited &&
-			rec.ControllerOwner() == result.failed.ControllerOwner() && rec.Activity == result.failed.Activity {
+		if result.matchesFailure(rec) && rec.Activity.State != domain.ActivityExited {
 			return "unavailable"
 		}
 		return "ready"
@@ -51,6 +60,27 @@ func (m *Manager) SessionStatusReadiness(rec domain.SessionRecord) string {
 	default:
 	}
 	return "checking"
+}
+
+// SessionStatusRecoveryReason returns a bounded explanation for this daemon's
+// failed recovery, never durable status or proof that the provider is dead.
+func (m *Manager) SessionStatusRecoveryReason(rec domain.SessionRecord) (code, reason string) {
+	m.statusRecoveryMu.RLock()
+	defer m.statusRecoveryMu.RUnlock()
+	if result, found := m.statusRecoveries[rec.ID]; found {
+		if result.matchesFailure(rec) {
+			return result.reasonCode, result.reason
+		}
+		return "", ""
+	}
+	select {
+	case <-m.startupBackgroundReconcileDone:
+		if m.statusRecoveryFailed {
+			return "SESSION_RECOVERY_DISCOVERY_FAILED", "AO could not read the startup session inventory. Check daemon storage access and retry recovery."
+		}
+	default:
+	}
+	return "", ""
 }
 
 func (m *Manager) beginStatusRecovery(id domain.SessionID) {
@@ -86,13 +116,50 @@ func (m *Manager) finishStatusRecovery(ctx context.Context, before domain.Sessio
 	result := statusRecovery{}
 	if recoveryErr != nil {
 		current, found, err := m.store.GetSession(ctx, before.ID)
-		if err == nil && found {
+		if err == nil && found && current.ControllerOwner() == before.ControllerOwner() {
 			before = current
 		}
 		result.failed = &before
+		result.reasonCode, result.reason = statusRecoveryReason(recoveryErr)
 	}
 	m.statusRecoveryMu.Lock()
 	m.statusRecoveries[before.ID] = result
 	m.statusRecoveryRevision++
 	m.statusRecoveryMu.Unlock()
+}
+
+func statusRecoveryReason(err error) (code, reason string) {
+	code = "SESSION_RECOVERY_FAILED"
+	prefix := "Session recovery could not finish. Check the reported cause before retrying. "
+	switch {
+	case errors.Is(err, ports.ErrChatRecoveryInconclusive):
+		code = "CHAT_RECOVERY_INCONCLUSIVE"
+		prefix = "The existing provider host may still own work. Verify its connection before retrying; do not start a duplicate controller. "
+	case errors.Is(err, ports.ErrUnsupportedEffort):
+		code = "UNSUPPORTED_EFFORT"
+		prefix = "Review the project's model and native effort selection. "
+	case errors.Is(err, ports.ErrModelCapabilitiesUnavailable):
+		code = "MODEL_CAPABILITIES_UNAVAILABLE"
+		prefix = "Model capabilities could not be verified. Refresh the provider model catalog before retrying. "
+	case errors.Is(err, ErrUnsupportedModel):
+		code = "UNSUPPORTED_MODEL"
+		prefix = "Review the project's selected model before retrying recovery. "
+	case errors.Is(err, ErrInstructorResumeBlocked):
+		code = "INSTRUCTOR_RESUME_BLOCKED"
+		prefix = "Resolve the work gate or project role configuration before retrying recovery. "
+	case errors.Is(err, ports.ErrChatResumeFailed):
+		code = "CHAT_RESUME_FAILED"
+		prefix = "The saved provider conversation could not be resumed. Check the provider connection. "
+	case errors.Is(err, context.DeadlineExceeded):
+		code = "SESSION_RECOVERY_TIMEOUT"
+		prefix = "Recovery verification timed out. Check the provider connection and retry. "
+	}
+	// Driver errors may contain long output or line breaks. Keep the board's
+	// explanation compact without splitting multibyte characters.
+	runes := []rune(prefix + strings.Join(strings.Fields(err.Error()), " "))
+	const maxReasonRunes = 512
+	if len(runes) > maxReasonRunes {
+		runes = append(runes[:maxReasonRunes-1], '…')
+	}
+	return code, string(runes)
 }

@@ -13,6 +13,12 @@ import (
 // ErrInstructorUnavailable rejects an explicit governed launch when the feature is off.
 var ErrInstructorUnavailable = errors.New("instructor governance is unavailable")
 
+// Governance refusals are actionable conflicts, rather than opaque launch failures.
+var (
+	ErrInstructorResumeBlocked = errors.New("instructor governance blocks session recovery")
+	ErrInstructorLaunchBlocked = errors.New("instructor governance blocks launch")
+)
+
 // InstructorGovernance is the optional managed-work boundary. It runs before
 // an agent controller launches, including direct manager callers and recovery.
 // Registering a work or attaching a controller does not imply work acceptance.
@@ -34,7 +40,38 @@ func (m *Manager) validateInstructorResume(ctx context.Context, id domain.Sessio
 		return nil
 	}
 	if err := m.instructor.ValidateResume(ctx, id); err != nil {
-		return fmt.Errorf("instructor governance: %w", err)
+		return fmt.Errorf("%w: %w", ErrInstructorResumeBlocked, err)
+	}
+	return nil
+}
+
+// Ordinary Chat recovery restores observation of the same native conversation.
+// Native turn admission remains independently guarded immediately before send.
+// TUI starts, switches and interface handoffs retain ValidateResume's execution gate.
+func (m *Manager) validateInstructorControllerRecovery(ctx context.Context, id domain.SessionID) error {
+	guard, supported := m.instructor.(interface {
+		ValidateControllerRecovery(context.Context, domain.SessionID) error
+	})
+	if !supported {
+		return m.validateInstructorResume(ctx, id)
+	}
+	rec, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+		strings.TrimSpace(rec.Metadata.ProviderConversationID) == "" {
+		return m.validateInstructorResume(ctx, id)
+	}
+	active, err := m.hasActiveInterfaceTransition(ctx, id)
+	if err != nil {
+		return err
+	}
+	if active {
+		return m.validateInstructorResume(ctx, id)
+	}
+	if err := guard.ValidateControllerRecovery(ctx, id); err != nil {
+		return fmt.Errorf("%w: %w", ErrInstructorResumeBlocked, err)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -74,13 +75,21 @@ func (d instructorDelivery) Deliver(ctx context.Context, dispatch domain.Instruc
 		}
 	}
 	if target.ID == "" {
-		return fmt.Errorf("%w: no live project orchestrator; start one explicitly", instructorsvc.ErrDeliveryRetryable)
+		return fmt.Errorf("%w: no live project orchestrator; recover or create one explicitly", instructorsvc.ErrRecoveryRequired)
 	}
-	if target.ProjectID != dispatch.ProjectID || target.Kind != domain.KindOrchestrator || target.IsTerminated || target.Activity.State == domain.ActivityExited {
+	if target.ProjectID != dispatch.ProjectID || target.Kind != domain.KindOrchestrator {
 		return errors.New("dispatch target is not a live orchestrator for this project")
+	}
+	if target.IsTerminated || target.Activity.State == domain.ActivityExited {
+		return fmt.Errorf("%w: bound project orchestrator is stopped; recover its existing conversation", instructorsvc.ErrRecoveryRequired)
 	}
 	if target.Activity.State == domain.ActivityBlocked {
 		return fmt.Errorf("%w: project orchestrator is blocked on a human decision", instructorsvc.ErrDeliveryRetryable)
+	}
+	if observer, ok := d.sessions.(interface {
+		InstructorControllerReady(domain.SessionRecord) bool
+	}); ok && !observer.InstructorControllerReady(target) {
+		return fmt.Errorf("%w: session %s has no reachable controller; restore its existing conversation", instructorsvc.ErrRecoveryRequired, target.ID)
 	}
 	if d.binder == nil || d.sessions == nil {
 		return errors.New("instructor delivery is unavailable")
@@ -240,19 +249,23 @@ type instructorGovernance struct {
 }
 
 func (g instructorGovernance) effectiveProjectPolicy(ctx context.Context, project domain.ProjectRecord) (domain.InstructorPolicy, error) {
-	policy, err := g.svc.GetPolicy(ctx)
+	policy, _, err := g.svc.ProjectPolicyTemplate(ctx, project)
 	if err != nil {
 		return policy, err
 	}
-	if project.Config.GovernanceFile != "" {
-		return instructorsvc.LoadPolicy(project.Path, project.Config.GovernanceFile)
-	}
-	repositoryPolicy, err := instructorsvc.LoadPolicy(project.Path, ".ao/governance.json")
-	if err == nil {
-		return repositoryPolicy, nil
-	}
-	if !os.IsNotExist(err) {
-		return policy, err
+	if role, ok := policy.Roles["orchestrator"]; ok {
+		resolved, err := g.svc.ResolveProjectRole(ctx, project, "orchestrator", role)
+		if err != nil {
+			return policy, err
+		}
+		// Do not mutate a shared template when resolving a standalone control
+		// session. Worker/reviewer configuration is validated at work creation.
+		roles := make(map[string]domain.InstructorRole, len(policy.Roles))
+		for name, value := range policy.Roles {
+			roles[name] = value
+		}
+		roles["orchestrator"] = resolved
+		policy.Roles = roles
 	}
 	return policy, nil
 }
@@ -264,6 +277,14 @@ func (g instructorGovernance) PrepareLaunch(ctx context.Context, cfg ports.Spawn
 	}
 	if cfg.Kind == domain.KindOrchestrator && role != string(domain.KindOrchestrator) {
 		return "", fmt.Errorf("%w: a project orchestrator requires the orchestrator role", instructorsvc.ErrValidation)
+	}
+	if cfg.Kind == domain.KindWorker {
+		if role == "orchestrator" || role == "instructor" {
+			return "", fmt.Errorf("%w: a worker session cannot use a control role", instructorsvc.ErrValidation)
+		}
+		if strings.TrimSpace(cfg.Prompt) == "" && strings.TrimSpace(cfg.ResolvedTaskPrompt) == "" {
+			return "", ports.ErrGovernedTaskRequired
+		}
 	}
 	workID, err := g.svc.ResolveSpawnWork(ctx, cfg.ParentSessionID, cfg.WorkID, role)
 	if err != nil {
@@ -288,7 +309,11 @@ func (g instructorGovernance) PrepareLaunch(ctx context.Context, cfg ports.Spawn
 	if cfg.AutomationRunID != nil {
 		source, reference = "automation", string(*cfg.AutomationRunID)
 	}
-	return g.svc.PrepareSpawn(ctx, instructorsvc.SpawnInput{ProjectID: cfg.ProjectID, ProjectPath: project.Path, GovernanceFile: project.Config.GovernanceFile, WorkID: cfg.WorkID, ParentSessionID: cfg.ParentSessionID, IssueID: cfg.IssueID, Source: source, SourceRef: reference, Name: cfg.DisplayName, Goal: cfg.Prompt, Role: role, Harness: string(cfg.Harness), Model: cfg.AgentConfig.Model, Effort: cfg.AgentConfig.Effort})
+	goal := cfg.Prompt
+	if strings.TrimSpace(goal) == "" {
+		goal = ""
+	}
+	return g.svc.PrepareSpawn(ctx, instructorsvc.SpawnInput{ProjectID: cfg.ProjectID, ProjectPath: project.Path, GovernanceFile: project.Config.GovernanceFile, WorkID: cfg.WorkID, ParentSessionID: cfg.ParentSessionID, IssueID: cfg.IssueID, Source: source, SourceRef: reference, Name: cfg.DisplayName, Goal: goal, Role: role, Harness: string(cfg.Harness), Model: cfg.AgentConfig.Model, Effort: cfg.AgentConfig.Effort})
 }
 
 func (g instructorGovernance) AttachSession(ctx context.Context, workID string, id domain.SessionID, cfg ports.SpawnConfig) error {
@@ -327,7 +352,28 @@ func (g instructorGovernance) ValidateResume(ctx context.Context, id domain.Sess
 		if !found || session.Kind != domain.KindOrchestrator {
 			return nil
 		}
-		return g.ValidateAgentChange(ctx, id, session.Harness, ports.AgentConfig{Model: session.Metadata.Model, Effort: session.Metadata.Effort})
+		project, found, err := g.store.GetProject(ctx, string(session.ProjectID))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("%w: project orchestrator project no longer exists", instructorsvc.ErrValidation)
+		}
+		policy, _, err := g.svc.ProjectPolicyTemplate(ctx, project)
+		if err != nil {
+			return err
+		}
+		role, found := policy.Roles["orchestrator"]
+		if !found || g.validator == nil {
+			return fmt.Errorf("%w: project orchestrator role cannot be validated", instructorsvc.ErrValidation)
+		}
+		if role.SelectionSource == "project" {
+			// Defaults select new controllers. Reconnecting an existing session
+			// retains its persisted native identity; changing project settings
+			// must not silently switch or strand that conversation.
+			role.Harness, role.Model = string(session.Harness), session.Metadata.Model
+		}
+		return g.validator.ValidateInstructorAgentConfig(ctx, session.ProjectID, role, string(session.Harness), session.Metadata.Model, session.Metadata.Effort)
 	} // Existing sessions remain explicitly unassigned.
 	if err := g.svc.ValidateResume(ctx, id); err != nil {
 		return err
@@ -424,7 +470,7 @@ func (g instructorGovernance) ValidateAgentChange(ctx context.Context, id domain
 		}
 		return g.validator.ValidateInstructorAgentConfig(ctx, session.ProjectID, role, string(harness), cfg.Model, cfg.Effort)
 	}
-	if err := g.svc.ValidateResume(ctx, id); err != nil {
+	if err := g.svc.ValidateAgentChange(ctx, id, domain.InstructorAgentSelection{Harness: string(harness), Model: cfg.Model, Effort: cfg.Effort}); err != nil {
 		return err
 	}
 	_, roleName, _, err := g.managedSessionRole(ctx, work, id)
@@ -444,6 +490,9 @@ func (g instructorGovernance) ValidateChatAgentConfig(ctx context.Context, id do
 		return err
 	}
 	if found {
+		if model == session.Metadata.Model && effort == session.Metadata.Effort {
+			return g.ValidateResume(ctx, id)
+		}
 		return g.ValidateAgentChange(ctx, id, session.Harness, ports.AgentConfig{Model: model, Effort: effort})
 	}
 	reader, ok := g.store.(interface {
@@ -463,7 +512,7 @@ func (g instructorGovernance) ValidateChatAgentConfig(ctx context.Context, id do
 	if err != nil || !managed {
 		return err
 	}
-	if err := g.svc.ValidateResume(ctx, review.SessionID); err != nil {
+	if err := g.svc.ValidateExecutionAuthority(ctx, review.SessionID); err != nil {
 		return err
 	}
 	role, found := work.Policy.Roles["reviewer"]
@@ -537,7 +586,7 @@ func (g instructorGovernance) ValidateReviewerLaunch(ctx context.Context, spec r
 		}
 		return nil
 	}
-	if err := g.svc.ValidateResume(ctx, spec.WorkerID); err != nil {
+	if err := g.svc.ValidateExecutionAuthority(ctx, spec.WorkerID); err != nil {
 		return err
 	}
 	if spec.ScopeKey != instructorReviewScope(work) {
@@ -619,7 +668,7 @@ func newInstructorRuntime(store instructorRuntimeStore, manager *sessionmanager.
 	if len(reviews) > 0 {
 		delivery.reviews = reviews[0]
 	}
-	service := instructorsvc.New(instructorsvc.Deps{Store: store, Delivery: delivery, Workspace: instructorWorkspace{store: store, sessions: manager}, Verifier: verifier, RoleValidator: manager, PolicyPath: os.Getenv("AO_INSTRUCTOR_POLICY"), Publication: hostPublicationBoundary{}})
+	service := instructorsvc.New(instructorsvc.Deps{Store: store, Delivery: delivery, Workspace: instructorWorkspace{store: store, sessions: manager}, Verifier: verifier, RoleValidator: manager, ProjectRoleDefaults: true, PolicyPath: os.Getenv("AO_INSTRUCTOR_POLICY"), Publication: hostPublicationBoundary{}})
 	delivery.binder = service
 	inventory := instructorInventory{store: store}
 	inventory.cache = newInstructorInventoryCache(inventory.collectInventory, store)

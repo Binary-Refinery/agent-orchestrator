@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -79,7 +80,8 @@ func (s *Store) SaveInstructorReport(ctx context.Context, w domain.InstructorWor
 		}
 		var previous domain.InstructorWork
 		preserveStop := w.State == "parked" && (event.Kind == "check_executed" || event.Kind == "check_failed")
-		if preserveStop {
+		preserveReceipt := a.DispatchID != "" && (receiptState == "accepted" || receiptState == "progress")
+		if preserveStop || preserveReceipt {
 			var priorBody string
 			if err := db.QueryRowContext(ctx, `SELECT body FROM instructor_works WHERE id=? AND revision=?`, w.ID, expected).Scan(&priorBody); errors.Is(err, sql.ErrNoRows) {
 				return nil
@@ -104,6 +106,11 @@ func (s *Store) SaveInstructorReport(ctx context.Context, w domain.InstructorWor
 		}
 		if preserveStop {
 			if err := preserveInstructorDirectivesAcrossAudit(ctx, db, previous, w, event.At, true); err != nil {
+				return err
+			}
+		}
+		if preserveReceipt {
+			if err := preserveInstructorDirectivesAcrossReceipt(ctx, db, previous, w, event.At); err != nil {
 				return err
 			}
 		}
@@ -138,6 +145,36 @@ func (s *Store) SaveInstructorReport(ctx context.Context, w domain.InstructorWor
 		return nil
 	})
 	return updated, err
+}
+
+// A bound receipt can arrive after the engine has queued the next phase. Its
+// informational update must not stale that current directive. Carry only the
+// exact prior revision forward, in the same transaction as the fenced report;
+// immutable human snapshots and already-stale directives retain their revision.
+func preserveInstructorDirectivesAcrossReceipt(ctx context.Context, db gen.DBTX, previous, current domain.InstructorWork, at time.Time) error {
+	previous.Summary, previous.Next = current.Summary, current.Next
+	previous.ProgressAt, previous.NudgedAt = current.ProgressAt, current.NudgedAt
+	// Ready/running and a cleared native-queue wait describe receipt/progress,
+	// not a new execution grant. Paused states and external business waits are
+	// never normalized. Every other field (including gates, phase, commit,
+	// evidence, policy, grants and bindings) must still compare exactly.
+	wasExecutable := previous.State == "ready" || previous.State == "running"
+	wasNativeQueue := previous.State == "waiting_external" && strings.HasPrefix(previous.WaitCondition, "Native Nachricht")
+	isExecutable := current.State == "ready" || current.State == "running"
+	if (wasExecutable || wasNativeQueue) && isExecutable && current.WaitCondition == "" && current.WaitUntil == nil {
+		previous.State, previous.WaitCondition, previous.WaitUntil = current.State, current.WaitCondition, current.WaitUntil
+	}
+	// Unlike phase-action audits, receipts may not change phase action authority.
+	// Compare that field before using the shared exact-revision carry-forward.
+	beforeActions, err := instructorJSON(previous.PhaseActions)
+	if err != nil {
+		return err
+	}
+	afterActions, err := instructorJSON(current.PhaseActions)
+	if err != nil || beforeActions != afterActions {
+		return err
+	}
+	return preserveInstructorDirectivesAcrossAudit(ctx, db, previous, current, at, false)
 }
 
 // PutInstructorHeartbeatForReport atomically fences the admitted producer before recording availability.

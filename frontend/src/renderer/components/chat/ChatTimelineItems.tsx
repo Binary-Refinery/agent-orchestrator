@@ -339,7 +339,7 @@ export function TurnOutcome({
 	error,
 	retry,
 }: {
-	state: "recovered" | "interrupted" | "failed";
+	state: "recovered" | "interrupted" | "failed" | "cancelled";
 	error?: string;
 	retry?: TurnOutcomeRetryControl;
 }) {
@@ -353,9 +353,10 @@ export function TurnOutcome({
 			tone: "text-muted-foreground/70",
 		},
 		failed: { label: "The agent ran into a problem", tone: "text-destructive" },
+		cancelled: { label: "Message blocked before delivery", tone: "text-warning" },
 	}[state];
 
-	const action = retry ? (
+	const action = retry && state === "failed" ? (
 		<>
 			{retry.error ? (
 				<span role="alert" className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive">
@@ -375,14 +376,14 @@ export function TurnOutcome({
 			</button>
 		</>
 	) : undefined;
-	if (state === "failed") {
+	if (state === "failed" || state === "cancelled") {
 		return (
 			<div className="flex min-w-0 flex-col gap-2 py-3">
-				<div className="flex items-baseline justify-between gap-3 text-sm font-medium text-destructive">
+				<div className={cn("flex items-baseline justify-between gap-3 text-sm font-medium", copy.tone)}>
 					<span>{copy.label}</span>
 					{action}
 				</div>
-				{error ? <div className="whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed text-foreground">{linkifiedProviderErrorText(error)}</div> : null}
+				{error ? <div className="whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed text-foreground">{state === "cancelled" ? error : linkifiedProviderErrorText(error)}</div> : null}
 			</div>
 		);
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	instructorsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/instructor"
 )
 
@@ -97,8 +98,16 @@ func (g instructorGovernance) ReserveManagedTurn(ctx context.Context, owner doma
 	// Dispatch admission is action-aware (including stop while parked) and is
 	// independently rechecked by the native semantic guard before this call.
 	if !controlDispatch && (!boundToWork || bound.ID == budget.work.ID) {
-		if err := g.svc.ValidateResume(ctx, budget.sessionID); err != nil {
-			return "", err
+		var authorityErr error
+		if owner.Kind == domain.ConversationOwnerReview {
+			// The retained worker owns the review's code and budget. Only the
+			// reviewer executes, with its own launch/chat configuration guard.
+			authorityErr = g.svc.ValidateExecutionAuthority(ctx, budget.sessionID)
+		} else {
+			authorityErr = g.svc.ValidateResume(ctx, budget.sessionID)
+		}
+		if authorityErr != nil {
+			return "", fmt.Errorf("%w: %w", ports.ErrSemanticDeliveryDeferred, authorityErr)
 		}
 	}
 	// Adoption and project-wide orchestrators also consume one lifetime slot

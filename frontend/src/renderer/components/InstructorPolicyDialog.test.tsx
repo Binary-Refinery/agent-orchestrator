@@ -31,6 +31,25 @@ describe("InstructorPolicyDialog", () => {
 		expect(mocks.pinned).toHaveBeenCalledWith(true);
 	});
 
+	it("switches an existing role to project selection while retaining governance and approved limits", async () => {
+		renderDialog();
+		await userEvent.selectOptions(await screen.findByRole("combobox", { name: "worker Selection source" }), "project");
+		expect(screen.queryByRole("combobox", { name: "worker Harness" })).not.toBeInTheDocument();
+		expect(screen.getByText("Approved native effort limits")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ roles: { worker: { ...policy().roles.worker, selectionSource: "project", harness: "", model: "" } }, transitions: policy().transitions, profiles: policy().profiles }));
+	});
+
+	it("edits a project role's approved limits without introducing another active model selection", async () => {
+		mocks.policy = { ...policy(), roles: { worker: { ...policy().roles.worker, selectionSource: "project", harness: "", model: "" } } };
+		renderDialog();
+		await userEvent.type(await screen.findByRole("textbox", { name: "worker Model identifier for approval" }), "provider/new-model");
+		await userEvent.type(screen.getByRole("textbox", { name: "worker Approved native effort for this model" }), "native-max");
+		await userEvent.click(screen.getByRole("button", { name: "Add approved mapping" }));
+		await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ roles: { worker: expect.objectContaining({ selectionSource: "project", harness: "", model: "", effortByModel: { "provider/model": "native-high", "provider/new-model": "native-max" } }) } }));
+	});
+
 	it("does not invent a maximum effort when the selected model has no approved mapping", async () => {
 		mocks.mapped = false;
 		mocks.policy = policy();

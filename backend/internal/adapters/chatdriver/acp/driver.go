@@ -369,10 +369,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		)
 		conv.initialPermission = ports.PermissionMode(live.InitialPermissions)
 		if d.cfg.RequireSessionOptions && (cfg.Model != "" || cfg.Effort != "") {
-			if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
-				conv.discard()
-				return nil, fmt.Errorf("%w: configure live ACP session: %w", ports.ErrChatResumeFailed, err)
-			}
+			// Replayed provider output must remain gated until durable turn
+			// ownership is installed. Native setters also need that reader for
+			// their replies, so validate them during activation, before publish.
+			conv.liveSettings = &ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}
 		}
 		return conv, nil
 	}

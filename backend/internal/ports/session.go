@@ -13,6 +13,10 @@ var ErrSessionNotFound = errors.New("session not found")
 // retrying concurrent session writes. The same hook payload may be retried.
 var ErrActivityProjectionContention = errors.New("activity projection contention")
 
+// ErrGovernedTaskRequired rejects a managed worker without a concrete opening
+// task before any work registration, session, workspace, or controller is made.
+var ErrGovernedTaskRequired = errors.New("governed worker requires a concrete task prompt or issue")
+
 // SpawnConfig is the request to start a new session: which project/issue, which
 // agent harness, and the branch/prompt the agent launches with.
 type SpawnConfig struct {
@@ -43,6 +47,10 @@ type SpawnConfig struct {
 	Harness      domain.AgentHarness
 	Branch       string
 	Prompt       string
+	// ResolvedTaskPrompt is set internally by Session Manager for governance
+	// admission after building an explicit or issue-derived user task. It is
+	// separate from Prompt so fetched issue context cannot enlarge a Work goal.
+	ResolvedTaskPrompt string
 	// AgentConfig overrides the resolved project/role agent config for this
 	// single spawn. Empty fields keep the project defaults.
 	AgentConfig AgentConfig

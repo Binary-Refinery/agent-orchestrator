@@ -32,6 +32,9 @@ vi.mock("./InstructorWorkDetails", () => ({ InstructorWorkDetails: () => null })
 vi.mock("./InstructorPolicyDialog", () => ({ InstructorPolicyDialog: () => null }));
 vi.mock("./InstructorModelDialog", () => ({ InstructorModelDialog: () => null }));
 vi.mock("./InstructorExceptionDialog", () => ({ InstructorExceptionDialog: () => null }));
+vi.mock("./InstructorWorkConfiguration", () => ({ InstructorWorkConfiguration: () => null }));
+vi.mock("./InstructorRecoveryDialog", () => ({ InstructorRecoveryDialog: ({ work }: { work: { id: string } }) => <div data-testid="recovery-dialog">{work.id}</div> }));
+vi.mock("./InstructorPolicyRebindDialog", () => ({ InstructorPolicyRebindDialog: () => null }));
 vi.mock("./InstructorPlanning", () => ({ InstructorPlanning: () => null }));
 vi.mock("./chat/ReviewerChatSurface", () => ({ ReviewerChatSurface: () => null }));
 vi.mock("../hooks/useInstructorMembers", () => ({ useInstructorMembers: (id: string | null) => { mocks.membersRead(id); return { data: id ? mocks.members : null, isLoading: false, error: null }; } }));
@@ -66,6 +69,17 @@ describe("Instructor board", () => {
 		mount();
 		expect(screen.getAllByText(new RegExp(`Project orchestrator · ${label}`))).toHaveLength(2);
 	});
+	it("offers recovery instead of repeating an approval when the session controller is unavailable", async () => {
+		const affected = gate();
+		mocks.snapshot = { id: "recovery-snapshot", works: [affected], commands, recoveries: { [affected.id]: { ready: false, reason: "The existing controller must be reconnected.", action: "resume" } } };
+		mount();
+		const card = screen.getByRole("article", { name: "Login" });
+		expect(within(card).queryByRole("button", { name: "Review gate" })).not.toBeInTheDocument();
+		await userEvent.click(within(card).getByRole("button", { name: "Recover session" }));
+		expect(screen.getByTestId("recovery-dialog")).toHaveTextContent(affected.id);
+		expect(mocks.command).not.toHaveBeenCalled();
+	});
+
 	it("keeps uncertain orchestrator status unknown", () => {
 		mocks.orchestrator = { id: "coordinator-1", statusReadiness: "degraded", activity: { state: "running" } };
 		mount();

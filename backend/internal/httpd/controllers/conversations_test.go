@@ -44,6 +44,7 @@ type fakeConversationService struct {
 	setConfigValue    ports.ChatConfigOptionValue
 	mcpServers        []domain.ConversationMCPServer
 	reloadErr         error
+	sendErr           error
 	sent              ports.ChatUserMessage
 	approvalRequestID string
 	approvalDecision  ports.ChatDecision
@@ -73,7 +74,7 @@ func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (c
 
 func (f *fakeConversationService) Send(_ context.Context, _ domain.SessionID, message ports.ChatUserMessage) (domain.ConversationTurn, error) {
 	f.sent = message
-	return domain.ConversationTurn{ID: "turn-1", State: domain.TurnStateRunning}, nil
+	return domain.ConversationTurn{ID: "turn-1", State: domain.TurnStateRunning}, f.sendErr
 }
 
 func (f *fakeConversationService) Resolve(_ context.Context, _ domain.SessionID, requestID string, decision ports.ChatDecision) error {

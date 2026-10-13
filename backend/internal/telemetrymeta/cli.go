@@ -195,4 +195,9 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao project orchestration set": {},
 	"ao smoke list":                {},
 	"ao smoke set":                 {},
+
+	"ao instructor policy-rebind":         {},
+	"ao instructor policy-rebind preview": {},
+	"ao instructor policy-rebind apply":   {},
+	"ao instructor recovery":              {},
 }

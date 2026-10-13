@@ -35,6 +35,7 @@ async function fixture(page: Page) {
 		if (path.endsWith("/capabilities")) { await route.fulfill({ json: { enabled: true, commands, publication: { available: true } } }); return; }
 		if (path.endsWith("/status")) { reads++; await route.fulfill({ json: { id: `snapshot-${version}`, createdAt: at, works: works(), commands } }); return; }
 		if (path.endsWith("/inventory")) { await route.fulfill({ json: { capturedAt: at, projects: [{ id: "board-project", name: "Board project" }, { id: "other-project", name: "Other project" }, { id: "empty-project", name: "Empty project" }], sessions: [], resources: [] } }); return; }
+		if (path.includes("/projects/") && path.endsWith("/policy")) { await route.fulfill({ json: { policy, source: "global" } }); return; }
 		if (path.endsWith("/policy")) { if (request.method() === "PUT") saved.push(request.postDataJSON()); await route.fulfill({ json: saved.at(-1) ?? policy }); return; }
 		if (path.endsWith("/commands")) { const body = request.postDataJSON(); sent.push(body); if (body.command === "abbrechen") cancelling = true; await route.fulfill({ json: { dispatches: [], skipped: [] } }); return; }
 		if (path.endsWith("/issues")) { await route.fulfill({ json: { projectId: "board-project", repository: "owner/board", capturedAt: at, truncated: false, issues: [{ number: 42, title: "Fix session retry", body: "Verify durable retry", url: "https://github.com/owner/board/issues/42", state: "open", labels: ["bug"], assignees: [], bodyTruncated: false }] } }); return; }
