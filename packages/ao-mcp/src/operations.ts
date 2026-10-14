@@ -176,6 +176,7 @@ function projectResult(value: unknown, projectId: string, select: (work: Record<
 export function operationTools(client: DaemonClient, access: Access): ToolDefinition[] {
   return [
     defineTool('ao_runtime_info', 'Read real daemon health/readiness identity. Missing version remains unknown; this does not prove an agent executed.', 'observer', true, z.strictObject({}), async () => {
+      requireRole(access, 'observer');
       const health = record(await client.get('/healthz'));
       let readiness: Record<string, unknown>;
       try { readiness = scalars(await client.get('/readyz'), ['status', 'service', 'pid', 'version', 'executablePath', 'workingDirectory', 'startupWorkingDirectory', 'appImagePath']); }
@@ -188,6 +189,7 @@ export function operationTools(client: DaemonClient, access: Access): ToolDefini
     }),
     defineTool('ao_project_view', 'Read project identity and launch health without configuration or credentials.', 'observer', true,
       z.strictObject({projectId: identifier}), async ({projectId}) => {
+        requireRole(access, 'observer');
         assertProject(access, projectId);
         const response = record(await client.get(`/api/v1/projects/${encodeURIComponent(projectId)}`));
         const project = record(response.project);
@@ -196,6 +198,7 @@ export function operationTools(client: DaemonClient, access: Access): ToolDefini
       }),
     defineTool('ao_instructor_status', 'Capture a project-scoped Instructor snapshot. Portfolio metrics, recoveries, policy and grants are omitted.', 'observer', true,
       z.strictObject({projectId: identifier.optional(), baseId: identifier.optional()}), async ({projectId, baseId}) => {
+        requireRole(access, 'observer');
         if (projectId) assertProject(access, projectId);
         const response = record(await client.get(`/api/v1/instructor/status${baseId ? `?baseId=${encodeURIComponent(baseId)}` : ''}`));
         const works = objects(response.works).filter((work) => typeof work.projectId === 'string' && access.projectIds.includes(work.projectId) && (!projectId || work.projectId === projectId));
@@ -205,6 +208,7 @@ export function operationTools(client: DaemonClient, access: Access): ToolDefini
       }),
     defineTool('ao_work_trace', 'Read exact-work events, dispatch receipts, members and controller recovery observations. Acceptance is distinct from execution.', 'observer', true,
       z.strictObject({workId: identifier, includeMembers: z.boolean().default(true), includeRecovery: z.boolean().default(true)}), async ({workId, includeMembers, includeRecovery}) => {
+        requireRole(access, 'observer');
         const details = await scopedWork(client, access, workId);
         const projectId = record(details.work).projectId as string;
         const result = projectDetails(details, workId, projectId);

@@ -52,10 +52,14 @@ export function requireRole(access: Access, role: Role): void {
       || typeof role !== 'string' || !Object.hasOwn(rank, role) || rank[access.role] < rank[role]) {
     throw new AdapterError('FORBIDDEN', `This tool requires the ${role} profile.`);
   }
+  if (!Array.isArray(access.projectIds) || !access.projectIds.every((project) => typeof project === 'string')) {
+    throw new AdapterError('OUT_OF_SCOPE', 'Project scope must be an explicit list of project IDs.');
+  }
 }
 
 export function assertProject(access: Access, projectId: unknown): asserts projectId is string {
-  if (typeof projectId !== 'string' || !access.projectIds.includes(projectId)) {
+  if (typeof projectId !== 'string' || !Array.isArray(access.projectIds)
+      || !access.projectIds.every((project) => typeof project === 'string') || !access.projectIds.includes(projectId)) {
     throw new AdapterError('OUT_OF_SCOPE', 'The requested resource is outside the configured project scope.');
   }
 }

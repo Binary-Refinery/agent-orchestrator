@@ -289,5 +289,8 @@ sink. Tool arguments, source content and bearer credentials are not audit fields
 A host supplies the same fixed access policy and daemon client; the tool
 functions are independent of a particular model API. The embedding host must
 still enforce access and keep principal/session identity out of model-generated
-arguments. Reusing the functions does not add a provider, automatic provider
+arguments. The exported catalog validates the complete access policy at creation
+and captures a separate validated snapshot for each invocation. Later host-side
+changes apply to the next invocation; an in-flight response keeps its admitted
+scope. Project scope must be an explicit list, never a string. Reusing the functions does not add a provider, automatic provider
 selection or a new AO chat interface.

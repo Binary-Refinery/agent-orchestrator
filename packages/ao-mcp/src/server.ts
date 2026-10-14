@@ -16,12 +16,33 @@ export interface AuditEvent {
 
 export type AuditSink = (event: AuditEvent) => void;
 
+function buildTools(client: DaemonClient, access: Access): ToolDefinition[] {
+  return [...operationTools(client, access), ...developmentTools(client, access)];
+}
+
+function captureAccess(access: Access, role: ToolDefinition['role']): Access {
+  requireRole(access, role);
+  // Zod parses a new object and project-ID array. Every await in an invocation
+  // must retain this validated decision rather than reread mutable host policy.
+  const snapshot = configSchema.shape.access.parse(access);
+  requireRole(snapshot, role);
+  return snapshot;
+}
+
 export function createToolCatalog(client: DaemonClient, access: Access): ToolDefinition[] {
-  requireRole(access, 'observer');
-  return [...operationTools(client, access), ...developmentTools(client, access)].filter((tool) => {
-    try { requireRole(access, tool.role); return true; }
+  const discoveryAccess = captureAccess(access, 'observer');
+  return buildTools(client, discoveryAccess).filter((tool) => {
+    try { requireRole(discoveryAccess, tool.role); return true; }
     catch { return false; }
-  });
+  }).map((tool) => ({...tool, execute: async (input: unknown) => {
+    // Consult the original host reference on each new invocation so revocation
+    // still applies. Bind its validated snapshot to fresh handlers for this
+    // invocation; development job state stays shared by daemon authority.
+    const invocationAccess = captureAccess(access, tool.role);
+    const current = buildTools(client, invocationAccess).find((candidate) => candidate.name === tool.name);
+    if (!current) throw new AdapterError('FORBIDDEN', 'This tool is no longer available to the embedding host.');
+    return current.execute(input);
+  }}));
 }
 
 /** Reusable by an embedded MCP host; identity comes from its trusted host configuration. */
