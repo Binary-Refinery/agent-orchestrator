@@ -66,7 +66,13 @@ test('independent modern SDK and raw legacy clients discover the same scoped too
   t.after(() => client.close());
   const listed = await client.listTools();
   assert.ok(listed.tools.some((tool) => tool.name === 'ao_work_trace'));
-  assert.ok(!listed.tools.some((tool) => tool.name === 'ao_work_command' || tool.name === 'ao_workspace_update'));
+  for (const name of ['ao_issue_candidates', 'ao_project_orchestrators', 'ao_work_recovery']) {
+    assert.ok(listed.tools.some((tool) => tool.name === name), name);
+  }
+  for (const name of ['ao_work_command', 'ao_workspace_update', 'ao_issue_intake', 'ao_orchestrator_ensure',
+    'ao_recover_controller', 'ao_member_diagnostics', 'ao_member_timeline']) {
+    assert.ok(!listed.tools.some((tool) => tool.name === name), name);
+  }
   const status = await client.callTool({name: 'ao_instructor_status', arguments: {}});
   assert.equal(status.isError, undefined);
   assert.ok(!JSON.stringify(status).includes('hidden-foreign-secret'));
@@ -119,13 +125,19 @@ test('tool inventory conservatively describes file replacement and repository ex
   t.after(() => http.close());
   const inventory = await rpc(http.url, f.token, {jsonrpc: '2.0', id: 1, method: 'tools/list', params: {}});
   const tools = inventory.data.result.tools as {name: string; annotations: Record<string, boolean>}[];
-  for (const name of ['ao_workspace_update', 'ao_run_checks', 'ao_work_command']) {
+  assert.equal(tools.length, 22);
+  assert.equal(new Set(tools.map((tool) => tool.name)).size, 22);
+  for (const name of ['ao_workspace_update', 'ao_run_checks', 'ao_work_command', 'ao_issue_intake',
+    'ao_orchestrator_ensure', 'ao_recover_controller']) {
     const tool = tools.find((item) => item.name === name)!;
     assert.equal(tool.annotations.readOnlyHint, false);
     assert.equal(tool.annotations.destructiveHint, true);
     assert.equal(tool.annotations.openWorldHint, true);
   }
   assert.equal(tools.find((tool) => tool.name === 'ao_work_trace')!.annotations.readOnlyHint, true);
+  for (const name of ['ao_member_diagnostics', 'ao_member_timeline']) {
+    assert.equal(tools.find((tool) => tool.name === name)!.annotations.readOnlyHint, true);
+  }
   assert.deepEqual(f.calls, []);
 });
 

@@ -24,6 +24,7 @@ in [gemini-cli.md](gemini-cli.md).
 | [instructor-session-recovery.md](instructor-session-recovery.md) | Project role selection, approved Work policy changes and guided conversation recovery. |
 | [ao-mcp.md](ao-mcp.md) | Project-scoped MCP operation, diagnosis, workspace development, private gateway deployment and live-client acceptance. |
 | [ao-mcp-plan.md](ao-mcp-plan.md) | MCP requirements, architecture, implementation sequence, independent review risks and acceptance evidence. |
+| [ao-mcp-instructor-extension-plan.md](ao-mcp-instructor-extension-plan.md) | Native issue intake, orchestrator lifecycle and fenced persisted member diagnostics added on top of PR #22. |
 | [upgrade-continuity.md](upgrade-continuity.md) | Two-build Windows/Linux upgrade checks and desktop release acceptance limits. |
 | [scm-observer.md](scm-observer.md)                     | SCM subsystem: polling pipeline, durable-state invariants, PR identity model, and the rename/transfer design.         |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |

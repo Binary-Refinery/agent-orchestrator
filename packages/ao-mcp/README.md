@@ -76,6 +76,10 @@ provider or touch the user's AO data. The dedicated CI workflow builds its own
 test executable and sets the variable; a skipped local test is not live-runtime
 acceptance.
 
+The complete suite runs at most two test files concurrently, keeping loopback
+fixtures responsive on constrained hosts. All tests and their existing
+deadlines still run; concurrency within individual boundary tests is preserved.
+
 Workspace access requires a matching daemon version with incarnation-scoped
 routes; older versions fail closed. Updates require the daemon's expected file
 fingerprint and target an existing editable text file. Check execution selects
@@ -91,7 +95,15 @@ commands and unrestricted filesystem access are not MCP tools.
 The package exports `createAOMcpServer(config, audit?)`,
 `createToolCatalog(client, access)`, `DaemonClient`, startup configuration helpers
 and `startHttp(config, token, audit?)` from `dist/src/index.js`. These allow
-trusted embedding of the same 14 tools without an embedded provider or UI.
+trusted embedding of the same 22 tools without an embedded provider or UI.
 Retain the same fixed authorization checks when using the common tool catalog
 without an MCP transport. MCP safety hints are advisory; they do not replace
 those checks.
+
+The Instructor pilot tools add native issue browse/intake, project orchestrator
+ensure and captured controller recovery. Developer diagnostics and timelines
+use incarnation-fenced daemon reads, including retained stopped sessions.
+They expose bounded persisted facts, not unrestricted provider logs. See the
+[extension plan](../../docs/ao-mcp-instructor-extension-plan.md) and the
+[tool inventory](../../docs/ao-mcp.md#tools-and-application-behavior) for exact
+permissions, evidence limits and the governed issue workflow.

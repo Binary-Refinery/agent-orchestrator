@@ -56,6 +56,26 @@ type InstructorWorkspaceScopeQuery struct {
 	InstanceID string `query:"instanceId" required:"true" minLength:"1" description:"Immutable current work-member session instance captured from the Instructor members endpoint."`
 }
 
+// InstructorMemberIDParam is an exact typed identity from work members.
+type InstructorMemberIDParam struct {
+	MemberID string `path:"memberId"`
+}
+
+// InstructorDiagnosticScopeQuery fences persisted reads against replacement.
+// An explicitly empty runtimeGeneration means unknown, not any generation.
+type InstructorDiagnosticScopeQuery struct {
+	ProjectID         string `query:"projectId" required:"true" minLength:"1"`
+	SessionID         string `query:"sessionId" required:"true" minLength:"1"`
+	InstanceID        string `query:"instanceId" required:"true" minLength:"1"`
+	RuntimeGeneration string `query:"runtimeGeneration" required:"true"`
+}
+
+// InstructorDiagnosticPageQuery bounds combined messages and activities.
+type InstructorDiagnosticPageQuery struct {
+	BeforeSequence int64 `query:"beforeSequence,omitempty" minimum:"0"`
+	Limit          int64 `query:"limit,omitempty" minimum:"1" maximum:"100"`
+}
+
 // InstructorIssueCandidatesQuery optionally previews any exact issue number,
 // including issues outside the bounded first-page backlog observation.
 type InstructorIssueCandidatesQuery struct {

@@ -1,5 +1,10 @@
 # AO MCP implementation and acceptance plan
 
+The [Instructor extension plan](ao-mcp-instructor-extension-plan.md) adds
+requirements MCP-20 through MCP-23: native issue intake, project orchestrator
+ensure/recovery and developer-only persisted diagnostics. Its eight tools use
+the same catalog and authority boundaries described below.
+
 ## Goal and approved scope
 
 Let external and embedded AI agents operate AO, inspect real work and controller

@@ -5,6 +5,8 @@ import {configSchema, type AdapterConfig} from './config.js';
 import {DaemonClient, DaemonError} from './daemon.js';
 import {operationTools} from './operations.js';
 import {developmentTools} from './development.js';
+import {instructorTools} from './instructor.js';
+import {diagnosticTools} from './diagnostics.js';
 
 export interface AuditEvent {
   at: string;
@@ -17,7 +19,8 @@ export interface AuditEvent {
 export type AuditSink = (event: AuditEvent) => void;
 
 function buildTools(client: DaemonClient, access: Access): ToolDefinition[] {
-  return [...operationTools(client, access), ...developmentTools(client, access)];
+  return [...operationTools(client, access), ...instructorTools(client, access),
+    ...developmentTools(client, access), ...diagnosticTools(client, access)];
 }
 
 function captureAccess(access: Access, role: ToolDefinition['role']): Access {

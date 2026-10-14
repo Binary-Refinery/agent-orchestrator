@@ -3,15 +3,172 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestWorkspaceIntegrationParallelRestorePreservesEnabledConfigLock(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	const count = 4 // Match the daemon's parallel startup reconciliation.
+	configs := make([]ports.WorkspaceConfig, count)
+	infos := make([]ports.WorkspaceInfo, count)
+	for i := range count {
+		configs[i] = ports.WorkspaceConfig{ProjectID: "proj", SessionID: domain.SessionID(fmt.Sprintf("restore-%d", i)), Branch: fmt.Sprintf("feature/restore-%d", i)}
+		infos[i], err = ws.Create(ctx, configs[i])
+		if err != nil {
+			t.Fatalf("create session %d: %v", i, err)
+		}
+		if err := os.WriteFile(filepath.Join(infos[i].Path, "pending.txt"), []byte(fmt.Sprintf("preserve session %d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(repo, ".git", "config")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := configPath + ".lock"
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "owned by independent Git config writer\n"
+	if _, err := lock.WriteString(sentinel); err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Holding another writer's lock makes the old unconditional config write
+	// fail deterministically; reads must neither need nor remove that lock.
+	type result struct {
+		index int
+		info  ports.WorkspaceInfo
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan result, count)
+	for i := range count {
+		go func() {
+			<-start
+			info, err := ws.Restore(ctx, configs[i])
+			results <- result{index: i, info: info, err: err}
+		}()
+	}
+	close(start)
+	for range count {
+		got := <-results
+		if got.err != nil {
+			t.Errorf("parallel restore %d: %v", got.index, got.err)
+			continue
+		}
+		if got.info.Path != infos[got.index].Path || got.info.Branch != infos[got.index].Branch {
+			t.Errorf("parallel restore %d changed identity: %+v", got.index, got.info)
+		}
+	}
+	for i, info := range infos {
+		content, err := os.ReadFile(filepath.Join(info.Path, "pending.txt"))
+		if err != nil || string(content) != fmt.Sprintf("preserve session %d\n", i) {
+			t.Errorf("session %d contents changed: %q %v", i, content, err)
+		}
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(after) != string(before) {
+		t.Errorf("restore changed shared config: %v", err)
+	}
+	ownedLock, err := os.ReadFile(lockPath)
+	if err != nil || string(ownedLock) != sentinel {
+		t.Errorf("restore changed another writer's lock: %q %v", ownedLock, err)
+	}
+}
+
+func TestWorkspaceIntegrationInitializesMissingOrDisabledWorktreeConfig(t *testing.T) {
+	for _, value := range []string{"", "false"} {
+		name := value
+		if name == "" {
+			name = "missing"
+		}
+		t.Run(name, func(t *testing.T) {
+			git := requireGit(t)
+			tmp := t.TempDir()
+			repo := setupOriginClone(t, git, tmp)
+			if value != "" {
+				runGit(t, git, repo, "config", "--local", "extensions.worktreeConfig", value)
+			}
+			ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "session", Branch: "feature/enable-config"})
+			if err != nil {
+				t.Fatalf("initialize %s setting: %v", name, err)
+			}
+			if got := strings.TrimSpace(string(outputGit(t, git, repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"))); got != "true" {
+				t.Fatalf("local config=%q, want true", got)
+			}
+			runGit(t, git, info.Path, "config", "--worktree", "ao.isolated-setting", "session-only")
+			if _, err := exec.Command(git, "-C", repo, "config", "--get", "ao.isolated-setting").Output(); err == nil {
+				t.Fatal("per-worktree setting leaked into the source checkout")
+			}
+		})
+	}
+}
+
+func TestEnableWorktreeConfigReturnsReadFailureWithoutChangingConfig(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: filepath.Join(tmp, "missing-git-binary"), ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(repo, ".git", "config")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ws.enableWorktreeConfig(context.Background(), repo)
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "read per-worktree config") {
+		t.Fatalf("read failure was lost: %v", err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("failed read changed config: %v", err)
+	}
+}
+
+func TestEnableWorktreeConfigHonorsCancelledContext(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	runGit(t, git, repo, "config", "--local", "extensions.worktreeConfig", "true")
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ws.enableWorktreeConfig(ctx, repo); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled read reported success or lost cancellation: %v", err)
+	}
+}
 
 func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	git := requireGit(t)

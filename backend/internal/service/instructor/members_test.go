@@ -114,6 +114,82 @@ func TestInstructorMembersShowUnprovedHistoryAndSeparateProjectCoordinator(t *te
 	}
 }
 
+func TestInstructorMembersStoppedCoordinatorRemainsDiagnosticTarget(t *testing.T) {
+	f := newInstructorFixture(t)
+	ctx := context.Background()
+	work := f.register(t, "stopped-coordinator", instructorsvc.DefaultPolicy())
+	older, err := f.store.CreateSession(ctx, domain.SessionRecord{ProjectID: work.ProjectID, Kind: domain.KindOrchestrator, Mode: domain.SessionModeChat, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}, CreatedAt: f.now, UpdatedAt: f.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := older
+	newer.ID = ""
+	newer.CreatedAt = f.now.Add(time.Second)
+	newer, err = f.store.CreateSession(ctx, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := f.store.CreateConversation(ctx, "stopped-project-history", domain.ConversationScopeProject, work.ProjectID, newer.ID, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := f.service.Members(ctx, work.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := members.Coordinator.Stopped
+	if members.Coordinator.Current != nil || stopped == nil || stopped.SessionID != newer.ID || stopped.Association != "historical" || stopped.Status != "terminated" || stopped.InstanceID == "" || stopped.OpenTarget == nil || stopped.OpenTarget.ProjectID != work.ProjectID {
+		t.Fatalf("stopped orchestrator authority=%+v", members.Coordinator)
+	}
+	scope := domain.InstructorDiagnosticScope{WorkID: work.ID, ProjectID: work.ProjectID, MemberID: stopped.ID, SessionID: stopped.SessionID, InstanceID: stopped.InstanceID, RuntimeGeneration: stopped.RuntimeGeneration}
+	captured, err := f.store.CaptureInstructorDiagnostics(ctx, scope, true, 0, 50)
+	if err != nil || captured.TimelineScope != "project" || captured.Conversation.ID != conversation.ID || !captured.Session.IsTerminated {
+		t.Fatalf("stopped coordinator unreadable=%+v err=%v", captured, err)
+	}
+	if _, managed, err := f.service.WorkForSession(ctx, newer.ID); err != nil || managed {
+		t.Fatalf("diagnostic projection adopted project coordinator: %v %v", managed, err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.dataDir, "ao.db")+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// Terminated rows cannot pass DeleteSession's seed-only guard. Explicitly
+	// replace the fixture row with foreign keys enabled instead.
+	if _, err := db.ExecContext(ctx, `DELETE FROM change_log WHERE session_id=?`, newer.ID); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := db.ExecContext(ctx, `DELETE FROM sessions WHERE id=?`, newer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := deleted.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("delete stopped coordinator: rows=%d err=%v", n, err)
+	}
+	replacement, err := f.store.CreateSession(ctx, newer)
+	if err != nil || replacement.ID != newer.ID || !replacement.CreatedAt.Equal(newer.CreatedAt) {
+		t.Fatalf("replace stopped coordinator: %+v err=%v", replacement, err)
+	}
+	instance, found, err := f.store.InstructorSessionInstance(ctx, replacement.ID)
+	if err != nil || !found || instance == scope.InstanceID {
+		t.Fatalf("replacement instance=%q old=%q found=%v err=%v", instance, scope.InstanceID, found, err)
+	}
+	if _, err := f.store.CaptureInstructorDiagnostics(ctx, scope, true, 0, 50); !errors.Is(err, domain.ErrInstructorProducerChanged) {
+		t.Fatalf("stopped authority opened replacement: %v", err)
+	}
+	live := newer
+	live.ID, live.IsTerminated, live.Activity.State = "", false, domain.ActivityIdle
+	live.CreatedAt = f.now.Add(2 * time.Second)
+	live, err = f.store.CreateSession(ctx, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err = f.service.Members(ctx, work.ID)
+	if err != nil || members.Coordinator.Current == nil || members.Coordinator.Current.SessionID != live.ID || members.Coordinator.Stopped != nil {
+		t.Fatalf("live coordinator semantics changed=%+v err=%v", members.Coordinator, err)
+	}
+}
+
 func TestInstructorSessionAdmissionFencesStaleCapturedInstance(t *testing.T) {
 	f := newInstructorFixture(t)
 	ctx := context.Background()
@@ -319,6 +395,36 @@ func TestInstructorMembersDoNotCarryProviderConfirmationAcrossControllerRestore(
 	}
 	if after.Members[0].RuntimeGeneration != "new-controller" || after.Members[0].Confirmed != nil || after.Members[0].Sent != nil || after.Members[0].Requested == nil {
 		t.Fatalf("restored generation inherited old confirmation: %+v", after.Members[0])
+	}
+}
+
+func TestInstructorMembersRetainedRowWithoutGenerationDoesNotBorrowHistoricalLaunch(t *testing.T) {
+	f := newInstructorFixture(t)
+	ctx := context.Background()
+	work := f.register(t, "empty-generation", instructorsvc.DefaultPolicy())
+	sid := f.attachWorker(t, work.ID)
+	rec, _, err := f.store.GetSession(ctx, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Metadata.RuntimeLaunchID = "old-launch"
+	if err := f.store.UpdateSession(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	selection := domain.InstructorAgentSelection{Harness: "opencode", Model: "worker", Effort: "high"}
+	if err := f.service.RecordLaunch(ctx, work.ID, domain.InstructorLaunch{SessionID: sid, Role: "worker", Requested: selection, Sent: &selection, Confirmed: &selection, Status: "native-config-reported"}); err != nil {
+		t.Fatal(err)
+	}
+	rec.Metadata.RuntimeLaunchID = ""
+	if err := f.store.UpdateSession(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	members, err := f.service.Members(ctx, work.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members.Members) != 1 || members.Members[0].RuntimeGeneration != "" || members.Members[0].Confirmed != nil || members.Members[0].Sent != nil {
+		t.Fatalf("unknown retained controller borrowed historical authority: %+v", members)
 	}
 }
 

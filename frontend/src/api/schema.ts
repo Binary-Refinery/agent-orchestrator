@@ -1118,6 +1118,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instructor/works/{workId}/members/{memberId}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read atomically scoped persisted member lifecycle and error facts */
+        get: operations["instructorMemberDiagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instructor/works/{workId}/members/{memberId}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a bounded sanitized persisted member timeline */
+        get: operations["instructorMemberTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instructor/works/{workId}/publication": {
         parameters: {
             query?: never;
@@ -4586,12 +4620,95 @@ export interface components {
         InstructorCoordinator: {
             current?: components["schemas"]["InstructorMember"];
             key: string;
+            stopped?: components["schemas"]["InstructorMember"];
         };
         InstructorDetails: {
             budgetUsage?: components["schemas"]["InstructorBudgetUsage"];
             dispatches: components["schemas"]["InstructorDispatch"][];
             events: components["schemas"]["InstructorEvent"][];
             work: components["schemas"]["InstructorWork"];
+        };
+        InstructorDiagnosticItem: {
+            activityKind?: string;
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            /** @enum {string} */
+            kind: "message" | "activity";
+            redacted: boolean;
+            /** Format: int64 */
+            revision: number;
+            role?: string;
+            /** Format: int64 */
+            sequence: number;
+            status?: string;
+            streaming: boolean;
+            text?: string;
+            truncated: boolean;
+            turnId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        InstructorDiagnosticReview: {
+            controllerError?: string;
+            controllerGeneration: string;
+            harness: string;
+            redacted: boolean;
+            reviewId: string;
+            reviewRunId: string;
+            status: string;
+            truncated: boolean;
+            verdict: string;
+        };
+        InstructorDiagnosticSession: {
+            activityState: string;
+            controllerError?: string;
+            controllerGeneration: string;
+            effort?: string;
+            harness: string;
+            isTerminated: boolean;
+            mode: string;
+            model?: string;
+            providerConversationId?: string;
+            provisionError?: string;
+            provisionState: string;
+            redacted: boolean;
+            runtimeLaunchId?: string;
+            truncated: boolean;
+        };
+        InstructorDiagnosticTimeline: {
+            available: boolean;
+            conversationId?: string;
+            /** Format: date-time */
+            conversationUpdatedAt?: null | string;
+            hasMoreBefore: boolean;
+            items: components["schemas"]["InstructorDiagnosticItem"][];
+            /** Format: int64 */
+            latestSequence: number;
+            /** Format: int64 */
+            nextBeforeSequence?: number;
+            /** Format: int64 */
+            oldestSequence: number;
+            reason?: string;
+            redacted: boolean;
+            /** @enum {string} */
+            scope: "session" | "review" | "project";
+            scopeNote?: string;
+            truncated: boolean;
+            turns: components["schemas"]["InstructorDiagnosticTurn"][];
+        };
+        InstructorDiagnosticTurn: {
+            /** Format: date-time */
+            completedAt?: null | string;
+            errorMessage?: string;
+            id: string;
+            redacted: boolean;
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            startedAt?: null | string;
+            state: string;
+            truncated: boolean;
         };
         InstructorDispatch: {
             action: string;
@@ -4834,6 +4951,26 @@ export interface components {
             sent?: components["schemas"]["InstructorAgentSelection"];
             sessionId?: string;
             status: string;
+        };
+        InstructorMemberDiagnostics: {
+            atomic: boolean;
+            /** Format: date-time */
+            capturedAt: string;
+            instanceId: string;
+            /** @enum {string} */
+            kind: "session" | "review";
+            memberId: string;
+            persistedOnly: boolean;
+            projectId: string;
+            review?: components["schemas"]["InstructorDiagnosticReview"];
+            runtimeGeneration: string;
+            schema: string;
+            session: components["schemas"]["InstructorDiagnosticSession"];
+            sessionId: string;
+            timeline: components["schemas"]["InstructorDiagnosticTimeline"];
+            workId: string;
+            /** Format: int64 */
+            workRevision: number;
         };
         InstructorMemberOpenTarget: {
             /** @enum {string} */
@@ -10609,6 +10746,172 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstructorMembers"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorMemberDiagnostics: {
+        parameters: {
+            query: {
+                projectId: string;
+                sessionId: string;
+                instanceId: string;
+                runtimeGeneration: string;
+            };
+            header?: never;
+            path: {
+                workId: string;
+                memberId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorMemberDiagnostics"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    instructorMemberTimeline: {
+        parameters: {
+            query: {
+                projectId: string;
+                sessionId: string;
+                instanceId: string;
+                runtimeGeneration: string;
+                beforeSequence?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workId: string;
+                memberId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstructorMemberDiagnostics"];
                 };
             };
             /** @description Bad Request */

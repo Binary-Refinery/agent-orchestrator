@@ -40,6 +40,9 @@ type InstructorMembers struct {
 type InstructorCoordinator struct {
 	Key     string            `json:"key"`
 	Current *InstructorMember `json:"current,omitempty"`
+	// Stopped preserves a diagnostic target when the project has no live
+	// orchestrator. It never represents a ready/current coordinator.
+	Stopped *InstructorMember `json:"stopped,omitempty"`
 }
 
 // InstructorMember does not infer provider confirmation from launch settings.
