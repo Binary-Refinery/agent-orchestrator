@@ -210,3 +210,30 @@ this documentary capture. Resolve that boundary through the ordinary governed
 path before Root's actual isolated restart and fresh native-chain verification.
 Neither this additional round nor source/check/review PASS grants publication,
 merge, release, productive replacement or a human business-gate decision.
+
+## Routine integration of concurrently merged Main Git recovery
+
+Reviewed completion86181fdc4ba5363bf92cb5d53fb23a6eecd940cb was published only
+after its exact human grant. During publication, PR24 merged into Main
+7c1263109dc9cffb91c6fd176a2bf3049f350ff0 at14:36:06Z. Main changes only
+workspace.go and workspace_integration_test.go; the duplicate read-before-write
+helper creates exactly one real three-way conflict and prevents new PR CI.
+
+Integrate that exact Main in a separate detached checkout. Retain the entire
+reviewed861 workspace helper byte-for-byte, inherit the entire Main integration
+test unchanged, and use no blanket ours strategy. The actual pre-documentation
+candidate treef3f938d9e9d657150084d0bf2c3ed6c559867ae1 differs from861 by exactly
+that test file. All23 reviewed source/test files and all4227 other tracked
+blob/mode entries are identical. This is reversible Git integration of the
+existing assignment, no new implementation correction or correction-budget reset.
+Any required implementation or inherited-test correction breaks this scope.
+
+Check the inherited Main cases and preserved R6 boundaries on that exact tree;
+run the complete workspace suite, backend build, workspace vet and pinned static
+Linux lint. Independently review the real tree, assess failures and review the
+documentation/commit delta. The actual checks retain three Windows assertions,
+bounded against the appropriate clean Main/f60 baseline; do not weaken or fix
+their assertions silently or claim full-suite readiness. Draft publication with
+those exact known failures needs an explicit human exception to AGENTS.md154
+and Rulebook required-check/RED rules, plus a new exact PUBLISH-GO for the final
+integration commit. The861 grant supplies no publication authority for it.

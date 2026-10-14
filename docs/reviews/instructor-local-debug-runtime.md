@@ -505,3 +505,35 @@ directly with the three genuine orchestrator phase turns. The final authority
 comparison again preserves all seven old Work cores/gates, all160 queued-turn
 and message rows and the old retained reviewer row. This final chain readback
 has SHA256e36015a9ad69009c2af127b1704dc5150179d60b5601254356f2306d8da5999c.
+
+## Publication861 and reuse boundary for Main integration
+
+After exact human PUBLISH-GO for86181fdc4ba5363bf92cb5d53fb23a6eecd940cb, that
+commit was normally published on the named fork branch and DraftPR23 updated.
+A final one-shot read-only runtime snapshot at14:41:46.943580Z confirms actual
+PID27576/port3314/binaryf059, orchestrator DBidle/conversationready/open0, all
+seven old Work authority cores/gates and Work8revision26/gate02268130 intact,
+plus productivePID33888/port3001 at the same path/start. Its SHA256 is
+5fab1d545449b9e6f56edddfb5dd9136977bd7d9c0ef5871f5211bc294dd3549.
+The failed null-valued flat projection of the detail session DTO is not used
+as evidence. Actual SQL/conversation/process facts supply the verdict; no second
+runtime query or native action is manufactured.
+
+PR24 concurrently advanced Main to7c126 with the parallel Git helper and new
+integration tests. CI on861 has zero new runs/checks, because one real source
+conflict prevents a fresh PR merge tree. The old cc0ddb22 merge ref has f60+3f
+parents and never attests861. This is not a source-test or runner failure.
+
+The isolated integration candidate resolves only that helper path to the exact
+already reviewed861 bytes and inherits the unchanged Main test. Every production
+file and all23 reviewed source/test files remain byte-identical to861; the
+pre-documentation tree changes only the Main test among4228 tracked paths.
+The actually running R7 native-chain evidence therefore retains its original
+binary/source/Work/turn scopes and is reusable for this identical production
+context. No new desktop-daemon executable build or launch, restart, native test
+Work, provider execution, nonce commit, review or human-gate decision is claimed
+by the Git integration. The separate candidate backend compilation check is
+recorded in the review document. The historical
+native proof SHA2566bf286003df96b86479345d91583b80c8bc64ed1b7232bd771a200024aa6c532
+and honest binary metadata3f251d8+modified remain unchanged. Added tests are
+checked separately; their three inherited Windows failures stay explicit.

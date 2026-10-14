@@ -505,3 +505,67 @@ attest native Linux execution, race coverage or remote CI. Existing remote CI
 and GitHub-Codex results concern published 3f only; no new remote verdict or
 blanket final full-suite rerun is claimed. No publication, merge, productive
 replacement, Work gate Go or budget reset follows from this source review.
+
+## Published861 review and exact Main integration delta
+
+GitHub-Codex completed its exact861 review at14:42:42.944663Z and reported
+[no major issues](https://github.com/Binary-Refinery/agent-orchestrator/pull/23#issuecomment-6171006237).
+This is a completed bot Conversation result, not a new formal APPROVED review
+submission. Its readback SHA256 is
+583292f276238fbe88da60c1f5a97b9af04e3437525697d0694c06afb6d7465e.
+The old3f authentication thread remains historical. No later merge HEAD is
+automatically attested by that review.
+
+Main PR24 merged while861 was published, causing one helper conflict. Independent
+plan review and actual tree review confirm the narrowly resolved integration:
+treef3f938d9e9d657150084d0bf2c3ed6c559867ae1 has no unresolved index entries;
+HEAD861/MERGE_HEAD7c. Exactly one inherited test file changes (+157/-0) against861,
+all23 reviewed files and all4227 other tracked blob/mode entries remain identical.
+The Main test is Gitblob78d9c0bc4374b52a095f4116f56cfe2a0c236365, SHA256
+b70bc102de5d00eef7f36143ec6238dc52cdf6ebb085843fe0e8e06455091e4a.
+Independent actual-tree verdict: PASS/noP1P2, audit SHA256
+177ddc16e67534efd25f9e811965c1f123cfbba9320fbe7de9809a3e822ab9c2.
+
+Actual checks on that frozen tree, Go1.27.1 Windows/amd64, GOTOOLCHAIN local/CGO0:
+
+| Check | Actual result and scope |
+| --- | --- |
+| Focused12 top-level/31 leaves | FAIL1;30PASS/1FAIL. Main5 leaves4PASS/1FAIL, preserved R6 thirteenPASS, existing thirteenPASS;43.421s |
+| Full workspace103 top-level/135 leaves | FAIL3;100PASS/3FAIL top-level,132PASS/3FAIL leaves;270.364s |
+| Backend build | PASS;59.182s |
+| Workspace vet | PASS;0.911s |
+| Pinned golangci-lint2.13.2 | PASS/zero issues;68.914s, static Linux target on Windows, not native Linux execution |
+
+Every result binds all24 file hashes before/after, actual unchanged index tree,
+environment, command, logSHA and timing. Check summary SHA256
+6de839b5b73d705ceddf1a7ede2e9a4f7fd714103e5a6db21cabd1b10a41b5ab.
+
+Finding assessment keeps the checks FAILED:
+
+- The inherited Main test TestEnableWorktreeConfigReturnsReadFailureWithoutChangingConfig
+  at integration_test.go149 expects errors.Is(err,os.ErrNotExist). Clean detached
+  actualMain7c under the identical pinned Windows environment reproduces the same
+  false assertion and executable-not-found-in-PATH message. Main test/helper and
+  clean status remain unchanged. The test did not exist in f60. Actual baseline
+  logSHA860ce123c4ebc9557b61d4467bf6c7bbff2c167aaf96e1150693b27125dc9f62;
+  resultSHAb63f8f8b080d9768817a574c9df2d3ba285cac383fb4fe785eb94c9b97002f37.
+  No runtime error type was printed; exec.ErrNotFound is an explicitly labelled
+  inference from the matching local Go Windows source. The Fatal stops before
+  this test's later config-byte comparison; that comparison is not called passed.
+- AutoRejectsUnmarkedRemotelessRepo and WorkspaceProjectCopiesAssetsAndCleansSessionCopy
+  reproduce the earlier two Windows path/symlink assertions. Entire declarations
+  in Main/candidate are byte-identical to f60, with only the known157 line offset.
+  Actual failure comparison normalizes only numeric temporary-directory suffixes.
+  No new clean-baseline full-suite pass is invented.
+
+Root accepts the independent classification: inherited Windows assertions, no
+new candidate implementation regression; preserve the helper and Main test.
+Independent finding/check-delta assessment SHA256
+91c5e3161f54672c8860e3bd5f6bfcf8ee08c6b7b6d18720a5bc4bbabe3a073d.
+No automatic test correction, additional implementation round or budget reset
+occurs. Source preservation PASS is separate from FAIL checks and no readiness
+PASS. AGENTS.md154 requires fixing failures before PR handover; Rulebook89 and
+163–164 require resolved checks/RED reporting. An eventual human decision must
+explicitly authorize a limited draft-publication exception for exactly these
+three known Windows failures, with a new exact commit-specific PUBLISH-GO.
+Documentation/commit delta remains a separate final review before that proposal.
