@@ -386,7 +386,33 @@ test('check admission budgets the complete batch and caps the client deadline be
   assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
   const boundary = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'within-deadline', profiles: ['push', 'full']}) as CheckJob;
   assert.equal((await finished(tools, boundary.jobId)).state, 'completed');
-  assert.deepEqual(deadlines, [55_000]);
+  const short = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'short-profile', profiles: ['extra']}) as CheckJob;
+  assert.equal((await finished(tools, short.jobId)).state, 'completed');
+  assert.deepEqual(deadlines, [55_000, 55_000]);
+});
+
+test('short approved profiles survive legitimate daemon preflight beyond their native timeout plus ten seconds', {timeout: 25_000}, async (t) => {
+  const delay = new AbortController();
+  t.after(() => delay.abort());
+  let delivered!: () => void;
+  const responseReady = new Promise<void>((resolve) => { delivered = resolve; });
+  const {client, requests} = await fixture(t, async (request) => {
+    if (request.url.pathname === '/api/v1/instructor/works/work-a') return {body: {work: {...work(), policy: {profiles: {short: {...profile, timeoutSeconds: 1}}}}}};
+    if (!request.url.pathname.endsWith('/checks')) return undefined;
+    // Preflight is outside the native profile timeout. The previous 1+10s
+    // transport budget would abort this real HTTP request before its response.
+    await setTimeout(12_000, undefined, {signal: delay.signal});
+    delivered();
+    return {body: work()};
+  });
+  const tools = developmentTools(client, access, new CheckJobs());
+  const job = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'slow-preflight', profiles: ['short']}) as CheckJob;
+  assert.equal(job.state, 'running');
+  await responseReady;
+  const result = await finished(tools, job.jobId);
+  assert.equal(result.state, 'completed');
+  assert.equal(result.error, undefined);
+  assert.equal(requests.filter((request) => request.url.pathname.endsWith('/checks')).length, 1);
 });
 
 test('profile discovery marks long approved profiles unavailable under the current REST deadline', async (t) => {

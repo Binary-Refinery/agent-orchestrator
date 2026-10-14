@@ -165,7 +165,8 @@ profiles unavailable with `CHECK_DEADLINE_LIMIT`. The daemon also checks its
 actual remaining request deadline before execution, reserving five seconds for
 cleanup; a shorter configured deadline can reject an otherwise available
 profile. Long builds require the existing governed worker flow. The adapter's
-request timeout is at most 55 seconds. Source updates are limited to 256 KiB of
+request timeout is fixed at 55 seconds, leaving time for repository preflight
+even when a selected check is short. Source updates are limited to 256 KiB of
 UTF-8 content.
 
 Normal operation uses AO actions, not mouse clicks. MCP does not provide window

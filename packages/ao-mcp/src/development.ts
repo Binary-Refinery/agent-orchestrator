@@ -20,7 +20,7 @@ const fileFields = ['sessionId', 'path', 'previousPath', 'status', 'additions', 
 // The existing checks endpoint uses the daemon's ordinary 60-second REST
 // deadline. A background MCP handle does not make that HTTP operation durable.
 const maxCheckSeconds = 45;
-const checkTimeoutMarginSeconds = 10;
+const checkRequestTimeoutMs = 55_000;
 
 export interface CheckJob {
   jobId: string;
@@ -187,7 +187,9 @@ function approvedCheckTimeout(details: Record<string, unknown>, profiles: readon
     seconds += profile.timeoutSeconds;
   }
   if (seconds > maxCheckSeconds) throw new AdapterError('CHECK_DEADLINE_LIMIT', 'The existing AO REST deadline supports at most 45 seconds of combined configured profile timeouts. Select a smaller approved batch; longer checks require a durable asynchronous daemon API.');
-  return (seconds + checkTimeoutMarginSeconds) * 1000;
+  // Native profile timeouts do not cover legitimate daemon preflight work.
+  // Keep the transport allowance independent of a short selected profile.
+  return checkRequestTimeoutMs;
 }
 
 export function developmentTools(client: DaemonClient, access: Access, jobs: CheckJobs = jobsFor(client)): ToolDefinition[] {
