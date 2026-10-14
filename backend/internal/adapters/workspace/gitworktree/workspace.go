@@ -2069,6 +2069,25 @@ func (w *Workspace) enableWorktreeConfig(ctx context.Context, repo string) error
 		}
 		return fmt.Errorf("gitworktree: inspect repository metadata: %w", err)
 	}
+	readArgs := []string{"-C", repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"}
+	out, readErr := w.run(ctx, w.binary, readArgs...)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("gitworktree: read per-worktree config: %w", err)
+	}
+	if readErr == nil {
+		switch strings.TrimSpace(string(out)) {
+		case "true":
+			return nil // An existing setting needs no shared config writer lock.
+		case "false":
+		default:
+			return fmt.Errorf("gitworktree: read per-worktree config: unexpected bool value %q", out)
+		}
+	} else {
+		var exitErr *exec.ExitError
+		if !errors.As(readErr, &exitErr) || exitErr.ExitCode() != 1 || len(out) != 0 {
+			return fmt.Errorf("gitworktree: read per-worktree config: %w", readErr)
+		}
+	}
 	args := []string{"-C", repo, "config", "extensions.worktreeConfig", "true"}
 	cmd := aoprocess.CommandContext(ctx, w.binary, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {

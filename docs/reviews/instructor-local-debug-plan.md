@@ -112,3 +112,101 @@ when a session is missing. Keep actual session-read errors explicit; requested
 model/effort never substitutes for recorded configuration. Preserve prior rounds,
 budgets, gates and immutable native execution evidence. Only these two source/test
 files may change in this fourth correction round.
+
+## Explicit GitHub-Codex authentication replay correction authorization
+
+After publication of exact commit 3f251d871c21f62727a59f74f1667fc9039b146b,
+GitHub-Codex completed its review with a P2: recovered/nil-error reviewer
+history loses the auth sentinel and overwrites waiting_input despite a durable
+reauthentication demand. Independent source assessment and isolated real-store
+reproduction confirmed the failure; explicit recovery is the negative control.
+
+The human explicitly answered `Eine zusätzliche Auth-Replay-Korrekturrunde genehmigen` to exactly one additional local correction round. Its scope is the
+Controller and existing reviewer lifecycle regression test, appropriate checks,
+independent review, assessment, delta review and the actually restarted isolated
+build. Previous rounds and the two earlier exceptions remain consumed. New
+publication, merge, release and productive replacement are excluded.
+
+Use the current account projection after all history events under the existing
+mutex. Preserve explicit ReauthRecovered, original error text and failed turn,
+pending interactions, durable reviewer identity and generation isolation.
+Do not infer authentication from prose, invent error types, change schema,
+drain/send/retry, relax admission or alter policy/model/gates. An independent
+review finding that an old typed auth error overrides later explicit recovery
+is corrected within this same named scope, then independently delta-reviewed.
+The separate preexisting git config-lock recovery failure is not authorized by
+this authentication exception.
+
+## Explicit Git-Recovery correction authorization (round6)
+
+The isolated native recovery and the published/base CI comparison exposed a
+redundant write to shared Git configuration while restoring an already enabled
+repository. A competing `.git/config.lock` makes that write fail with exit 255,
+even though `extensions.worktreeConfig` is already locally true. A real-Git
+fixture first verifies that ordinary Workspace.Create enables that setting,
+then reproduces the Restore failure without deleting or changing the lock.
+
+The human explicitly answered
+`Eine zusätzliche Git-Recovery-Korrekturrunde genehmigen` to exactly one
+additional round. Only `enableWorktreeConfig` in the existing workspace adapter
+and regressions in its existing test file change. Preserve all earlier rounds,
+consumed budgets, final authentication fixes and the other 16 frozen source
+files. This exception grants no publication, merge, release, policy change,
+model substitution or productive replacement.
+
+After the existing `.git` stat exception, read repository-local configuration
+with Git's bool parser. Skip the redundant write only for successful canonical
+true. Canonical false or actual unset (exit 1 and byte-empty output) retains the
+existing required write. All other read, start, parse, output and cancellation
+failures stop with an error. Preserve configuration/lock bytes and workspace
+identity; add no lock deletion, retry, wait or recovery-caller change. The first
+activation of unset/false configuration still requires a shared writer and can
+legitimately fail under a competing lock; this is not a general initialization
+race fix.
+
+Bind checks, independent review and delta review to the separate 18-file
+[instructor-local-debug-round6-source-hashes.json](instructor-local-debug-round6-source-hashes.json).
+Earlier manifests remain historical. Record the two reproduced Windows baseline
+failures as FAIL, alongside the focused passes and appropriate build/vet/static
+lint results. Actual restarted-build/native-chain verification belongs in the
+runtime evidence; source checks alone do not attest recovery or publication.
+
+## Explicit Lifecycle-Reconnect correction authorization (round7)
+
+The human explicitly answered
+`Eine zusätzliche Lifecycle-Reconnect-Korrekturrunde genehmigen` to exactly one
+additional round limited to the demonstrated LiveReconnect/lifecycle path and
+its regression controls. An independent real-store probe on published 3f first
+shows ready/exited and busy/exited despite verified attachment to the same live
+provider. Repeating it with the actual lifecycle Activity recorder and project
+orchestrator scope retains both failures; missing activity wiring is not the
+cause. Controlled-provider tests do not attest new native execution.
+
+The five-file scope is `backend/internal/lifecycle/manager.go`, its existing
+`chat_reconnect_test.go`, `backend/internal/storage/sqlite/store/session_store.go`,
+its existing `activity_revision_test.go`, and
+`backend/internal/service/chat/controller_test.go`. Only obsolete exited
+activity is repaired. Keep ordinary active/idle/blocked/waiting reconnects
+unchanged. Preserve exact owner, provider, generation, session revision and
+current native lineage; a retained running native turn can have its old turn
+generation. Read current Running/Pending/Account facts in the same transaction
+and reuse original SQL-row values without activity/checkpoint normalization.
+Unknown, mismatched or unreadable facts fail closed.
+
+Do not substitute MarkSpawned, relax Instructor readiness, expand admission,
+drain/send/replay, or change policy/model/Work gates/budgets. The approved
+correction includes checks, independent review, Root assessment and delta.
+The final necessary lint cleanup is exactly one test-only defer line; keep the
+initial full checks and hashes historical, then bind the targeted Raw-Column
+and lint rechecks to the final 23-file
+[instructor-local-debug-round7-source-hashes.json](instructor-local-debug-round7-source-hashes.json).
+The earlier 18 source files and every previous manifest remain unchanged;
+prior correction rounds and budgets remain consumed.
+
+Source review and final delta are PASS. Runtime verification remains separate:
+the planned restart guard stopped before any application Stop because old unsent
+queues require read-only authority classification. No R7 binary has started at
+this documentary capture. Resolve that boundary through the ordinary governed
+path before Root's actual isolated restart and fresh native-chain verification.
+Neither this additional round nor source/check/review PASS grants publication,
+merge, release, productive replacement or a human business-gate decision.

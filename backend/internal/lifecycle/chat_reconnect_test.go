@@ -1,10 +1,13 @@
 package lifecycle
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestMarkChatReconnectedPreservesActivityAndRecency(t *testing.T) {
@@ -70,5 +73,68 @@ func TestColdChatSpawnStillResetsActivity(t *testing.T) {
 	}
 	if st.sessions[rec.ID].Activity.State != domain.ActivityIdle {
 		t.Fatal("cold spawn inherited activity from a dead process")
+	}
+}
+
+type reconnectRepairStore struct {
+	*fakeStore
+	calls    int
+	expected domain.SessionRecord
+	applied  bool
+	err      error
+}
+
+func (s *reconnectRepairStore) RestoreLiveChatReconnectActivity(_ context.Context, expected domain.SessionRecord) (bool, error) {
+	s.calls++
+	s.expected = expected
+	return s.applied, s.err
+}
+
+func TestMarkChatReconnectedExitedRepairRequiresAtomicStore(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("unavailable-reconnect")
+	rec.Mode = domain.SessionModeChat
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.ProviderConversationID = "live-provider"
+	rec.Metadata.ControllerGeneration = "claimed-generation"
+	st.sessions[rec.ID] = rec
+	if err := m.MarkChatReconnected(ctx, rec.ID, rec.Metadata); !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("missing atomic store: %v", err)
+	}
+	if st.sessions[rec.ID] != rec {
+		t.Fatal("unsupported repair changed facts")
+	}
+}
+
+func TestMarkChatReconnectedExitedRepairPropagatesRaceAndStoreError(t *testing.T) {
+	readErr := errors.New("read current conversation failed")
+	for _, tc := range []struct {
+		name      string
+		applied   bool
+		err       error
+		wantError bool
+	}{
+		{"exact_commit", true, nil, false},
+		{"stale_revision", false, nil, true},
+		{"read_error", false, readErr, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &reconnectRepairStore{fakeStore: newFakeStore(), applied: tc.applied, err: tc.err}
+			m := New(st, nil)
+			rec := working("fenced-reconnect")
+			rec.Mode = domain.SessionModeChat
+			rec.Activity.State = domain.ActivityExited
+			rec.Revision = 17
+			rec.Metadata.ProviderConversationID = "live-provider"
+			rec.Metadata.ControllerGeneration = "claimed-generation"
+			st.sessions[rec.ID] = rec
+			err := m.MarkChatReconnected(ctx, rec.ID, rec.Metadata)
+			if (err != nil) != tc.wantError || (tc.err != nil && !errors.Is(err, tc.err)) {
+				t.Fatalf("error=%v wantError=%v", err, tc.wantError)
+			}
+			if st.calls != 1 || st.expected != rec || st.sessions[rec.ID] != rec {
+				t.Fatal("repair lost exact owner/revision or changed facts outside store")
+			}
+		})
 	}
 }

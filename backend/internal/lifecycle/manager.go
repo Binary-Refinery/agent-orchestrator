@@ -1446,8 +1446,8 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 }
 
 // MarkChatReconnected adopts the same live provider after daemon replacement.
-// Generation has already been claimed by Chat Service. Reconnection is not
-// activity: preserve the activity, signal receipt, and user-visible update time.
+// Generation has already been claimed by Chat Service. Preserve current activity
+// and recency; only an obsolete exited marker needs current conversation facts.
 func (m *Manager) MarkChatReconnected(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1460,8 +1460,24 @@ func (m *Manager) MarkChatReconnected(ctx context.Context, id domain.SessionID, 
 		metadata.ControllerGeneration == "" || metadata.ControllerGeneration != rec.Metadata.ControllerGeneration {
 		return fmt.Errorf("lifecycle: live Chat reconnect for %q no longer owns the session", id)
 	}
-	// There are no new lifecycle facts to persist. In particular, avoid a full
-	// record write that could overwrite activity arriving during reconnection.
+	if rec.Activity.State != domain.ActivityExited {
+		return nil
+	}
+	// Only storage can read the conversation and repair this stale marker in
+	// the same transaction, without overwriting a newer activity or owner.
+	reconnector, ok := m.store.(interface {
+		RestoreLiveChatReconnectActivity(context.Context, domain.SessionRecord) (bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("%w: live Chat reconnect activity persistence is unavailable", ports.ErrChatRecoveryInconclusive)
+	}
+	applied, err := reconnector.RestoreLiveChatReconnectActivity(ctx, rec)
+	if err != nil {
+		return fmt.Errorf("lifecycle: restore live Chat reconnect activity: %w", err)
+	}
+	if !applied {
+		return fmt.Errorf("lifecycle: live Chat reconnect for %q changed before activity repair", id)
+	}
 	return nil
 }
 

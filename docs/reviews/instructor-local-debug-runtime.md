@@ -272,5 +272,236 @@ comparison, focused RED/GREEN proof, explicit fourth-round exception and
 successful final delta. That P2 is closed; failed broad Windows checks and the
 successful genuine native chain remain separate bounded results. Race
 validation is unavailable with CGO disabled;
-remote CI and GitHub-Codex code review are not yet attested. No merge occurred.
+at that fourth-build snapshot remote CI and GitHub-Codex code review were not
+yet attested. Subsequently the published3f HEAD has remote results and a Codex
+review with an auth P2; neither attests unpublished round5/round6 content.
+No merge occurred.
 Publication requires the Rulebook's literal human `PUBLISH-GO [Branch]`.
+
+## Actually started fifth build and current recovery limit
+
+After the explicit authentication exception, the final scoped correction was
+built with Go1.27.1/CGO0 and started through the existing own Electron33.4.11
+installation/profile on the isolated port3314. Runfile PID16404, started
+2026-10-14T11:28:12.950722Z; real daemon SHA256
+c1dc8725f36eaaaba9d59fd2cb76f156f7d17f08d75f3bc6eb2d7d27b05686e8.
+Executable frontend/daemon/dev-1791977237381-38244/ao.exe. The honest binary VCS
+metadata is published3f251d8 with modified content, not a clean future commit.
+The prior isolated app was ownership-checked and idle/openTurns0 before its
+normal daemon stop. Productive PID33888/port3001 remained listening.
+
+The fifth Electron window is actually observed (21762010, Agent Orchestrator
+(dev)); Instructor board loads. API/core readback before/after restart proves
+all six existing Works retain IDs, revisions, phases/sequences, policy and
+human gates. This is actual field-level readback, not a pre/post DB-byte claim.
+The prior real native reviewer archive retains five messages,34activities and
+its completed turn; its current controller is stopped. Earlier-phase review
+restores correctly remain denied. This is retained output, not a newly run
+review or a successful cold-review restore.
+
+A separate existing recovery failure occurs during this actual restart:
+ao-chain-lab-1 and project orchestrator ao-chain-lab-2 fail within6ms on
+unconditional git config extensions.worktreeConfig true due ao-chain-fixture/.git/config
+lock. The configured native owner consequently remains stopped/exited; no
+healthy new native execution is asserted. config.lock is absent at11:32:30Z;
+no lock is deleted and no manual recovery, native resend or gate approval has
+occurred. The same Git-config-lock failure path is evidenced in candidate/base Ubuntu CI, whose repository common directory is shared.git rather than this local fixture .git. Normal
+recovery eligibility and the smallest separate correction are being diagnosed.
+The fifth-round authentication authority does not authorize that Git fix.
+
+The actual auth-demand/recovery transitions are evidenced by controlled history
+events with real SQLite and zero sends. No genuine credential expiry, login
+interaction or native-auth failure was manufactured. The earlier real full
+worker/reviewer chain and fourth-build live queue evidence retain their exact
+original build scopes; they are not relabeled as fifth-build executions.
+Subsequently one normal Instructor recovery was executed from a fresh captured
+work27/policy30e6/session-created/native-provider/old-generation tuple. It used
+the existing project owner and ordinary apply guards, with no direct session-API
+workaround. Response records new controller generation4609dc65-6c16-4dab-aec7-b83b4a9880ed
+but ready=false at that moment. A later real GET returns controller=ready and
+zero open turns; this later observation, not the initial submission, proves
+controller availability. All6 selected Work cores and gates remain unchanged.
+The old pending semantic marker belongs to a cancelled earlier worker-result
+submission, not active work. No lock deletion or manual native resend occurred.
+This transport reattachment is not a new native agent execution, does not fix
+the Git-config source defect, and does not attest all session activity displays
+or a fifth-build worker/reviewer chain.
+
+## Actually started sixth build: Git recovery succeeds, new chain blocked
+
+The separately authorized Git helper correction is built and actually started
+through the same isolated Electron profile. Runfile PID10560/port3314, started
+2026-10-14T12:21:50.8076251Z; executable
+frontend/daemon/dev-1791980377903-35948/ao.exe, SHA256
+99b57cb326ebaf844ce07aa18d9fab2774154877da3c4054b88c0ba30a82dabd.
+VCS metadata honestly remains published3f251d8 plus modified source. The eighteen
+source hashes are frozen separately in instructor-local-debug-round6-source-hashes.json.
+Startup reaches native ACP process_open/initialize for the existing project
+orchestrator without the preceding Git config-lock failure. A later normal
+conversation GET returns controller=ready and zero open turns. This proves
+controller transport availability only; it does not prove a dispatchable session.
+
+One fresh native-chain Work work-673199c2-437a-4397-86bd-7bc9b6338eab was
+registered through the normal API (HTTP201 at12:30:41Z), with the unchanged
+policy30e6dd08346b882f58a5005bac224caaa0d72ac88059877c7dabfe7e7b0c59e9.
+An earlier rejected HTTP400 INVALID_JSON was a diagnostic-client error: an
+unsupported sessionIds registration field. Removing that field followed the
+actual registration DTO; the rejected request created no Work.
+
+At the initial12:30 observation, the new Work had advanced only
+intake->implement bookkeeping (revision2). Its phase dispatch was pending with
+"project controller recovery required:
+no live project orchestrator; recover or create one explicitly". Normal
+session GET and the real Instructor board show ao-chain-lab-2 still exited,
+last activity2026-10-14T11:28:13.1750241Z, isTerminated=false. Recovery preview
+returns action=resume, ready=false, CONTROLLER_UNAVAILABLE, despite the
+conversation's live ready controller. There is no bound dispatch target, actual
+acceptance/progress, new worker, reviewer or new Work message in that conversation.
+Automatic pending-dispatch checks are not native sends. No manual resend,
+controller replacement, activity write, direct DB mutation or human Go occurred.
+
+The lifecycle/reconnect source paths are unchanged between the clean baseline,
+published3f and this candidate. The exact stale-exited cause and smallest
+additional correction are under independent diagnosis. The sixth-round grant
+only covers the Git helper and regression test; it cannot authorize a new
+lifecycle/controller correction. Earlier successful native-chain evidence
+retains its original build scope. A sixth-build full native chain is blocked,
+not passed. Productive PID33888/port3001 remains outside this isolated test.
+
+Subsequent ordinary daemon supervision emits its single bounded nudge at
+12:35:45.7416068Z. The original dispatch and that nudge then fail with stale
+snapshot diagnostics before native admission. Current Work revision5 remains
+waiting_human/implement with delivery gate
+delivery-phase-work-673199c2-437a-4397-86bd-7bc9b6338eab-2, opened
+12:35:50.7418833Z. Original dispatch has11 preflight attempts, nudge has1;
+neither binds a target or reaches native acceptance. No operator nudge/resend
+was submitted. This gate remains authoritative; neither the earlier Git grant
+nor a proposed lifecycle correction approves it. Any subsequent native-chain
+verification must preserve this failed test Work and its gate.
+
+Independent readback confirms all six preexisting Work authorities, gates,
+revisions and states are unchanged. Three verification caches refreshed through
+normal daemon discovery; entire Work bodies are not claimed byte-identical.
+
+## Actually started seventh build: exact live reconnect and preservation
+
+The separately authorized lifecycle round repairs only a stale exited session
+after a positive live reconnect under the exact durable ownership, revision,
+conversation, provider, branch and controller tuple. Genuine running, pending
+input and durable reauthentication facts determine the restored activity;
+unknown or mismatched facts remain fail-closed. No Work admission, phase, model,
+human gate or budget limit is relaxed.
+
+The final reviewed twenty-three source hashes match
+instructor-local-debug-round7-source-hashes.json (SHA256
+cd647e0aa94c9dc14c9e2a29b14cf5d1ed102aa92f6eee9aad13e559837f1206).
+The actually started isolated daemon is PID27576/port3314, started
+2026-10-14T13:47:27.7190754Z, executable
+frontend/daemon/dev-1791985562059-3364/ao.exe, SHA256
+f059b8389d1956cfd546ce3229b6faeba1566460d147d12f79c86faf59319fe6.
+Its VCS metadata honestly says published3f251d8 plus modified content. The final
+independent source delta is bound separately (SHA256
+66a2f2fa31b8249e7ae8b282caeb9e20ef34075b0762f1c5204445e09d51c391).
+The own Electron33.4.11 window is actually observed as Agent Orchestrator (dev),
+window725224. Productive PID33888/port3001 and its installed app remain untouched.
+
+The first stop guard rejected the old workers' unresolved queues before any
+stop. A read-only atomic inventory then established exactly160 unsent queued
+stall-nudge turns, forty per old worker1/3/4/5, all without a native turn ID or
+started_at. These are pending durable messages, not currently running worker
+executions or fabricated report IDs. Each actual provider was preserved. The
+subsequent normal stop of the owned isolated daemon uses provider-preserving
+Close, not agent termination, after exact executable/process and idle checks.
+No queue, runtime state or provider is manually repaired or replayed.
+
+The atomic post snapshot at13:50:55.220305Z precedes registration of the new
+test Work. All160 exact queued-turn and message rows, all seven existing Work
+authority cores and human gates, the separately retained old reviewer turn,
+and the existing native hosts/provider IDs are preserved. Thirty-one budget
+identities and their authority/resource bindings remain; only body.updatedAt
+on four existing started-session entries changes during normal restore.
+This is no budget reset or additional admission. Whole budget-body byte equality
+is expressly not claimed.
+
+Before the new Work, existing ao-chain-lab-2 is now genuinely idle with a ready
+controller and zero open turns. Its original activity/updated timestamps stay
+unchanged; only the justified activity revision and controller generation
+3ed25f4a-1519-4e8e-a8b4-b3d94a0662f2 change. Its native conversation remains
+ses_ec6b16624ffe24GXH2VsrD8off with MuseContributor/xhigh/auto. Normal recovery
+preview now returns CONTROLLER_READY/action none. Failed round6 Work
+work-673199c2-437a-4397-86bd-7bc9b6338eab remains revision5 at its unopened
+delivery gate. This demonstrates the specific reconnect correction and
+preservation; the following new native chain supplies separate execution proof.
+
+## Seventh-build genuine native chain and returned human gate
+
+One new Work work-f2d4dd1e-b210-442e-b4e1-eda10cd68f2c is registered by the
+normal Instructor API (HTTP201 at13:51:46.8737379Z), with the unchanged
+policy30e6dd08346b882f58a5005bac224caaa0d72ac88059877c7dabfe7e7b0c59e9.
+The existing project owner is reused. The implementation directive has an
+actual native receipt on provider turn7c9c02fd-75ba-41c2-96e7-e73a52d700c5
+at13:52:40.2848176Z and subsequently records accepted/progress; registration
+or queueing alone is not counted as execution.
+
+Exactly one new native worker ao-chain-lab-6 receives the concrete nonce task.
+Its native conversation is ses_ec54fba20ffeOmLfz0kDXluMHU; the launch retains
+the configured and sent OpenCode/MuseContributor/xhigh/auto settings. Its
+native OpenCode SQLite session and actual assistant-message metadata independently
+confirm ao-auto/opencode-go/muse-spark-1.3-contributor/xhigh. No native registry
+row is invented when that separate registry has none. Its
+local nonce-only commit51c498a0168a45c13fb824ca9201865348ba0053 has parent
+f60f432a32b9f72370dafab2c58b703182dc8026 and the actual new Work ID in its
+message. Independent readback finds a clean worktree and exactly31 bytes:
+AO_LAB_CHAIN_20261014_7b94f281 plus one LF, file SHA256
+626f15bec4e2ce87221639701d289d0021207172f05d28ff7eb5c4894c019088.
+Only AO-LAB-NONCE.txt is committed. Existing Git identity is preserved;
+no invented issue, author, trailers or committed task packet is supplied.
+The configured push/full profiles execute read-only checks locally; their names
+do not imply a remote push. Real check completion is recorded at13:55:12.5345512Z
+and the worker's native turn completes at13:55:55Z.
+
+The existing managed mechanical flow creates independent Codex review
+efd0e54b-5478-44f2-8bcf-c264dca7254d/runf7f3a31c-f6fa-47b4-98e4-2493106496cb
+on that exact nonce SHA. No observer launches a manual or duplicate review.
+The review_run trigger_source is literally manual: the managed automatic
+Instructor phase action calls Engine.TriggerManagedLocal, whose existing internal
+trigger enum is ReviewTriggerManual. That field alone is not evidence of an
+observer review start; the actual phase-action/run/launch correlation is retained.
+Its actual native thread is01a13ab3-5860-71f2-a7d4-3c3bb710eabd and turn
+01a13ab3-6ed7-7cf2-8000-be965ef16666. Redacted native rollout metadata confirms
+gpt-6-astra/max, read-only sandbox and approval never independently of the
+configured/sent settings. The turn completes at13:59:45.433Z; five actual
+assistant messages and26 activities are durably projected to its own review
+conversation. Approved review report91cd736a-7291-4cc2-8f06-d32640236f9b is
+verified at13:59:32.714Z. This is a real fixture review, separate from the
+independent source review of the AO correction.
+
+Both review and triage directives initially hit the existing ten-second native
+acceptance uncertainty boundary. Their actual later receipts and accepted/progress
+reports resolve those transient delivery gates without an observer resend or
+manual reconciliation. The triage receipt is bound to actual provider turn
+de7aeb68-2659-4074-9780-3c84f4fba3f3 at14:01:16.7286144Z. All three phase
+dispatch identities reach progress, with no remaining dispatch error; dispatcher
+preflight/lease attempts are not counted as duplicate native executions.
+
+Normal root API readback at14:04:06Z shows revision26/waiting_human/triage,
+phaseSequence4, the exact nonce SHA and the actual orchestrator's returned
+approved-review/check triage summary. The transition gate
+gate-02268130-e27e-4f42-acf0-639d060b3a59 (triage to fix) opened
+at14:01:32.6329002Z. A fresh capture of the actually running Instructor board
+also shows Triage/Awaiting Human decision and the retained attribution blocker.
+The preceding UI snapshot was older; its later refresh is observed, not inferred
+from the API alone. No observer Go, second worker, additional nonce commit,
+manual policy or budget-limit change, budget reset, direct database write,
+remote publication, merge or productive replacement occurs. Ordinary agent/API
+Work, budget and event persistence is evidenced separately. The full native
+handoff reaches its legitimate human boundary; the
+fixture is not falsely closed as done or attribution-complete.
+
+Final read-only native snapshot at14:05:45Z confirms the triage provider turn
+completed at14:01:42.7464066Z and the existing orchestrator is ready/idle with
+zero open turns. Six completed accepted/progress CLI activities are correlated
+directly with the three genuine orchestrator phase turns. The final authority
+comparison again preserves all seven old Work cores/gates, all160 queued-turn
+and message rows and the old retained reviewer row. This final chain readback
+has SHA256e36015a9ad69009c2af127b1704dc5150179d60b5601254356f2306d8da5999c.

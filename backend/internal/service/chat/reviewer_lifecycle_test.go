@@ -288,6 +288,175 @@ func TestReviewerChatColdHistorySettlesItsOwnLifecycleWithoutSending(t *testing.
 	}
 }
 
+// A retained failed turn has immutable error text, while credential recovery is
+// a separate durable account fact. A terminal replay cannot clear that demand.
+func TestReviewerChatColdHistoryKeepsReauthDemandUntilExplicitRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		reauth       bool
+		recovered    bool
+		typedFailure bool
+		want         domain.ActivityState
+	}{
+		{"unresolved_auth", true, false, false, domain.ActivityWaitingInput},
+		{"explicit_auth_recovery", true, true, false, domain.ActivityIdle},
+		{"ordinary_provider_failure", false, false, false, domain.ActivityIdle},
+		{"typed_auth_terminal", true, false, true, domain.ActivityWaitingInput},
+		{"typed_auth_terminal_then_explicit_recovery", true, true, true, domain.ActivityIdle},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := openStore(t)
+			now := time.Now().UTC()
+			const (
+				reviewID        = "review-auth-history"
+				siblingReviewID = "review-auth-history-sibling"
+				conversationID  = "review-auth-history-conversation"
+				providerID      = "review-auth-history-native-thread"
+				priorGeneration = "review-auth-history-prior-generation"
+				turnID          = "review-auth-history-turn"
+				nativeTurnID    = "review-auth-history-native-turn"
+				prompt          = "review the retained immutable snapshot"
+			)
+			originalErr := fmt.Errorf("provider RPC failed; sign in again text is not an auth sentinel")
+			if tc.reauth {
+				originalErr = fmt.Errorf("%w: reviewer login expired", ports.ErrChatAuthRequired)
+			}
+			for _, seed := range []struct {
+				id, provider, generation string
+				harness                  domain.ReviewerHarness
+			}{
+				{reviewID, providerID, priorGeneration, domain.ReviewerCodex},
+				{siblingReviewID, "sibling-auth-native-thread", "sibling-auth-current-generation", domain.ReviewerClaudeCode},
+			} {
+				if err := st.UpsertReview(ctx, domain.Review{
+					ID: seed.id, SessionID: testSession, ProjectID: testProject,
+					Harness: seed.harness, InterfaceMode: domain.ReviewerInterfaceChat,
+					ReviewerActivityState: domain.ActivityActive, CreatedAt: now, UpdatedAt: now,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if claimed, err := st.ClaimReviewChatController(ctx, seed.id, seed.provider, seed.generation, now); err != nil || !claimed {
+					t.Fatalf("claim reviewer %s: claimed=%v err=%v", seed.id, claimed, err)
+				}
+			}
+			if _, err := st.CreateReviewConversation(ctx, conversationID, reviewID, testProject, testSession, now); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.AdoptReviewProviderTurn(ctx, conversationID, testSession, reviewID, priorGeneration, turnID, nativeTurnID, now); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.AppendImportedUserMessage(ctx, conversationID, nativeTurnID, domain.ConversationMessage{
+				ID: "auth-history-user", Text: prompt, Origin: domain.MessageOriginProvider,
+			}, now); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SettleTurn(ctx, conversationID, nativeTurnID, domain.TurnStateFailed, originalErr.Error(), now); err != nil {
+				t.Fatal(err)
+			}
+			if tc.reauth && !tc.typedFailure {
+				if err := st.RecordAccount(ctx, conversationID, domain.ConversationAccount{
+					ReauthRequiredAt: &now, ReauthReason: originalErr.Error(),
+				}, now); err != nil {
+					t.Fatal(err)
+				}
+				if updated, err := st.UpdateReviewChatActivity(ctx, reviewID, priorGeneration, domain.ActivityWaitingInput, now); err != nil || !updated {
+					t.Fatalf("seed waiting_input: updated=%v err=%v", updated, err)
+				}
+			}
+			workerBefore, found, err := st.GetSession(ctx, testSession)
+			if err != nil || !found {
+				t.Fatalf("worker before replay: found=%v err=%v", found, err)
+			}
+			siblingBefore, found, err := st.GetReviewByID(ctx, siblingReviewID)
+			if err != nil || !found {
+				t.Fatalf("sibling before replay: found=%v err=%v", found, err)
+			}
+			provider := &nativeHistoryConversation{
+				fakeConversation: newFakeConversation(),
+				events: []ports.ChatEvent{
+					{Kind: ports.ChatEventTurnStarted, ProviderTurnID: nativeTurnID, ProviderEventID: "auth-history-root-start"},
+					{Kind: ports.ChatEventUserMessageCompleted, ProviderTurnID: nativeTurnID, ProviderItemID: "auth-history-native-user", ProviderEventID: "auth-history-user", Text: prompt},
+					{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: nativeTurnID, ProviderEventID: "auth-history-root-end", TurnState: domain.TurnStateRecovered},
+				},
+			}
+			if tc.typedFailure {
+				// The replay itself raises the auth demand; no persisted account was
+				// seeded above. A later explicit recovery must be authoritative.
+				provider.events[2].TurnState = domain.TurnStateFailed
+				provider.events[2].Err = originalErr
+			}
+			if tc.recovered {
+				provider.events = append(provider.events, ports.ChatEvent{
+					Kind: ports.ChatEventAccountChanged, ProviderEventID: "auth-history-account-recovered",
+					Account: &ports.ChatAccount{ReauthRecovered: true},
+				})
+			}
+			provider.providerConversationID = providerID
+			workerActivity := &recordingActivity{}
+			var nextID atomic.Int64
+			svc := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st, Reader: fullSnapshotReader(st),
+				Drivers:  fakeRegistry{driver: fakeDriver{conv: provider}},
+				Activity: workerActivity, Log: slog.New(slog.DiscardHandler),
+				NewID: func() string { return fmt.Sprintf("auth-history-%d", nextID.Add(1)) },
+			})
+			t.Cleanup(func() { svc.StopAll(context.Background()) })
+			controller, err := svc.Start(ctx, chatsvc.StartConfig{
+				Owner: domain.ReviewConversationOwner(reviewID), SessionID: testSession, ProjectID: testProject,
+				Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+				ProviderConversationID: providerID, HistoryMode: ports.ChatHistoryRequired,
+			})
+			if err != nil {
+				t.Fatalf("cold reviewer attachment: %v", err)
+			}
+			snapshot, err := svc.SnapshotForReview(ctx, reviewID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Conversation.Scope != domain.ConversationScopeReview || snapshot.Conversation.ReviewID != reviewID || controller.ConversationID() != conversationID {
+				t.Fatalf("replay changed reviewer conversation identity: %+v", snapshot.Conversation)
+			}
+			if len(snapshot.Turns) != 1 || snapshot.Turns[0].ID != turnID || snapshot.Turns[0].ProviderTurnID != nativeTurnID || snapshot.Turns[0].HandledByReviewID != reviewID || snapshot.Turns[0].State != domain.TurnStateFailed || snapshot.Turns[0].ErrorMessage != originalErr.Error() {
+				t.Fatalf("retained failed turn or original error changed: %+v", snapshot.Turns)
+			}
+			account := snapshot.Conversation.Account
+			reauthRequired := account != nil && account.ReauthRequiredAt != nil
+			if reauthRequired != (tc.reauth && !tc.recovered) {
+				t.Fatalf("durable account demand: %+v", account)
+			}
+			if reauthRequired && account.ReauthReason != originalErr.Error() {
+				t.Errorf("retained reauth reason changed: %+v", account)
+			}
+			if tc.recovered && account.ReauthReason != "" {
+				t.Errorf("explicit recovery left a stale reason: %+v", account)
+			}
+			review, found, err := st.GetReviewByID(ctx, reviewID)
+			if err != nil || !found || review.ControllerGeneration != controller.Generation() || controller.Generation() == priorGeneration {
+				t.Fatalf("review owner generation mismatch: review=%+v found=%v err=%v", review, found, err)
+			}
+			t.Logf("durableReauthRequired=%v reviewerActivity=%s failedTurnError=%q nativeHistoryReads=%d providerSendCalls=%d", reauthRequired, review.ReviewerActivityState, snapshot.Turns[0].ErrorMessage, provider.historyReads(), provider.sendCallCount())
+			if review.ReviewerActivityState != tc.want {
+				t.Errorf("reviewer activity=%q, want %q", review.ReviewerActivityState, tc.want)
+			}
+			if updated, err := st.UpdateReviewChatActivity(ctx, reviewID, priorGeneration, domain.ActivityActive, now); err != nil || updated {
+				t.Errorf("stale generation changed current activity: updated=%v err=%v", updated, err)
+			}
+			workerAfter, found, err := st.GetSession(ctx, testSession)
+			if err != nil || !found || !reflect.DeepEqual(workerBefore, workerAfter) || len(workerActivity.snapshot()) != 0 {
+				t.Errorf("review auth replay changed worker state: found=%v err=%v", found, err)
+			}
+			siblingAfter, found, err := st.GetReviewByID(ctx, siblingReviewID)
+			if err != nil || !found || !reflect.DeepEqual(siblingBefore, siblingAfter) {
+				t.Errorf("review auth replay changed sibling reviewer: found=%v err=%v", found, err)
+			}
+			if provider.historyReads() != 1 || provider.sendCallCount() != 0 {
+				t.Errorf("replay issued provider work: historyReads=%d sendCalls=%d", provider.historyReads(), provider.sendCallCount())
+			}
+		})
+	}
+}
+
 func TestReviewerChatLiveReconnectStopSettlesRetainedGenerationOnlyForItsOwner(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)

@@ -965,7 +965,12 @@ func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.Ch
 		if err != nil {
 			return err
 		}
-		if pending || errors.Is(reviewerLifecycle.Err, ports.ErrChatAuthRequired) {
+		// Reconciled failed turns retain error text, not its auth sentinel.
+		// Use the current account after replay, including explicit recovery.
+		c.mu.Lock()
+		reauthRequired := c.account.ReauthRequiredAt != nil
+		c.mu.Unlock()
+		if pending || reauthRequired {
 			state = domain.ActivityWaitingInput
 		}
 		// Native history can settle a previously lost terminal event. Reconcile
