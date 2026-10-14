@@ -40,7 +40,7 @@ test('previously discovered tools recheck a role changed by their embedding host
 });
 
 test('recognized roles retain their cumulative tool inventory', () => {
-  for (const [role, count] of [['observer', 4], ['operator', 6], ['developer', 14]] as const) {
+  for (const [role, count] of [['observer', 7], ['operator', 12], ['developer', 22]] as const) {
     assert.equal(createToolCatalog(client, {...access, role}).length, count);
   }
 });

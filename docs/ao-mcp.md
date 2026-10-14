@@ -94,6 +94,14 @@ The configured host discovers supported tools with MCP `tools/list`:
 | `ao_work_trace` | Observer | `workId`, optional `includeMembers` and `includeRecovery` (both default true); reads real work, dispatch, evidence and available controller/member facts. |
 | `ao_create_work` | Operator | `projectId`, `name`, `goal`, `sourceRef`, `snapshotId`, `idempotencyKey`; creates manual work using the existing `neu` intake contract. |
 | `ao_work_command` | Operator | `workId`, `command`, `snapshotId`, `idempotencyKey`; canonical continuation, pause or cancellation, including registered aliases that resolve to those actions. |
+| `ao_issue_candidates` | Observer | `projectId`, optional `number`; lists native project issue candidates or previews one exact issue, retaining truncation and existing-work facts. |
+| `ao_issue_intake` | Operator | `projectId`, `repository`, `number`, optional `name`; registers native issue work with canonical issue identity and daemon deduplication. Does not start an agent. |
+| `ao_project_orchestrators` | Observer | `projectId`; reads only that project's orchestrator sessions. A listed session is not proof its controller is ready. |
+| `ao_orchestrator_ensure` | Operator | `projectId`; uses the existing daemon creation API with `clean:false`. May execute the project's configured initial prompt when creating; does not replace an existing orchestrator or override launch settings. |
+| `ao_work_recovery` | Observer | `workId`; captures the native recovery action, reason and exact controller/session identity. |
+| `ao_recover_controller` | Operator | `workId`, `workRevision`, `policyVersion`, `sessionId`, `sessionCreatedAt`, `providerConversationId`, `controllerGeneration`; reconnects native history using the exact captured recovery identity. |
+| `ao_member_diagnostics` | Developer | `workId`, `memberId`; reads persisted member/controller error facts through a new daemon ownership fence. No provider is started. |
+| `ao_member_timeline` | Developer | `workId`, `memberId`, optional `beforeSequence` and `limit` (1–100); reads bounded persisted history under the same ownership fence. |
 | `ao_workspace_tree` | Developer | `workId`, `sessionId`, optional `path`; lists a session-workspace directory. |
 | `ao_workspace_search` | Developer | `workId`, `sessionId`, `query`, optional `cursor` and `limit` (1–100, default 50); searches path substrings, not file contents. |
 | `ao_workspace_read` | Developer | `workId`, `sessionId`, `path`, optional `section`; reads existing workspace source and its fingerprint. |
@@ -110,6 +118,37 @@ refused. The accepted command spelling remains the daemon's responsibility.
 Trace responses distinguish available evidence from missing/unknown provider
 confirmation. No tool produces a verified result merely because a worker
 asserted success.
+
+Native issue intake keeps the configured repository and issue number as its
+identity. Browse/preview before intake and preserve that repository selection;
+the daemon rejects a changed repository instead of silently selecting a
+different issue. Tracker unavailability is reported as an error. Intake does
+not automatically continue work.
+
+For an initial governed pilot, select an issue, register it, ensure a project
+orchestrator exists, then capture fresh Instructor state before `weiter`.
+Inspect the work trace and member diagnostics while AO's existing worker and
+independent reviewer flow runs. Stop at protected human gates. Recovery is a
+separate captured action: preserve its timestamp string exactly, including
+fractional seconds, and submit the captured identity rather than inventing a
+new session. When the daemon omits an empty conversation ID or generation,
+represent that native zero value as an empty string; do not generate a value.
+An unavailable recovery action (`none`) is not permission to create or replace
+a controller. An uncertain mutation requires state inspection before a manual
+retry; the adapter never automatically repeats it.
+
+Diagnostic reads require a matching upgraded daemon. They validate retained
+member ownership and incarnation during the actual persisted read, including
+stopped sessions. When no active project orchestrator exists, the members view
+can expose its latest retained stopped coordinator separately from `current`.
+Old daemons fail closed. These views omit raw activity
+payloads, hidden reasoning and provider/account settings; known credential
+patterns are redacted and text/page limits are explicit. User-written prose
+can still contain sensitive information, so history requires the developer
+profile. Persisted facts do not establish current live-controller readiness.
+Project-wide orchestrator history and reviewer-wide history, where available,
+are labelled with their actual scope rather than attributed wholly to one work
+or review run. TUI or absent persisted history remains unavailable.
 
 Source operations use session-workspace-relative paths and incarnation-scoped
 daemon workspace routes. The adapter reads a proven current work member, then

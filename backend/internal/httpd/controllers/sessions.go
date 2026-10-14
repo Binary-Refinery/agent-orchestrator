@@ -177,6 +177,7 @@ type SessionsController struct {
 // Register mounts the session routes on the supplied router.
 func (c *SessionsController) Register(r chi.Router) {
 	c.registerScopedWorkspaces(r)
+	c.registerInstructorDiagnostics(r)
 	r.Get("/governance/capabilities", c.governanceCapabilities)
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)

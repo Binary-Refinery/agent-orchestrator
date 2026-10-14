@@ -34,12 +34,14 @@ const dispatchFields = ['id', 'batchId', 'workId', 'projectId', 'targetSessionId
   'snapshotId', 'workRevision', 'position', 'action', 'message', 'state', 'error', 'attempts', 'queuedAt', 'createdAt', 'updatedAt'];
 const allowedActions = new Set(['weiter', 'stopp', 'abbrechen']);
 
-function projectWork(value: unknown): Record<string, unknown> {
+export function projectWork(value: unknown): Record<string, unknown> {
   const source = record(value);
   const output = scalars(source, workFields);
   output.sessionIds = strings(source.sessionIds);
   output.actions = strings(source.actions);
   output.uncertainDispatchIds = strings(source.uncertainDispatchIds);
+  output.phaseActions = objects(source.phaseActions).map((action) => scalars(action,
+    ['id', 'kind', 'phaseSequence', 'producer', 'state', 'error', 'startedAt', 'completedAt']));
   if (source.gate) output.gate = scalars(source.gate, ['id', 'kind', 'title', 'openedAt', 'transitionTo', 'dispatchId', 'targetSessionId']);
   if (source.suspendedGate) output.suspendedGate = scalars(source.suspendedGate, ['id', 'kind', 'title', 'openedAt', 'transitionTo']);
   if (source.heartbeat && record(source.heartbeat).workId === source.id) {
@@ -98,12 +100,13 @@ function projectMembers(value: unknown, workId: string, projectId: string): Reco
     const coordinator = record(source.coordinator);
     const projected = scalars(coordinator, ['key']);
     if (coordinator.current) projected.current = projectMember(coordinator.current, projectId);
+    if (coordinator.stopped) projected.stopped = projectMember(coordinator.stopped, projectId);
     output.coordinator = projected;
   }
   return output;
 }
 
-function projectRecovery(value: unknown, workId: string): Record<string, unknown> {
+export function projectRecovery(value: unknown, workId: string): Record<string, unknown> {
   const source = record(value);
   if (source.workId !== workId) throw new AdapterError('OUT_OF_SCOPE', 'Recovery observation belongs to a different work.');
   return scalars(source, ['workId', 'workRevision', 'policyVersion', 'sessionId', 'sessionCreatedAt', 'providerConversationId',

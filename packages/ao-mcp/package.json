@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test --test-timeout=30000 dist/test/*.test.js"
+    "test": "npm run build && node --test --test-concurrency=2 --test-timeout=30000 dist/test/*.test.js"
   },
   "license": "MIT",
   "dependencies": {

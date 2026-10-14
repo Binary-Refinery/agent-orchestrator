@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {AdapterError} from '../src/core.js';
+import {AdapterError, record} from '../src/core.js';
 import {DaemonError} from '../src/daemon.js';
 import {details, dispatch, fixture, foreignWork, operator, registry, standard, work} from './operations-fixture.js';
 
@@ -70,16 +70,33 @@ test('work trace filters exact-work events and receipts and preserves accepted v
   assert.equal(JSON.stringify(result).includes('nested-secret'), false);
 });
 
+test('trace retains mechanical phase failures without exposing nested replay material', async (t) => {
+  const f = await fixture(t, () => ({body: {...details, work: {...work, phaseActions: [
+    {id: 'phase-action', kind: 'check', phaseSequence: 4, producer: 'worker-one', state: 'uncertain',
+      error: 'Check process disappeared before completion', startedAt: '2026-10-14T12:00:00Z',
+      approval: 'private-approval', input: {token: 'private-token'}, completedAt: {secret: 'private-nested'}},
+  ]}}}));
+  const result = await f.execute('ao_work_trace', {workId: work.id, includeMembers: false, includeRecovery: false});
+  assert.deepEqual((result.work as Record<string, unknown>).phaseActions, [{
+    id: 'phase-action', kind: 'check', phaseSequence: 4, producer: 'worker-one', state: 'uncertain',
+    error: 'Check process disappeared before completion', startedAt: '2026-10-14T12:00:00Z',
+  }]);
+  assert.equal(JSON.stringify(result).includes('private-'), false);
+});
+
 test('members and recovery are scoped projections; optional endpoint errors keep request IDs', async (t) => {
   const f = await fixture(t, (call) => {
     if (call.path.endsWith('/members')) return {body: {workId: work.id, projectId: work.projectId, workRevision: 8, atomic: false,
-      coordinator: {key: 'project:orchestrator', extra: 'nested-secret', current: {id: 'coordinator', role: 'orchestrator', confirmed: {harness: 'codex', model: 'actual', secret: 'nested-secret'}}},
+      coordinator: {key: 'project:orchestrator', extra: 'nested-secret',
+        stopped: {id: 'coordinator:retained-instance', role: 'orchestrator', association: 'historical', status: 'terminated', instanceId: 'retained-instance', token: 'nested-secret'},
+        current: {id: 'coordinator', role: 'orchestrator', confirmed: {harness: 'codex', model: 'actual', secret: 'nested-secret'}}},
       members: [{id: 'worker', role: 'worker', requested: {model: 'requested'}, confirmed: null, secret: 'nested-secret',
         openTarget: {kind: 'session', projectId: 'project-other', sessionId: 'foreign-private-session'}}]}};
     if (call.path.endsWith('/recovery')) return {status: 501, body: {code: 'NOT_IMPLEMENTED', message: 'Recovery observations unavailable', requestId: 'recovery-request'}};
     return standard(call);
   });
   const result = await f.execute('ao_work_trace', {workId: work.id});
+  assert.equal(record(record(record(result.members).observation).coordinator).stopped !== undefined, true);
   assert.deepEqual(result.recovery, {available: false, code: 'NOT_IMPLEMENTED', message: 'Recovery observations unavailable', status: 501, requestId: 'recovery-request'});
   assert.equal(JSON.stringify(result.members).includes('nested-secret'), false);
   assert.equal(JSON.stringify(result.members).includes('foreign-private'), false);

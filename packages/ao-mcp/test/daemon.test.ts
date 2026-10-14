@@ -197,7 +197,20 @@ test('real isolated AO daemon supports scoped MCP observation and manual intake'
   assert.deepEqual(trace.dispatches, []);
   assert.deepEqual(record(trace.work).sessionIds, []);
   assert.equal(JSON.stringify(trace).includes('publicationGrants'), false);
+  const orchestrators = await call('ao_project_orchestrators', {projectId: 'mcp-smoke'});
+  assert.deepEqual(orchestrators.sessions, []);
+  const recovery = await call('ao_work_recovery', {workId: work.id});
+  assert.equal(recovery.workId, work.id);
+  assert.equal(recovery.ready, false);
+  assert.equal(recovery.action, 'none');
   const direct = new DaemonClient({url: origin});
+  const member = `/api/v1/instructor/works/${work.id}/members/session%3Amissing-instance`;
+  for (const suffix of ['diagnostics', 'timeline']) {
+    await assert.rejects(direct.get(`${member}/${suffix}`), (error: unknown) => error instanceof DaemonError
+      && error.status === 400 && error.code === 'INSTRUCTOR_DIAGNOSTIC_SCOPE_REQUIRED');
+    await assert.rejects(direct.get(`${member}/${suffix}?projectId=mcp-smoke&sessionId=missing-session&instanceId=missing-instance&runtimeGeneration=`),
+      (error: unknown) => error instanceof DaemonError && error.status === 409 && error.code === 'INSTRUCTOR_DIAGNOSTIC_SCOPE_CHANGED');
+  }
   const fenced = `/api/v1/instructor/works/${work.id}/sessions/missing-session/workspace`;
   await assert.rejects(direct.get(`${fenced}/file?path=main.ts`), (error: unknown) =>
     error instanceof DaemonError && error.status === 400 && error.code === 'INSTRUCTOR_WORKSPACE_SCOPE_REQUIRED');
