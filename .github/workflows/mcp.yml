@@ -22,19 +22,18 @@ concurrency:
 
 jobs:
   mcp:
-    # Same dedicated registrations as the pending runner migration (#21).
-    # Missing capacity remains queued; there is no GitHub-hosted fallback.
+    # Use GitHub-hosted capacity without sharing the Tars/Artifaktory runners.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: linux
-            labels: [self-hosted, linux, x64, ao-ci, ci-heavy]
+            runner: ubuntu-latest
           - os: windows
-            labels: [self-hosted, windows, x64, ao-ci]
+            runner: windows-latest
     name: MCP (${{ matrix.os }})
-    runs-on: ${{ matrix.labels }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

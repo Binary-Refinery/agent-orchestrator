@@ -133,16 +133,14 @@ counts and review evidence belong in that PR.
 | Development | Scoped workspace APIs, fingerprint updates, approved profile discovery and bounded check jobs. | Package scope/concurrency/idempotency tests; final-head result in PR. |
 | Transports | Stdio and bearer-protected HTTP on `127.0.0.1`. | Modern SDK HTTP, independent legacy JSON-RPC and SDK stdio protocol tests. |
 | Embedded reuse | Exported server factory and common tool catalog. | Shared implementation is reused; no embedded model/UI integration is installed. |
-| Native CI | Linux and Windows package validation in `.github/workflows/mcp.yml`. | Requires the self-hosted registrations below; queued jobs are not passes. |
+| Native CI | Linux and Windows package validation in `.github/workflows/mcp.yml`. | Uses GitHub-hosted runners; exact final-head results belong in the PR. |
 | Remote gateway | Deployment guide and authenticated local hop. | No external authentication gateway, public endpoint or tunnel is implemented/provisioned. |
 | Real vendor/runtime acceptance | Requirements MCP-17 and MCP-18 retained. | Pending actual Windows ChatGPT/Copilot connection and original AO error reproduction. |
 
-The dedicated workflow uses only self-hosted runners: Linux requires
-`self-hosted`, `linux`, `x64`, `ao-ci`, `ci-heavy`; Windows requires `self-hosted`,
-`windows`, `x64`, `ao-ci`. These match the dedicated registration convention in
-the separate runner migration. Missing capacity leaves checks queued; the
-workflow has no GitHub-hosted fallback. A local Linux package pass does not
-certify the Windows job.
+The dedicated MCP workflow uses GitHub-hosted `ubuntu-latest` and
+`windows-latest` runners. It requires no AO self-hosted registration and does
+not use the existing Tars/Artifaktory runners. A local Linux package pass does
+not certify the Windows job; queued jobs are not passes.
 
 The PR is the final-head validation record. It must list the exact commands,
 results, reviewed SHAs and any unavailable native platform or integration check.

@@ -60,8 +60,8 @@ Tests cover the adapter boundary with controlled daemon fixtures, an isolated
 real daemon smoke when configured, modern SDK HTTP, independent legacy
 JSON-RPC and SDK stdio clients. They do not certify actual ChatGPT/Copilot
 access, the user's Windows installation or live provider inference. The
-dedicated CI workflow validates Linux and Windows on self-hosted runners; jobs
-remain queued when the required registrations are unavailable.
+dedicated CI workflow validates Linux and Windows on GitHub-hosted
+`ubuntu-latest` and `windows-latest` runners.
 
 The real-daemon smoke is explicitly skipped unless `AO_MCP_TEST_DAEMON` points
 to a separately built AO executable. For example, on Linux:
