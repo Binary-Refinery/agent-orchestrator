@@ -308,6 +308,157 @@ func (s *Store) UpdateSessionFromActivitySignal(
 	return rows > 0, nil
 }
 
+// RestoreLiveChatReconnectActivity repairs only an exited marker after attachment
+// to the same live Chat provider. Current owner, conversation facts and the narrow
+// activity CAS share one transaction; reconnection creates no progress timestamp.
+func (s *Store) RestoreLiveChatReconnectActivity(ctx context.Context, expected domain.SessionRecord) (bool, error) {
+	if expected.Mode != domain.SessionModeChat || expected.IsTerminated || expected.Activity.State != domain.ActivityExited {
+		return false, nil
+	}
+	if err := s.writeMu.LockContext(ctx); err != nil {
+		return false, err
+	}
+	defer s.writeMu.Unlock()
+	applied := false
+	err := s.inTx(ctx, "restore live Chat reconnect activity", func(q *gen.Queries) error {
+		row, err := q.GetSession(ctx, expected.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		rec := rowToRecord(row)
+		if rec.Revision != expected.Revision || rec.Harness != expected.Harness || rec.ProjectID != expected.ProjectID ||
+			rec.Mode != domain.SessionModeChat || rec.IsTerminated || rec.Activity.State != domain.ActivityExited ||
+			rec.Metadata.RuntimeLaunchID != expected.Metadata.RuntimeLaunchID ||
+			expected.Metadata.ProviderConversationID == "" || rec.Metadata.ProviderConversationID != expected.Metadata.ProviderConversationID ||
+			expected.Metadata.ControllerGeneration == "" || rec.Metadata.ControllerGeneration != expected.Metadata.ControllerGeneration {
+			return nil
+		}
+		conversation, err := q.SelectConversationBySession(ctx, &rec.ID)
+		if err != nil {
+			return fmt.Errorf("read current conversation: %w", err)
+		}
+		if (conversation.Scope != domain.ConversationScopeSession && conversation.Scope != domain.ConversationScopeProject) ||
+			conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != rec.ID || conversation.CurrentReviewID.Valid ||
+			(conversation.ProjectID == nil && rec.ProjectID != "") ||
+			(conversation.ProjectID != nil && *conversation.ProjectID != rec.ProjectID) {
+			return errors.New("live reconnect conversation ownership changed")
+		}
+		branch, err := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+			ConversationID: conversation.ID, BranchID: conversation.ActiveBranchID,
+		})
+		if err != nil {
+			return fmt.Errorf("read current provider branch: %w", err)
+		}
+		if !branch.SessionID.Valid || branch.SessionID.String != string(rec.ID) || branch.ReviewID.Valid ||
+			branch.ProviderConversationID != rec.Metadata.ProviderConversationID {
+			return errors.New("live reconnect provider branch ownership changed")
+		}
+		checkFactBranch := func(branchID string) error {
+			factBranch := branch
+			if branchID != conversation.ActiveBranchID {
+				var err error
+				factBranch, err = q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+					ConversationID: conversation.ID, BranchID: branchID,
+				})
+				if err != nil {
+					return fmt.Errorf("read native fact branch: %w", err)
+				}
+			}
+			if !factBranch.SessionID.Valid || factBranch.SessionID.String != string(rec.ID) || factBranch.ReviewID.Valid ||
+				factBranch.ProviderConversationID != rec.Metadata.ProviderConversationID {
+				return errors.New("live reconnect facts belong to another native owner")
+			}
+			return nil
+		}
+		var account domain.ConversationAccount
+		if conversation.AccountJson.Valid {
+			if err := json.Unmarshal([]byte(conversation.AccountJson.String), &account); err != nil {
+				return fmt.Errorf("read current account: %w", err)
+			}
+		}
+		turns, err := q.SelectConversationTurns(ctx, conversation.ID)
+		if err != nil {
+			return fmt.Errorf("read current turns: %w", err)
+		}
+		activities, err := q.SelectConversationActivities(ctx, conversation.ID)
+		if err != nil {
+			return fmt.Errorf("read current interactions: %w", err)
+		}
+		state := domain.ActivityIdle
+		for _, turn := range turns {
+			// The provider kept this turn across controller generations. Its old
+			// generation must not hide current work on the active native lineage.
+			if turn.State == domain.TurnStateRunning && !turn.RolledBackAt.Valid {
+				if turn.ProviderTurnID == "" || turn.HandledBySessionID != rec.ID || turn.HandledByReviewID.Valid {
+					return errors.New("live reconnect running turn ownership is unknown")
+				}
+				if err := checkFactBranch(turn.BranchID); err != nil {
+					return err
+				}
+				state = domain.ActivityActive
+			}
+		}
+		if account.ReauthRequiredAt != nil {
+			state = domain.ActivityWaitingInput
+		}
+		visiblePending := false
+		for _, activity := range activities {
+			if (activity.Kind == domain.ActivityKindApproval || activity.Kind == domain.ActivityKindUserInput) &&
+				activity.Status == domain.ActivityStatusPending {
+				if activity.RequestID == "" {
+					return errors.New("live reconnect pending request identity is unknown")
+				}
+				if err := checkFactBranch(activity.BranchID); err != nil {
+					return err
+				}
+				visiblePending = true
+				state = domain.ActivityWaitingInput
+			}
+		}
+		pending, err := q.HasPendingConversationInteractions(ctx, conversation.ID)
+		if err != nil {
+			return fmt.Errorf("read pending interaction debt: %w", err)
+		}
+		if pending != visiblePending {
+			return errors.New("live reconnect has unresolved interactions outside the current lineage")
+		}
+		// Preserve the original nullable/raw-row values. Ordinary activity
+		// signals normalize legacy checkpoints and zero times; reconnect does not.
+		rows, err := q.UpdateSessionFromActivitySignal(ctx, gen.UpdateSessionFromActivitySignalParams{
+			ActivityState:                    state,
+			ActivityLastAt:                   row.ActivityLastAt,
+			FirstSignalAt:                    row.FirstSignalAt,
+			AgentSessionID:                   row.AgentSessionID,
+			AgentSessionIDLaunchID:           row.AgentSessionIDLaunchID,
+			NativeIdentityObservedAt:         row.NativeIdentityObservedAt,
+			LatestUserPrompt:                 row.LatestUserPrompt,
+			LatestUserPromptAt:               row.LatestUserPromptAt,
+			LatestAssistantUpdate:            row.LatestAssistantUpdate,
+			LatestAssistantUpdateAt:          row.LatestAssistantUpdateAt,
+			ConversationCheckpointState:      row.ConversationCheckpointState,
+			ConversationCheckpointGeneration: row.ConversationCheckpointGeneration,
+			ConversationCheckpointNativeID:   row.ConversationCheckpointNativeID,
+			ConversationCheckpointTurnID:     row.ConversationCheckpointTurnID,
+			NativeCheckpointEvidence:         row.NativeCheckpointEvidence,
+			ConversationCheckpointUnsettled:  row.ConversationCheckpointUnsettled,
+			NativeTranscriptPath:             row.NativeTranscriptPath,
+			UpdatedAt:                        row.UpdatedAt,
+			ID:                               row.ID,
+			ExpectedRevision:                 expected.Revision,
+			ExpectedHarness:                  row.Harness,
+			ExpectedSessionMode:              row.SessionMode,
+			ExpectedRuntimeLaunchID:          row.RuntimeLaunchID,
+			ExpectedControllerGeneration:     row.ControllerGeneration,
+		})
+		applied = rows > 0
+		return err
+	})
+	return applied, err
+}
+
 // RecordSessionLatestUserPrompt persists pane-delivered user direction without
 // rewriting lifecycle ownership. Because the provider hook may be lost, the
 // same atomic write clears any prior assistant pairing and trusted checkpoint

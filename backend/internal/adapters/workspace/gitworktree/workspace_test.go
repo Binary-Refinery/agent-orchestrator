@@ -1122,3 +1122,231 @@ func TestGitWorktreeExitStatusOneHelper(t *testing.T) {
 	}
 	os.Exit(1)
 }
+
+// Restore must not acquire a shared config writer lock for an already-enabled
+// extension. The competing lock belongs only to this isolated test repository.
+func TestRestoreEnabledWorktreeConfigPreservesConcurrentConfigLock(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	read := exec.CommandContext(ctx, git, "-C", repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig")
+	before, beforeErr := read.CombinedOutput()
+	var initialExit *exec.ExitError
+	if !errors.As(beforeErr, &initialExit) || initialExit.ExitCode() != 1 || len(before) != 0 {
+		t.Fatalf("fixture did not start unset: output=%q err=%v", before, beforeErr)
+	}
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "config-lock-probe", Branch: "feature/config-lock-probe"}
+	created, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("real Create: %v", err)
+	}
+	if got := strings.TrimSpace(string(outputGit(t, git, repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"))); got != "true" {
+		t.Fatalf("Create did not persist local worktree config: %q", got)
+	}
+	configPath := filepath.Join(repo, ".git", "config")
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := configPath + ".lock"
+	lockBytes := []byte("diagnostic-only concurrent writer\n")
+	if err := os.WriteFile(lockPath, lockBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(outputGit(t, git, repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"))); got != "true" {
+		t.Fatalf("read of enabled extension blocked by lock: %q", got)
+	}
+	cfg.Path, cfg.BaseRef = created.Path, created.BaseRef
+	restored, restoreErr := ws.Restore(ctx, cfg)
+	t.Logf("real Create enabled local extension=true; RestoreWithConcurrentLock error=%v", restoreErr)
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil || string(configAfter) != string(configBefore) {
+		t.Errorf("Restore changed existing config: err=%v", err)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBytes) {
+		t.Errorf("Restore changed/deleted concurrent lock: err=%v", err)
+	}
+	if restoreErr != nil {
+		t.Fatalf("expected read-only attachment to enabled existing worktree; got redundant config write failure: %v", restoreErr)
+	}
+	if restored.Path != created.Path || restored.Branch != created.Branch {
+		t.Errorf("Restore changed workspace identity: got=%+v want=%+v", restored, created)
+	}
+}
+
+func TestEnableWorktreeConfigInitializesLocalSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		globalTrue  bool
+		locked      bool
+	}{
+		{name: "unset"},
+		{name: "false", value: "false"},
+		{name: "global true local unset", globalTrue: true},
+		{name: "unset still needs write", locked: true},
+		{name: "false still needs write", value: "false", locked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := requireGit(t)
+			tmp := t.TempDir()
+			repo := setupOriginClone(t, git, tmp)
+			if tc.value != "" {
+				runGit(t, git, repo, "config", "--local", "extensions.worktreeConfig", tc.value)
+			}
+			if tc.globalTrue {
+				global := filepath.Join(tmp, "fixture-global-config")
+				if err := os.WriteFile(global, []byte("[extensions]\nworktreeConfig = true\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GIT_CONFIG_GLOBAL", global)
+				if got := gitOutput(t, git, repo, "config", "--bool", "--get", "extensions.worktreeConfig"); got != "true" {
+					t.Fatalf("fixture global value=%q, want true", got)
+				}
+			}
+			configPath := filepath.Join(repo, ".git", "config")
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lockBytes := []byte("required-setting competing writer\n")
+			if tc.locked {
+				if err := os.WriteFile(configPath+".lock", lockBytes, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = ws.enableWorktreeConfig(context.Background(), repo)
+			if tc.locked {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != 255 {
+					t.Fatalf("required write with competing lock=%v, want Git255", err)
+				}
+				after, readErr := os.ReadFile(configPath)
+				lockAfter, lockErr := os.ReadFile(configPath + ".lock")
+				if readErr != nil || lockErr != nil || string(after) != string(before) || string(lockAfter) != string(lockBytes) {
+					t.Errorf("failed required write altered config/lock: read=%v lock=%v", readErr, lockErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := gitOutput(t, git, repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"); got != "true" {
+				t.Fatalf("local extension=%q, want true regardless of global setting", got)
+			}
+		})
+	}
+}
+
+func TestEnableWorktreeConfigReadErrorsDoNotWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  commandRunner
+		want error
+	}{
+		{name: "unexpected successful output", run: func(context.Context, string, ...string) ([]byte, error) { return []byte("unknown\n"), nil }},
+		{name: "read failure", want: os.ErrPermission, run: func(context.Context, string, ...string) ([]byte, error) { return nil, os.ErrPermission }},
+		{name: "missing Git", want: exec.ErrNotFound, run: func(context.Context, string, ...string) ([]byte, error) { return nil, exec.ErrNotFound }},
+		{name: "exit1 with diagnostic output", run: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("read failed\n"), exitStatusOne(t)
+		}},
+		{name: "canceled read", want: context.Canceled, run: func(context.Context, string, ...string) ([]byte, error) { return nil, context.Canceled }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := requireGit(t)
+			tmp := t.TempDir()
+			repo := setupOriginClone(t, git, tmp)
+			configPath := filepath.Join(repo, ".git", "config")
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+				calls++
+				if !reflect.DeepEqual(args, []string{"-C", repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"}) {
+					t.Fatalf("unexpected read command: %v", args)
+				}
+				return tc.run(ctx, binary, args...)
+			}
+			err = ws.enableWorktreeConfig(context.Background(), repo)
+			if err == nil || tc.want != nil && !errors.Is(err, tc.want) || calls != 1 {
+				t.Fatalf("read error=%v calls=%d, want wrapped %v and one read", err, calls, tc.want)
+			}
+			after, readErr := os.ReadFile(configPath)
+			if readErr != nil || string(after) != string(before) {
+				t.Errorf("read failure altered config: %v", readErr)
+			}
+		})
+	}
+}
+
+func TestEnableWorktreeConfigRejectsMalformedBoolAndCanceledRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		malformed bool
+		cancel    bool
+	}{
+		{name: "genuine malformed bool", malformed: true},
+		{name: "canceled context", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := requireGit(t)
+			tmp := t.TempDir()
+			repo := setupOriginClone(t, git, tmp)
+			configPath := filepath.Join(repo, ".git", "config")
+			if tc.malformed {
+				f, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, writeErr := f.WriteString("\n[extensions]\nworktreeConfig = not-a-bool\n")
+				closeErr := f.Close()
+				if writeErr != nil || closeErr != nil {
+					t.Fatalf("invalid fixture config: write=%v close=%v", writeErr, closeErr)
+				}
+			}
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			err = ws.enableWorktreeConfig(ctx, repo)
+			if tc.cancel {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("canceled read=%v, want context.Canceled", err)
+				}
+			} else {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != 128 {
+					t.Fatalf("malformed bool read=%v, want Git128", err)
+				}
+			}
+			after, readErr := os.ReadFile(configPath)
+			if readErr != nil || string(after) != string(before) {
+				t.Errorf("failed read changed config: %v", readErr)
+			}
+		})
+	}
+}

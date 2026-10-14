@@ -55,6 +55,7 @@ type Store interface {
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string) error
 	ClaimReviewChatController(ctx context.Context, reviewID, providerID, generation string, now time.Time) (bool, error)
+	UpdateReviewChatActivity(ctx context.Context, reviewID, generation string, state domain.ActivityState, now time.Time) (bool, error)
 	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
 	ConversationEditAnchor(ctx context.Context, conversationID, replacedTurnID string) (domain.ConversationEditAnchor, error)
 	RepairIncompleteConversationEdit(ctx context.Context, sessionID domain.SessionID, conversationID string, now time.Time) (domain.ConversationBranch, bool, error)
@@ -945,9 +946,37 @@ func nativeHistorySettleDelay(refresh int) time.Duration {
 // Re-running it is safe because history events carry stable identities and
 // ProjectProviderEvent deduplicates archive+projection together.
 func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.ChatEvent) error {
+	var reviewerLifecycle *ports.ChatEvent
 	for _, event := range events {
 		if _, _, err := c.projectEvent(ctx, event); err != nil {
 			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
+		}
+		if c.reviewID != "" && (event.ProviderConversationID == "" || event.ProviderConversationID == c.conv.ProviderConversationID()) &&
+			(event.Kind == ports.ChatEventTurnStarted || event.Kind == ports.ChatEventTurnCompleted) {
+			reviewerLifecycle = &event
+		}
+	}
+	if reviewerLifecycle != nil {
+		state := domain.ActivityActive
+		if reviewerLifecycle.Kind == ports.ChatEventTurnCompleted {
+			state = domain.ActivityIdle
+		}
+		pending, err := c.store.HasPendingConversationInteractions(ctx, c.conversation.ID)
+		if err != nil {
+			return err
+		}
+		// Reconciled failed turns retain error text, not its auth sentinel.
+		// Use the current account after replay, including explicit recovery.
+		c.mu.Lock()
+		reauthRequired := c.account.ReauthRequiredAt != nil
+		c.mu.Unlock()
+		if pending || reauthRequired {
+			state = domain.ActivityWaitingInput
+		}
+		// Native history can settle a previously lost terminal event. Reconcile
+		// only display activity; replay never drains queues or resolves decisions.
+		if _, err := c.store.UpdateReviewChatActivity(ctx, c.reviewID, c.generation, state, c.now()); err != nil {
+			return fmt.Errorf("reconcile reviewer native activity: %w", err)
 		}
 	}
 	return nil
@@ -960,6 +989,7 @@ func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.Ch
 type nativeHistoryTurn struct {
 	providerTurnID string
 	state          domain.TurnState
+	errorMessage   string
 	clientMessage  string
 	providerItem   string
 	text           string
@@ -1029,6 +1059,7 @@ func indexNativeHistoryTurns(
 		candidate := &nativeHistoryTurn{
 			providerTurnID: turn.ProviderTurnID,
 			state:          turn.State,
+			errorMessage:   turn.ErrorMessage,
 			messages:       make(map[string]int),
 			activities:     make(map[string]int),
 		}
@@ -1280,6 +1311,11 @@ func reconcileNativeHistory(
 		if event.Kind == ports.ChatEventTurnCompleted &&
 			event.TurnState == domain.TurnStateRecovered && knownTurnOutcome(candidate.state) {
 			event.TurnState = candidate.state
+			// Unknown replay outcomes must preserve the diagnostic along with the
+			// known failure. A concrete replay error remains authoritative.
+			if candidate.state == domain.TurnStateFailed && event.Err == nil && candidate.errorMessage != "" {
+				event.Err = errors.New(candidate.errorMessage)
+			}
 		}
 		reconciled = append(reconciled, event)
 	}
@@ -3745,7 +3781,13 @@ func (c *Controller) reportActivity(
 	event string,
 	now time.Time,
 ) {
-	if c.activity == nil || c.reviewID != "" {
+	if c.reviewID != "" {
+		if _, err := c.store.UpdateReviewChatActivity(ctx, c.reviewID, c.generation, state, now); err != nil {
+			c.log.Debug("reviewer chat activity signal rejected", "review", c.reviewID, "event", event, "error", err)
+		}
+		return
+	}
+	if c.activity == nil {
 		return
 	}
 	if err := c.activity.ApplyActivitySignal(ctx, c.sessionID, ports.ActivitySignal{

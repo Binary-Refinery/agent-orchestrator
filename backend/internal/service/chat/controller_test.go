@@ -7105,3 +7105,158 @@ func TestNativeConfigPostValidationAndObserverFailureStopController(t *testing.T
 		})
 	}
 }
+
+// Exercise the real service generation claim and lifecycle reconnect boundary.
+// Repair an obsolete exited marker without replaying or sending.
+func TestServiceLiveReconnectRepairsOnlyExitedActivity(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		completed      bool
+		wantController ports.ChatControllerState
+		wantActivity   domain.ActivityState
+		pending        domain.ActivityKind
+		auth           bool
+	}{
+		{"completed_root", true, ports.ChatControllerReady, domain.ActivityIdle, "", false},
+		{"running_root", false, ports.ChatControllerBusy, domain.ActivityActive, "", false},
+		{"approval_over_running", false, ports.ChatControllerBusy, domain.ActivityWaitingInput, domain.ActivityKindApproval, false},
+		{"input_over_running", false, ports.ChatControllerBusy, domain.ActivityWaitingInput, domain.ActivityKindUserInput, false},
+		{"auth_over_running", false, ports.ChatControllerBusy, domain.ActivityWaitingInput, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := openStore(t)
+			lcm := lifecycle.New(st, nil)
+			seed, found, err := st.GetSession(ctx, testSession)
+			if err != nil || !found {
+				t.Fatalf("seed owner: found=%v err=%v", found, err)
+			}
+			seed.Kind = domain.KindOrchestrator
+			if err := st.UpdateSession(ctx, seed); err != nil {
+				t.Fatal(err)
+			}
+			var nextID atomic.Int32
+			newID := func() string { return fmt.Sprintf("exited-probe-%d", nextID.Add(1)) }
+			seedProvider := &terminatingConversation{fakeConversation: newFakeConversation()}
+			seedService := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st, Reader: fullSnapshotReader(st), Activity: lcm,
+				Drivers: fakeRegistry{driver: fakeDriver{conv: seedProvider}},
+				Log:     slog.New(slog.DiscardHandler), NewID: newID,
+			})
+			seedController, err := seedService.Start(ctx, chatsvc.StartConfig{
+				SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, Kind: domain.KindOrchestrator,
+				WorkspacePath: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			turn, err := seedController.Send(ctx, ports.ChatUserMessage{Text: "retained original assignment"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			seedProvider.emit(ports.ChatEvent{
+				Kind: ports.ChatEventTurnStarted, ProviderTurnID: turn.ProviderTurnID,
+				ProviderConversationID: seedProvider.ProviderConversationID(),
+			})
+			h := &harness{st: st, ctrl: seedController}
+			h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+				return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+			})
+			if tc.completed {
+				seedProvider.emit(ports.ChatEvent{
+					Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID,
+					ProviderConversationID: seedProvider.ProviderConversationID(),
+					TurnState:              domain.TurnStateCompleted,
+				})
+				h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+					return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateCompleted
+				})
+			}
+			seedService.StopAll(ctx)
+			before, found, err := st.GetSession(ctx, testSession)
+			if err != nil || !found {
+				t.Fatalf("seed session: found=%v err=%v", found, err)
+			}
+			before.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Unix(100, 0).UTC()}
+			before.Metadata.ProviderConversationID = seedProvider.ProviderConversationID()
+			if err := st.UpdateSession(ctx, before); err != nil {
+				t.Fatal(err)
+			}
+			if tc.pending != "" {
+				if err := st.UpsertActivity(ctx, seedController.ConversationID(), "", domain.ConversationActivity{
+					ID: "retained-request", Kind: tc.pending, Status: domain.ActivityStatusPending,
+					RequestID: "retained-request-id", ProviderItemID: "retained-request-item",
+				}, time.Unix(101, 0).UTC()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.auth {
+				at := time.Unix(102, 0).UTC()
+				if err := st.RecordAccount(ctx, seedController.ConversationID(), domain.ConversationAccount{
+					ReauthRequiredAt: &at, ReauthReason: "actual retained auth demand",
+				}, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			beforeRows, err := st.LoadConversationSnapshot(ctx, seedController.ConversationID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &liveReconnectedConversation{nativeHistoryConversation: &nativeHistoryConversation{fakeConversation: newFakeConversation()}}
+			svc := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st, Reader: fullSnapshotReader(st), Activity: lcm,
+				Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+				Log:     slog.New(slog.DiscardHandler), NewID: newID,
+			})
+			t.Cleanup(func() { svc.StopAll(context.Background()) })
+			commits := 0
+			controller, err := svc.Start(ctx, chatsvc.StartConfig{
+				SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, Kind: domain.KindOrchestrator,
+				WorkspacePath: t.TempDir(), ProviderConversationID: seedProvider.ProviderConversationID(),
+				ControllerReady: func(result chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+					commits++
+					if !result.LiveReconnect {
+						t.Fatal("fixture did not enter actual LiveReconnect path")
+					}
+					return chatsvc.ControllerCommit{}, lcm.MarkChatReconnected(ctx, testSession, domain.SessionMetadata{
+						ProviderConversationID: result.ProviderConversationID, ControllerGeneration: result.ControllerGeneration,
+					})
+				},
+			})
+			if err != nil {
+				t.Fatalf("live reconnect: %v", err)
+			}
+			after, found, err := st.GetSession(ctx, testSession)
+			if err != nil || !found {
+				t.Fatalf("reconnected record: found=%v err=%v", found, err)
+			}
+			afterRows, err := st.LoadConversationSnapshot(ctx, controller.ConversationID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if controller.ConversationID() != seedController.ConversationID() || !reflect.DeepEqual(beforeRows.Turns, afterRows.Turns) || !reflect.DeepEqual(beforeRows.Messages, afterRows.Messages) || !reflect.DeepEqual(beforeRows.Activities, afterRows.Activities) {
+				t.Fatalf("reconnect changed original conversation/turn/message/activity rows")
+			}
+			if commits != 1 || after.IsTerminated || after.Metadata.ControllerGeneration != controller.Generation() || after.Metadata.ControllerGeneration == before.Metadata.ControllerGeneration {
+				t.Fatalf("current reconnect ownership invalid: commits=%d session=%+v", commits, after)
+			}
+			if controller.State() != tc.wantController {
+				t.Fatalf("controller=%s,want%s", controller.State(), tc.wantController)
+			}
+			beforeAfter := before
+			beforeAfter.Metadata.ControllerGeneration = after.Metadata.ControllerGeneration
+			beforeAfter.Revision = after.Revision
+			beforeAfter.Activity.State = after.Activity.State
+			if !reflect.DeepEqual(beforeAfter, after) {
+				t.Fatalf("reconnect changed unrelated lifecycle/recency facts: before=%+v after=%+v", beforeAfter, after)
+			}
+			if provider.historyReads() != 0 || provider.sendCallCount() != 0 {
+				t.Fatalf("live reconnect performed history/send: history=%d send=%d", provider.historyReads(), provider.sendCallCount())
+			}
+			t.Logf("liveReconnect=true controller=%s durableActivity=%s isTerminated=%v originalTurn=%s retainedTurnID=%s historyReads=%d reconnectSendCalls=%d commits=%d", controller.State(), after.Activity.State, after.IsTerminated, afterRows.Turns[0].State, afterRows.Turns[0].ID, provider.historyReads(), provider.sendCallCount(), commits)
+			if after.Activity.State != tc.wantActivity {
+				t.Errorf("durable activity=%q,want%q after verified live reconnect with controller=%s", after.Activity.State, tc.wantActivity, controller.State())
+			}
+		})
+	}
+}

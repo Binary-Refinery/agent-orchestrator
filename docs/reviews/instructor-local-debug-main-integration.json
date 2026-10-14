@@ -1,0 +1,166 @@
+{
+  "capturedUtc": "2026-10-14T15:18:24.1925563Z",
+  "scope": "Routine exact Main integration; no new implementation correction",
+  "reviewedParent": "86181fdc4ba5363bf92cb5d53fb23a6eecd940cb",
+  "incomingMain": "7c1263109dc9cffb91c6fd176a2bf3049f350ff0",
+  "sourceTreeBeforeDocumentation": "f3f938d9e9d657150084d0bf2c3ed6c559867ae1",
+  "sourceManifestSHA256": "cd647e0aa94c9dc14c9e2a29b14cf5d1ed102aa92f6eee9aad13e559837f1206",
+  "files": [
+    {
+      "path": "backend/internal/daemon/instructor_discovery.go",
+      "sha256": "ecb9fb3e95bcdd662f87d66ff2576e20d16cfc281063019c9233e0806ca4ffba",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/daemon/instructor_discovery_native_test.go",
+      "sha256": "0832f69f087c4939d8494b91aa74c95ac67a4e737e9017a19bae71fae8993564",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/service/chat/controller.go",
+      "sha256": "020489b91ffd32035b212a66a6bcb6b78c06eef465c230c33e3a96fc1e02beee",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/service/chat/provider_failure_history_test.go",
+      "sha256": "fc31494c736d58642d104118a93cdbca76103e07d518486fdbde0b690486d6c3",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/service/chat/reviewer_lifecycle_test.go",
+      "sha256": "48cb8a3f0b61145f0ecc1bb115be35891c31a908e679cfd5d09f2ef0a414f457",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/service/chat/semantic_delivery.go",
+      "sha256": "dae69b0a459cd46b5298dd78360d3c8099c30a0ffba5346ee742cba72a607d78",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/service/chat/semantic_delivery_race_test.go",
+      "sha256": "bd8ee5e1fb437129683e11c7563f011f39c20b4027ea02af9b6e49f58529aefa",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/gen/conversations.sql.go",
+      "sha256": "148a7035aa1fcab4390457c2b19a58d4120ef8a5a8eb8477d646d68e865498e8",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/gen/review.sql.go",
+      "sha256": "5d951a46fc0091afce54ca4c41fc2fa2e67b67e005177f47c67b2a19efb66712",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/queries/conversations.sql",
+      "sha256": "e2e84313b47ddd492dcb085b407aff2b8416be26bb11991e07e7c0b573488df7",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/queries/review.sql",
+      "sha256": "37d4c2345ca9d1a7917f520518a968369fe65a997adcd5f22662be1b341ada88",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/conversation_store.go",
+      "sha256": "d92b2b1d2db8bebd7ce66e410024a6acaa258b59d193d6907b50fc07951aaf2b",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/instructor_queue_revision_test.go",
+      "sha256": "ed9a88c64586712af729994de54c8182ff7bf5489f5926d45b45ccb912f48a40",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/instructor_queue_store.go",
+      "sha256": "988d8589724f047df7fe9fafcb136b41e80c9f2e1a5a56879fc72c7fc157abe2",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/review_store.go",
+      "sha256": "7a6b7050aa2d15c6892e5f990f2d03f5a1e55e959c1f8f215748c00552776bdf",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/reviewer_projection_store_test.go",
+      "sha256": "70e49636fcc0141a7b160eb29351a726d2a1a92eac9f88f38fca2a488fae4545",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "sha256": "b3827d98b20a281e5cbae1dbbf3e4b596af263380c6f99db5c547038ac2beebd",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_test.go",
+      "sha256": "bfd5dc12f85d4b5347a8d489337f0c549d4c506dd47966d0a0a4a75a48b9c1de",
+      "unchangedFromRound6": true
+    },
+    {
+      "path": "backend/internal/lifecycle/manager.go",
+      "sha256": "678dbb4d3729bdf29534c41fdd0655b721d4c0df61a65a8603030233cb1b432a",
+      "unchangedFromRound6": false,
+      "beforeSHA256": "2ee47c8bd5dddd6d3b8dbbb926fe8e03012632af0865cd2a97351d2ec4643bc0"
+    },
+    {
+      "path": "backend/internal/lifecycle/chat_reconnect_test.go",
+      "sha256": "c171bd01948a924a7a49b73b83eb5c2e674faed491a76a748bbf622c443f3965",
+      "unchangedFromRound6": false,
+      "beforeSHA256": "6f22dfa076f1cea7fd162a9ae93fec1f066b0b82a3c3ce93052d9b8ff122c63e"
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/session_store.go",
+      "sha256": "de9b46ea349204625a9a014e6571e9e770d62c0670d3b0334348480ebd03a384",
+      "unchangedFromRound6": false,
+      "beforeSHA256": "391142313c91b342074650d6a7269bf4efc75fe945f11de811a1c7572cf56318"
+    },
+    {
+      "path": "backend/internal/storage/sqlite/store/activity_revision_test.go",
+      "sha256": "a76109436e6e5a261a89b6fa483835b97a9dcdf1629005f0f5150df9c0a8cbd8",
+      "unchangedFromRound6": false,
+      "beforeSHA256": "e729d9ab3f5b6d901cd9dcf3f39492f6e507bff2ee364d26384e4068bb833f1c",
+      "initialCandidateSHA256": "fdd0cf42eb33f98a44f90c60e48622ebfe410d62b7705a8063d9de9e3411b97c"
+    },
+    {
+      "path": "backend/internal/service/chat/controller_test.go",
+      "sha256": "58acd60f62d3e1f9ef3194dd67e35da870901d82148346caa0e16cf3fea2ceb5",
+      "unchangedFromRound6": false,
+      "beforeSHA256": "03cbb605a5418d2622bc810fe5eab6f1996c45730df7d50cefa2a9d9a98440d6"
+    }
+  ],
+  "all23SourceBytesUnchanged": true,
+  "allProductionFilesUnchangedFromReviewedParent": true,
+  "inheritedMainTest": {
+    "path": "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+    "gitBlob": "78d9c0bc4374b52a095f4116f56cfe2a0c236365",
+    "sha256": "b70bc102de5d00eef7f36143ec6238dc52cdf6ebb085843fe0e8e06455091e4a"
+  },
+  "independentSourceTreeAuditSHA256": "177ddc16e67534efd25f9e811965c1f123cfbba9320fbe7de9809a3e822ab9c2",
+  "checksSummarySHA256": "6de839b5b73d705ceddf1a7ede2e9a4f7fd714103e5a6db21cabd1b10a41b5ab",
+  "independentFailureAssessmentSHA256": "91c5e3161f54672c8860e3bd5f6bfcf8ee08c6b7b6d18720a5bc4bbabe3a073d",
+  "checks": {
+    "focused": "FAIL1:30PASS/1FAIL leaves",
+    "fullWorkspace": "FAIL3:132PASS/3FAIL leaves",
+    "backendBuild": "PASS",
+    "workspaceVet": "PASS",
+    "staticLinuxLint": "PASS0; no nativeLinux execution"
+  },
+  "knownWindowsFailures": [
+    "TestEnableWorktreeConfigReturnsReadFailureWithoutChangingConfig: actualcleanMain7c sameassertion",
+    "TestWorkspaceIntegrationAutoRejectsUnmarkedRemotelessRepo: historicalcleanf60/sourceidenticalMain",
+    "TestWorkspaceIntegrationWorkspaceProjectCopiesAssetsAndCleansSessionCopy: historicalcleanf60/sourceidenticalMain"
+  ],
+  "newImplementationCorrectionRound": false,
+  "correctionBudgetReset": false,
+  "actualRunningBinarySHA256": "f059b8389d1956cfd546ce3229b6faeba1566460d147d12f79c86faf59319fe6",
+  "honestBinaryVCS": "3f251d8+modified; no new mergeHEAD build/run claimed",
+  "nativeProofReusableOnlyForIdenticalProduction": true,
+  "newPublicationAuthorized": false,
+  "explicitFailedChecksDraftExceptionRequired": true,
+  "governance": [
+    "AGENTS.md:154",
+    "RULEBOOK.md:89",
+    "RULEBOOK.md:163-164"
+  ],
+  "noReadinessPass": true
+}

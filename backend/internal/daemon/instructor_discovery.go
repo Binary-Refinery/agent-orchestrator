@@ -89,15 +89,22 @@ func (v instructorEvidenceVerifier) Discover(ctx context.Context, w domain.Instr
 			continue
 		}
 		base := domain.InstructorEvidence{Producer: id, Role: "worker"}
-		base.Kind = "attribution"
-		base.Ref = w.SHA
-		add(base)
-		path, err := v.attributionWorkspace(ctx, w, base)
-		if err == nil {
-			ref := fmt.Sprintf(".ao/task-packets/%s.md", w.ID)
-			if content, readErr := instructorReadGit(ctx, path, "show", w.SHA+":"+ref); readErr == nil && strings.TrimSpace(string(content)) != "" {
-				base.Kind, base.Ref = "task-packet", ref
-				add(base)
+		session, found, err := v.store.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			native := base
+			native.Harness, native.Model, native.Effort = string(session.Harness), session.Metadata.Model, session.Metadata.Effort
+			native.Kind, native.Ref = "attribution", w.SHA
+			add(native)
+			path, err := v.attributionWorkspace(ctx, w, native)
+			if err == nil {
+				ref := fmt.Sprintf(".ao/task-packets/%s.md", w.ID)
+				if content, readErr := instructorReadGit(ctx, path, "show", w.SHA+":"+ref); readErr == nil && strings.TrimSpace(string(content)) != "" {
+					native.Kind, native.Ref = "task-packet", ref
+					add(native)
+				}
 			}
 		}
 		prs, err := v.store.ListPRsBySession(ctx, id)

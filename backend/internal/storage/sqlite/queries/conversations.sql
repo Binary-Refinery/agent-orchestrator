@@ -578,6 +578,40 @@ SET state = 'failed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 
+-- Live-controller cleanup is narrower than startup orphan reconciliation:
+-- workers and each reviewer have independent controller owners.
+-- name: FailOwnedControllerActivities :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE status = 'running'
+  AND turn_id IN (
+    SELECT id FROM conversation_turns
+    WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+      AND handled_by_session_id = sqlc.arg(session_id)
+      AND handled_by_review_id IS sqlc.narg(review_id)
+      AND state IN ('queued', 'running')
+  );
+
+-- name: SettleOwnedControllerTurns :exec
+UPDATE conversation_turns
+SET state = 'failed', error_message = 'controller ended before the turn completed',
+    completed_at = sqlc.arg(completed_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND handled_by_session_id = sqlc.arg(session_id)
+  AND handled_by_review_id IS sqlc.narg(review_id)
+  AND state IN ('queued', 'running');
+
+-- name: FailOwnedControllerRequests :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE kind IN ('approval', 'user_input') AND status = 'pending'
+  AND turn_id IN (
+    SELECT id FROM conversation_turns
+    WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+      AND handled_by_session_id = sqlc.arg(session_id)
+      AND handled_by_review_id IS sqlc.narg(review_id)
+  );
+
 -- The running turns visible on the active branch, in the same order as the
 -- snapshot. Interrupt uses this exact projection when in-memory turn tracking
 -- has lost what the UI is showing; nested provider turns mean more than one row

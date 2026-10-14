@@ -124,6 +124,17 @@ func (s *Store) ClaimReviewChatController(ctx context.Context, id, providerID, g
 	return n > 0, err
 }
 
+// UpdateReviewChatActivity fences chat lifecycle updates to the current reviewer
+// controller, so they cannot change the worker or a replacement reviewer.
+func (s *Store) UpdateReviewChatActivity(ctx context.Context, id, generation string, state domain.ActivityState, now time.Time) (bool, error) {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	n, err := q.UpdateReviewChatActivity(ctx, gen.UpdateReviewChatActivityParams{
+		ID: id, Generation: generation, State: string(state), UpdatedAt: now,
+	})
+	return n > 0, err
+}
+
 // RecordReviewChatControllerError records the most recent controller failure.
 func (s *Store) RecordReviewChatControllerError(ctx context.Context, id, message string, now time.Time) (bool, error) {
 	s.writeMu.Lock()
