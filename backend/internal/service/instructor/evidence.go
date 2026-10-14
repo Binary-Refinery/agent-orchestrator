@@ -67,9 +67,6 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if len(profiles) == 0 {
 		profiles = []string{"push", "full"}
 	}
-	if err := validateCheckRequestDeadline(ctx, w, profiles); err != nil {
-		return w, err
-	}
 	checkStore, ok := s.deps.Store.(interface {
 		CaptureInstructorCheckProducer(context.Context, string, domain.SessionID) (domain.SessionRecord, domain.InstructorReportAdmission, bool, error)
 		ValidateInstructorCheckProducer(context.Context, domain.InstructorReportAdmission, domain.SessionRecord) error
@@ -88,6 +85,9 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		return w, invalid("checks cannot execute while work is paused or terminal")
 	}
 	if err := validateWorkExceptions(w, s.now()); err != nil {
+		return w, err
+	}
+	if err := validateCheckRequestDeadline(ctx, w, profiles); err != nil {
 		return w, err
 	}
 	instance := admission.InstanceID
