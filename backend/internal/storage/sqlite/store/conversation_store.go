@@ -1012,7 +1012,7 @@ func (s *Store) appendUserMessage(
 		}); err != nil {
 			return err
 		}
-		if msg.Origin == domain.MessageOriginHuman || msg.AuthoredByUser {
+		if reviewID == "" && (msg.Origin == domain.MessageOriginHuman || msg.AuthoredByUser) {
 			if _, err := q.RecordSessionHumanMessage(ctx, gen.RecordSessionHumanMessageParams{
 				ID:                 session,
 				LatestUserPrompt:   msg.Text,
@@ -1373,35 +1373,57 @@ func cleanupOwnedControllerWork(
 	conversationID, generation string,
 	now time.Time,
 ) (bool, error) {
-	owner, err := q.GetSession(ctx, session)
-	if err != nil {
-		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
+	owned, reviewID, err := conversationControllerOwned(ctx, q, conversationID, session, generation)
+	if err != nil || !owned {
+		return false, err
 	}
-	if owner.ControllerGeneration != generation {
-		return false, nil
-	}
-	if err := q.FailOrphanedConversationActivities(ctx,
-		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt: now, HandledBySessionID: session,
+	if err := q.FailOwnedControllerActivities(ctx,
+		gen.FailOwnedControllerActivitiesParams{
+			UpdatedAt: now, SessionID: session, ConversationID: conversationID,
+			ReviewID: reviewID,
 		}); err != nil {
-		return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+		return false, fmt.Errorf("settle owned activities for %s: %w", conversationID, err)
 	}
-	if err := q.SettleOrphanedConversationTurns(ctx,
-		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
-			HandledBySessionID: session,
+	if err := q.SettleOwnedControllerTurns(ctx,
+		gen.SettleOwnedControllerTurnsParams{
+			CompletedAt: sql.NullTime{Time: now, Valid: true},
+			SessionID:   session, ConversationID: conversationID, ReviewID: reviewID,
 		}); err != nil {
-		return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+		return false, fmt.Errorf("settle owned turns for %s: %w", conversationID, err)
 	}
-	if err := q.FailPendingConversationRequestsForSession(ctx,
-		gen.FailPendingConversationRequestsForSessionParams{
-			UpdatedAt:            now,
-			TargetConversationID: conversationID,
-			HandledBySessionID:   session,
+	if err := q.FailOwnedControllerRequests(ctx,
+		gen.FailOwnedControllerRequestsParams{
+			UpdatedAt: now, SessionID: session, ConversationID: conversationID,
+			ReviewID: reviewID,
 		}); err != nil {
-		return false, fmt.Errorf("fail pending requests for %s on %s: %w", session, conversationID, err)
+		return false, fmt.Errorf("fail owned requests for %s: %w", conversationID, err)
 	}
 	return true, nil
+}
+
+// Reviewers own their conversation generation separately from their worker.
+// Session/project controllers retain their session fence, including a retiring
+// orchestrator whose project conversation has already been rebound.
+func conversationControllerOwned(ctx context.Context, q *gen.Queries, conversationID string, session domain.SessionID, generation string) (bool, sql.NullString, error) {
+	conv, err := q.SelectConversationByID(ctx, conversationID)
+	if err != nil {
+		return false, sql.NullString{}, fmt.Errorf("read conversation owner for %s: %w", conversationID, err)
+	}
+	if conv.Scope == domain.ConversationScopeReview {
+		if !conv.CurrentReviewID.Valid {
+			return false, sql.NullString{}, nil
+		}
+		owner, err := q.GetReviewByID(ctx, conv.CurrentReviewID.String)
+		if err != nil {
+			return false, conv.CurrentReviewID, fmt.Errorf("read reviewer controller generation for %s: %w", conv.CurrentReviewID.String, err)
+		}
+		return owner.SessionID == session && owner.InterfaceMode == string(domain.ReviewerInterfaceChat) && owner.ControllerGeneration == generation, conv.CurrentReviewID, nil
+	}
+	owner, err := q.GetSession(ctx, session)
+	if err != nil {
+		return false, sql.NullString{}, fmt.Errorf("read controller generation for %s: %w", session, err)
+	}
+	return owner.ControllerGeneration == generation, sql.NullString{}, nil
 }
 
 // ListVisibleRunningTurnProviderIDs returns the same active-branch running turns,
@@ -2492,12 +2514,9 @@ func projectProviderEventTx(
 	now time.Time,
 	project func(context.Context) error,
 ) (bool, error) {
-	owner, err := q.GetSession(ctx, session)
-	if err != nil {
-		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
-	}
-	if owner.ControllerGeneration != generation {
-		return false, nil
+	owned, _, err := conversationControllerOwned(ctx, q, conversationID, session, generation)
+	if err != nil || !owned {
+		return false, err
 	}
 	inserted, err := q.InsertConversationProviderEvent(ctx, gen.InsertConversationProviderEventParams{
 		ConversationID:  conversationID,
@@ -3131,6 +3150,7 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		ID:             row.ID,
 		Scope:          row.Scope,
 		ProjectID:      projectIDValue(row.ProjectID),
+		ReviewID:       row.CurrentReviewID.String,
 		ActiveBranchID: row.ActiveBranchID,
 		LatestSequence: row.LatestSequence,
 		Settings: domain.ConversationSettings{
@@ -3282,6 +3302,7 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 		ConversationID:     row.ConversationID,
 		BranchID:           row.BranchID,
 		HandledBySessionID: row.HandledBySessionID,
+		HandledByReviewID:  row.HandledByReviewID.String,
 		ProviderTurnID:     row.ProviderTurnID,
 		State:              row.State,
 		ErrorMessage:       row.ErrorMessage,

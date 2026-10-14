@@ -45,6 +45,13 @@ WHERE id = ? AND interface_mode = 'chat';
 -- name: RecordReviewChatControllerError :execrows
 UPDATE review SET controller_error = ?, updated_at = ? WHERE id = ? AND interface_mode = 'chat';
 
+-- Chat lifecycle signals use their controller generation, independently of
+-- the launch identifiers used by terminal reviewer hooks.
+-- name: UpdateReviewChatActivity :execrows
+UPDATE review SET reviewer_activity_state = sqlc.arg(state), updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id) AND interface_mode = 'chat'
+  AND controller_generation = sqlc.arg(generation);
+
 -- name: ClearReviewChatController :execrows
 UPDATE review SET controller_generation = '', updated_at = ? WHERE id = ? AND interface_mode = 'chat';
 

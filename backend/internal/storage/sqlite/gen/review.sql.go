@@ -1033,6 +1033,34 @@ func (q *Queries) UpdateReviewAgentSessionID(ctx context.Context, arg UpdateRevi
 	return result.RowsAffected()
 }
 
+const updateReviewChatActivity = `-- name: UpdateReviewChatActivity :execrows
+UPDATE review SET reviewer_activity_state = ?1, updated_at = ?2
+WHERE id = ?3 AND interface_mode = 'chat'
+  AND controller_generation = ?4
+`
+
+type UpdateReviewChatActivityParams struct {
+	State      string
+	UpdatedAt  time.Time
+	ID         string
+	Generation string
+}
+
+// Chat lifecycle signals use their controller generation, independently of
+// the launch identifiers used by terminal reviewer hooks.
+func (q *Queries) UpdateReviewChatActivity(ctx context.Context, arg UpdateReviewChatActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateReviewChatActivity,
+		arg.State,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
 UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ?, auto_inject_review = ? WHERE id = ? AND status = 'running'
 `

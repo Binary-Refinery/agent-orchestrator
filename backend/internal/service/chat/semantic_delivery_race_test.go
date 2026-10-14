@@ -3,9 +3,11 @@ package chat_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -43,14 +45,18 @@ func (s *receiptReadInterleavingStore) GetSemanticDelivery(ctx context.Context, 
 
 func TestSemanticChatReceiptCommittedBetweenReceiptAndTerminalReads(t *testing.T) {
 	for _, scenario := range []struct {
-		name          string
-		outcome       domain.TurnState
-		cancelReceipt bool
-		hideReceipt   bool
-		readError     error
+		name           string
+		outcome        domain.TurnState
+		cancelReceipt  bool
+		hideReceipt    bool
+		readError      error
+		providerError  string
+		expectedDetail string
 	}{
 		{name: "accepted completion", outcome: domain.TurnStateCompleted},
 		{name: "failed native turn remains pending", outcome: domain.TurnStateFailed},
+		{name: "failed native turn retains provider diagnostic", outcome: domain.TurnStateFailed, providerError: "ACP session/prompt: invalid parameters (HTTP 400)"},
+		{name: "provider diagnostic is bounded without splitting Unicode", outcome: domain.TurnStateFailed, providerError: strings.Repeat("ä", 2048) + "MUST_NOT_APPEAR", expectedDetail: strings.Repeat("ä", 2048)},
 		{name: "cancelled native turn remains pending", outcome: domain.TurnStateCancelled},
 		{name: "cancelled receipt cannot prove acceptance", outcome: domain.TurnStateFailed, cancelReceipt: true},
 		{name: "missing receipt cannot prove acceptance", outcome: domain.TurnStateCompleted, hideReceipt: true},
@@ -75,7 +81,11 @@ func TestSemanticChatReceiptCommittedBetweenReceiptAndTerminalReads(t *testing.T
 				if err != nil || turn.ProviderTurnID == "" {
 					t.Fatalf("durable native binding: %+v error=%v", turn, err)
 				}
-				provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID, TurnState: outcome})
+				var providerError error
+				if scenario.providerError != "" {
+					providerError = errors.New(scenario.providerError)
+				}
+				provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID, TurnState: outcome, Err: providerError})
 				deadline := time.Now().Add(2 * time.Second)
 				for {
 					current, err := h.st.TurnByID(ctx, turn.ID)
@@ -114,6 +124,27 @@ func TestSemanticChatReceiptCommittedBetweenReceiptAndTerminalReads(t *testing.T
 			}
 			if scenario.readError != nil && !errors.Is(err, scenario.readError) {
 				t.Fatalf("receipt read failure was hidden: %v", err)
+			}
+			if scenario.providerError != "" {
+				expectedDetail := scenario.expectedDetail
+				if expectedDetail == "" {
+					expectedDetail = scenario.providerError
+				}
+				for attempt := range 3 {
+					if attempt > 0 {
+						receipt, err = h.svc.RelaySemanticChatTurn(context.Background(), testSession, "exact native task", "fast-native-result")
+					}
+					if !errors.Is(err, ports.ErrSemanticDeliveryUncertain) || !strings.HasSuffix(err.Error(), expectedDetail) || !utf8.ValidString(err.Error()) {
+						t.Fatalf("provider failure detail lost or promoted to acceptance: receipt=%+v error=%v", receipt, err)
+					}
+					if scenario.expectedDetail != "" && strings.Contains(err.Error(), "MUST_NOT_APPEAR") {
+						t.Fatal("provider diagnostic exceeded the 2048 character limit")
+					}
+				}
+				stored, found, readErr := h.st.GetSemanticDelivery(context.Background(), testSession, "fast-native-result")
+				if readErr != nil || !found || stored.State != "pending" {
+					t.Fatalf("failed native turn produced acceptance: %+v, %v", stored, readErr)
+				}
 			}
 			if provider.sendCallCount() != 1 {
 				t.Fatal("receipt observation resubmitted native work")

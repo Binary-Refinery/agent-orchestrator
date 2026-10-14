@@ -601,6 +601,67 @@ func (q *Queries) FailOrphanedConversationActivities(ctx context.Context, arg Fa
 	return err
 }
 
+const failOwnedControllerActivities = `-- name: FailOwnedControllerActivities :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?1
+WHERE status = 'running'
+  AND turn_id IN (
+    SELECT id FROM conversation_turns
+    WHERE conversation_turns.conversation_id = ?2
+      AND handled_by_session_id = ?3
+      AND handled_by_review_id IS ?4
+      AND state IN ('queued', 'running')
+  )
+`
+
+type FailOwnedControllerActivitiesParams struct {
+	UpdatedAt      time.Time
+	ConversationID string
+	SessionID      domain.SessionID
+	ReviewID       sql.NullString
+}
+
+// Live-controller cleanup is narrower than startup orphan reconciliation:
+// workers and each reviewer have independent controller owners.
+func (q *Queries) FailOwnedControllerActivities(ctx context.Context, arg FailOwnedControllerActivitiesParams) error {
+	_, err := q.db.ExecContext(ctx, failOwnedControllerActivities,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.SessionID,
+		arg.ReviewID,
+	)
+	return err
+}
+
+const failOwnedControllerRequests = `-- name: FailOwnedControllerRequests :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?1
+WHERE kind IN ('approval', 'user_input') AND status = 'pending'
+  AND turn_id IN (
+    SELECT id FROM conversation_turns
+    WHERE conversation_turns.conversation_id = ?2
+      AND handled_by_session_id = ?3
+      AND handled_by_review_id IS ?4
+  )
+`
+
+type FailOwnedControllerRequestsParams struct {
+	UpdatedAt      time.Time
+	ConversationID string
+	SessionID      domain.SessionID
+	ReviewID       sql.NullString
+}
+
+func (q *Queries) FailOwnedControllerRequests(ctx context.Context, arg FailOwnedControllerRequestsParams) error {
+	_, err := q.db.ExecContext(ctx, failOwnedControllerRequests,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.SessionID,
+		arg.ReviewID,
+	)
+	return err
+}
+
 const failPendingConversationApprovals = `-- name: FailPendingConversationApprovals :exec
 UPDATE conversation_activities
 SET status = 'failed', revision = revision + 1, updated_at = ?
@@ -3530,6 +3591,33 @@ type SettleOrphanedConversationTurnsParams struct {
 // completed.
 func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg SettleOrphanedConversationTurnsParams) error {
 	_, err := q.db.ExecContext(ctx, settleOrphanedConversationTurns, arg.CompletedAt, arg.HandledBySessionID)
+	return err
+}
+
+const settleOwnedControllerTurns = `-- name: SettleOwnedControllerTurns :exec
+UPDATE conversation_turns
+SET state = 'failed', error_message = 'controller ended before the turn completed',
+    completed_at = ?1
+WHERE conversation_id = ?2
+  AND handled_by_session_id = ?3
+  AND handled_by_review_id IS ?4
+  AND state IN ('queued', 'running')
+`
+
+type SettleOwnedControllerTurnsParams struct {
+	CompletedAt    sql.NullTime
+	ConversationID string
+	SessionID      domain.SessionID
+	ReviewID       sql.NullString
+}
+
+func (q *Queries) SettleOwnedControllerTurns(ctx context.Context, arg SettleOwnedControllerTurnsParams) error {
+	_, err := q.db.ExecContext(ctx, settleOwnedControllerTurns,
+		arg.CompletedAt,
+		arg.ConversationID,
+		arg.SessionID,
+		arg.ReviewID,
+	)
 	return err
 }
 

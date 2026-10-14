@@ -163,6 +163,9 @@ func (s *Service) RelaySemanticChatTurn(ctx context.Context, id domain.SessionID
 			if found && current.State == "accepted" {
 				return current, nil
 			}
+			if turn.ErrorMessage != "" {
+				return receipt, fmt.Errorf("%w: Chat turn ended without observed native acceptance: %.2048s", ports.ErrSemanticDeliveryUncertain, turn.ErrorMessage)
+			}
 			return receipt, fmt.Errorf("%w: Chat turn ended without observed native acceptance", ports.ErrSemanticDeliveryUncertain)
 		}
 		if turn.State == domain.TurnStateQueued {
