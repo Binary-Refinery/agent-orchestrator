@@ -48,7 +48,8 @@ export function defineTool<S extends z.ZodRawShape>(
 const rank: Record<Role, number> = {observer: 0, operator: 1, developer: 2};
 
 export function requireRole(access: Access, role: Role): void {
-  if (rank[access.role] < rank[role]) {
+  if (typeof access.role !== 'string' || !Object.hasOwn(rank, access.role)
+      || typeof role !== 'string' || !Object.hasOwn(rank, role) || rank[access.role] < rank[role]) {
     throw new AdapterError('FORBIDDEN', `This tool requires the ${role} profile.`);
   }
 }

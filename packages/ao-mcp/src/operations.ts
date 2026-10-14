@@ -118,8 +118,21 @@ function observationFailure(error: unknown): Record<string, unknown> {
 
 function normalize(value: string): string { return value.trim().toLocaleLowerCase('en-US'); }
 
+async function scopedCommandResponse<T>(request: () => Promise<T>): Promise<T> {
+  try { return await request(); }
+  catch (error) {
+    // Command admission can resolve a work against an older portfolio snapshot.
+    // Its validation message may enumerate every captured work, including work
+    // outside this adapter's scope. Preserve diagnostics, never that raw text.
+    if (error instanceof DaemonError) {
+      throw new DaemonError(error.code, 'The scoped Instructor command failed. Inspect the requested work and snapshot before retrying.', error.status, error.requestId);
+    }
+    throw error;
+  }
+}
+
 async function resolveAction(client: DaemonClient, command: string, work?: Record<string, unknown>): Promise<string> {
-  const response = record(await client.get('/api/v1/instructor/commands'));
+  const response = record(await scopedCommandResponse(() => client.get('/api/v1/instructor/commands')));
   const registry = objects(response.commands);
   // The daemon re-resolves a selected work against its pinned policy registry.
   if (work?.policy) registry.push(...objects(record(work.policy).commands));
@@ -206,13 +219,13 @@ export function operationTools(client: DaemonClient, access: Access): ToolDefini
         return result;
       }),
     defineTool('ao_create_work', 'Register manual work in one configured project against an explicit snapshot. Keep the complete request, key and stable sourceRef on retry; the daemon deduplicates intake by project/source/sourceRef, not the command key. Does not start an agent.', 'operator', false,
-      z.strictObject({projectId: identifier, name: z.string().trim().min(1).max(120), goal: z.string().trim().min(1).max(8192), sourceRef: identifier, snapshotId: identifier, idempotencyKey: identifier}),
+      z.strictObject({projectId: identifier, name: z.string().trim().min(1).max(120), goal: z.string().trim().min(1).max(8192), sourceRef: z.string().min(1).max(180), snapshotId: identifier, idempotencyKey: identifier}),
       async ({projectId, name, goal, sourceRef, snapshotId, idempotencyKey}) => {
         requireRole(access, 'operator');
         assertProject(access, projectId);
         const action = await resolveAction(client, 'neu');
         if (action !== 'neu') throw new AdapterError('COMMAND_NOT_ALLOWED', 'The registered intake command has an unexpected action.');
-        const result = await client.post('/api/v1/instructor/commands', {command: action, snapshotId, idempotencyKey, new: {projectId, name, goal, source: 'manual', sourceRef}});
+        const result = await scopedCommandResponse(() => client.post('/api/v1/instructor/commands', {command: action, snapshotId, idempotencyKey, new: {projectId, name, goal, source: 'manual', sourceRef}}));
         return {...projectResult(result, projectId, (work) => work.source === 'manual' && work.sourceRef === sourceRef), intakeDeduplication: 'project/source/sourceRef'};
       }),
     defineTool('ao_work_command', 'Continue, pause or cancel exactly one authorized work using an exact registered name or alias. Requires the original captured snapshot and stable key; never grants approvals or publication authority. HTTP acceptance does not prove execution.', 'operator', false,
@@ -223,7 +236,7 @@ export function operationTools(client: DaemonClient, access: Access): ToolDefini
         const work = record(details.work);
         const action = await resolveAction(client, command, work);
         if (!allowedActions.has(action)) throw new AdapterError('COMMAND_NOT_ALLOWED', 'Only continue, pause and cancel actions are exposed by this adapter.');
-        const result = await client.post('/api/v1/instructor/commands', {command: action, snapshotId, workIds: [workId], idempotencyKey});
+        const result = await scopedCommandResponse(() => client.post('/api/v1/instructor/commands', {command: action, snapshotId, workIds: [workId], idempotencyKey}));
         return projectResult(result, work.projectId as string, (item) => item.id === workId, workId);
       }, true),
   ];

@@ -11,6 +11,7 @@ import {Client} from '@modelcontextprotocol/client';
 import {InMemoryTransport} from '@modelcontextprotocol/server';
 import {createAOMcpServer} from '../src/index.js';
 import {record} from '../src/core.js';
+import {DaemonClient, DaemonError} from '../src/daemon.js';
 
 const binary = process.env.AO_MCP_TEST_DAEMON;
 const run = promisify(execFile);
@@ -196,6 +197,21 @@ test('real isolated AO daemon supports scoped MCP observation and manual intake'
   assert.deepEqual(trace.dispatches, []);
   assert.deepEqual(record(trace.work).sessionIds, []);
   assert.equal(JSON.stringify(trace).includes('publicationGrants'), false);
+  const direct = new DaemonClient({url: origin});
+  const fenced = `/api/v1/instructor/works/${work.id}/sessions/missing-session/workspace`;
+  await assert.rejects(direct.get(`${fenced}/file?path=main.ts`), (error: unknown) =>
+    error instanceof DaemonError && error.status === 400 && error.code === 'INSTRUCTOR_WORKSPACE_SCOPE_REQUIRED');
+  const scope = '?projectId=mcp-smoke&instanceId=missing-instance';
+  for (const request of [
+    () => direct.get(`${fenced}/tree${scope}`),
+    () => direct.get(`${fenced}/search${scope}&query=main`),
+    () => direct.get(`${fenced}/file${scope}&path=main.ts`),
+    () => direct.post(`${fenced}/diffs${scope}`, {paths: ['main.ts']}),
+    () => direct.put(`${fenced}/file${scope}`, {path: 'main.ts', content: 'must-not-write', expectedFileFingerprint: 'missing'}),
+  ]) {
+    await assert.rejects(request(), (error: unknown) => error instanceof DaemonError
+      && error.status === 409 && error.code === 'INSTRUCTOR_WORKSPACE_SCOPE_CHANGED');
+  }
   const forbidden = await client.callTool({name: 'ao_work_command', arguments: {
     workId: work.id, command: 'go', snapshotId: initial.id, idempotencyKey: 'forbidden-human-gate',
   }});

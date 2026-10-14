@@ -17,6 +17,7 @@ export interface AuditEvent {
 export type AuditSink = (event: AuditEvent) => void;
 
 export function createToolCatalog(client: DaemonClient, access: Access): ToolDefinition[] {
+  requireRole(access, 'observer');
   return [...operationTools(client, access), ...developmentTools(client, access)].filter((tool) => {
     try { requireRole(access, tool.role); return true; }
     catch { return false; }

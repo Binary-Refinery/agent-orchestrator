@@ -105,11 +105,45 @@ export async function scopedSession(
   if (!Array.isArray(work.sessionIds) || !work.sessionIds.includes(sessionId)) {
     throw new AdapterError('OUT_OF_SCOPE', 'The session is not attached to the requested work.');
   }
+  // Display IDs are reusable. Historical work.sessionIds alone cannot authorize
+  // a replacement row, and /members is only a preflight (atomic:false).
+  const members = record(await client.get(`/api/v1/instructor/works/${encodeURIComponent(workId)}/members`));
+  if (members.workId !== workId || members.projectId !== work.projectId || !Array.isArray(members.members)) {
+    throw new AdapterError('DAEMON_CONTRACT', 'The daemon returned a different work membership snapshot.');
+  }
+  const current = members.members.map(record).filter((member) => member.kind === 'session'
+    && member.sessionId === sessionId && member.association === 'current');
+  const member = current[0];
+  if (current.length !== 1 || !member || typeof member.instanceId !== 'string' || !member.instanceId) {
+    throw new AdapterError('OUT_OF_SCOPE', 'The session has no proven current membership in the requested work.');
+  }
+  const target = record(member.openTarget);
+  if (target.kind !== 'session' || target.sessionId !== sessionId || target.projectId !== work.projectId) {
+    throw new AdapterError('OUT_OF_SCOPE', 'The session membership does not authorize the requested project.');
+  }
   const response = record(await client.get(`/api/v1/sessions/${encodeURIComponent(sessionId)}`));
   const session = record(response.session);
   assertProject(access, session.projectId);
   if (session.id !== sessionId || session.projectId !== work.projectId) {
     throw new AdapterError('OUT_OF_SCOPE', 'The session does not belong to the requested work project.');
   }
-  return session;
+  // The fenced workspace route verifies this identity atomically under its
+  // lifecycle lease. A replacement between these reads cannot pass that guard.
+  return {...session, instanceId: member.instanceId};
+}
+
+/** Distinct paths fail closed on older daemons; never fall back to SID-only I/O. */
+export function scopedWorkspacePath(
+  workId: string, sessionId: string, session: Record<string, unknown>,
+  suffix: 'tree' | 'search' | 'file' | 'diffs', query: Record<string, string | number | undefined> = {},
+): string {
+  if (session.id !== sessionId || typeof session.projectId !== 'string' || !session.projectId
+      || typeof session.instanceId !== 'string' || !session.instanceId) {
+    throw new AdapterError('DAEMON_CONTRACT', 'A proven session incarnation is required for workspace access.');
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+  params.set('projectId', session.projectId);
+  params.set('instanceId', session.instanceId);
+  return `/api/v1/instructor/works/${encodeURIComponent(workId)}/sessions/${encodeURIComponent(sessionId)}/workspace/${suffix}?${params}`;
 }

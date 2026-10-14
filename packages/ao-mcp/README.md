@@ -76,9 +76,12 @@ provider or touch the user's AO data. The dedicated CI workflow builds its own
 test executable and sets the variable; a skipped local test is not live-runtime
 acceptance.
 
-Workspace updates require the daemon's expected file fingerprint and target an
-existing editable text file. Check execution selects existing approved profile
-names and runs repository code; it is not an OS sandbox. Checks require a
+Workspace access requires a matching daemon version with incarnation-scoped
+routes; older versions fail closed. Updates require the daemon's expected file
+fingerprint and target an existing editable text file. Check execution selects
+existing approved profile names and runs repository code; it is not an OS
+sandbox. Batches are limited to 45 seconds of configured profile timeouts; the
+daemon also validates its actual request deadline. Checks require a
 daemon-managed worker and clean committed source. An authorized worker or local
 development client must commit an edit; the adapter has no commit/install/restart
 tool. Protected human

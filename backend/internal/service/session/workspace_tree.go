@@ -194,7 +194,7 @@ func sortWorkspaceTreeEntries(entries []WorkspaceTreeEntry) {
 }
 
 func (s *Service) listWorkspaceProjectTree(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, dir string) (WorkspaceTree, error) {
-	rows, err := s.store.ListSessionWorktrees(ctx, rec.ID)
+	rows, err := s.sessionWorkspaceWorktrees(ctx, rec.ID)
 	if err != nil {
 		return WorkspaceTree{}, fmt.Errorf("list workspace project rows: %w", err)
 	}

@@ -151,6 +151,49 @@ test('stale snapshot errors retain daemon code, status and request ID without re
   assert.equal(f.calls.some((call) => call.path.includes('/status')), false);
 });
 
+test('a snapshot predating an authorized work cannot leak portfolio choices through command errors', async (t) => {
+  const leakedMessage = 'work reference work-one matched 0 works; choose: foreign-private-name [work-other], foreign-secret-project [work-confidential]';
+  const f = await fixture(t, (call) => call.method === 'POST' ? {status: 400, body: {
+    code: 'INSTRUCTOR_VALIDATION', message: leakedMessage, requestId: 'pre-intake-snapshot-request',
+  }} : standard(call));
+  for (const [name, input] of [
+    ['ao_work_command', {...commandInput, snapshotId: 'snapshot-before-work-existed'}],
+    ['ao_create_work', {...intakeInput, snapshotId: 'snapshot-before-work-existed'}],
+  ] as const) {
+    await assert.rejects(f.execute(name, input), (error: unknown) => {
+      assert.ok(error instanceof DaemonError);
+      assert.equal(error.code, 'INSTRUCTOR_VALIDATION');
+      assert.equal(error.status, 400);
+      assert.equal(error.requestId, 'pre-intake-snapshot-request');
+      assert.match(error.message, /scoped Instructor command failed/);
+      for (const marker of ['foreign-private-name', 'work-other', 'foreign-secret-project', 'work-confidential']) {
+        assert.equal(`${String(error)} ${JSON.stringify(error)}`.includes(marker), false, marker);
+      }
+      assert.equal(error.cause, undefined, 'The raw out-of-scope error must not be retained as a cause.');
+      return true;
+    });
+  }
+  const writes = f.calls.filter((call) => call.method === 'POST');
+  assert.equal(writes.length, 2, 'Each explicit call makes one attempt, without automatic retry.');
+  assert.ok(writes.every((call) => call.body?.snapshotId === 'snapshot-before-work-existed'));
+  assert.ok(writes.every((call) => call.body?.idempotencyKey === 'intent-original'));
+});
+
+test('command registry errors also preserve envelope metadata without exposing raw daemon text', async (t) => {
+  const f = await fixture(t, (call) => call.path === '/api/v1/instructor/commands' ? {status: 503, body: {
+    code: 'INSTRUCTOR_UNAVAILABLE', message: 'foreign-private-policy registry unavailable', requestId: 'registry-request',
+  }} : standard(call));
+  await assert.rejects(f.execute('ao_work_command', commandInput), (error: unknown) => {
+    assert.ok(error instanceof DaemonError);
+    assert.equal(error.code, 'INSTRUCTOR_UNAVAILABLE');
+    assert.equal(error.status, 503);
+    assert.equal(error.requestId, 'registry-request');
+    assert.equal(error.message.includes('foreign-private-policy'), false);
+    return true;
+  });
+  assert.equal(f.calls.some((call) => call.method === 'POST'), false);
+});
+
 test('manual intake sends explicit provenance and never exposes a returned portfolio', async (t) => {
   const created = {...work, sourceRef: 'intake-original'};
   const f = await fixture(t, (call) => call.method === 'POST' ? {body: {snapshot: {id: 'snapshot-after', works: [created, foreignWork, {...work, id: 'other-own-work', sourceRef: 'different-intake'}],
@@ -163,6 +206,37 @@ test('manual intake sends explicit provenance and never exposes a returned portf
   assert.equal(result.execution, 'unknown');
   assert.equal((result.snapshot as {works: unknown[]}).works.length, 1);
   for (const forbidden of ['foreign-private', 'different-intake', 'portfolio-secret', 'metrics', 'recoveries']) assert.equal(JSON.stringify(result).includes(forbidden), false);
+});
+
+test('manual source references are opaque and retain slash, spaces and exact deduplication identity', async (t) => {
+  const identities = new Map<string, string>();
+  const f = await fixture(t, (call) => {
+    if (call.method !== 'POST') return standard(call);
+    const intake = call.body?.new as {sourceRef: string};
+    const sourceRef = intake.sourceRef;
+    let id = identities.get(sourceRef);
+    if (!id) {id = `work-intake-${identities.size + 1}`; identities.set(sourceRef, id);}
+    return {body: {snapshot: {id: 'snapshot-after', works: [{...work, id, sourceRef}]}, dispatches: [], skipped: []}};
+  });
+  for (const sourceRef of ['ticket/123', 'Distinct name', ' Distinct name ', 'Distinct name ']) {
+    const input = {...intakeInput, sourceRef};
+    const first = await f.execute('ao_create_work', input);
+    const replay = await f.execute('ao_create_work', input);
+    const firstWork = ((first.snapshot as {works: typeof work[]}).works)[0];
+    const replayWork = ((replay.snapshot as {works: typeof work[]}).works)[0];
+    assert.equal(firstWork?.sourceRef, sourceRef);
+    assert.equal(replayWork?.sourceRef, sourceRef);
+    assert.equal(firstWork?.id, replayWork?.id);
+    const writes = f.calls.filter((call) => call.method === 'POST').slice(-2);
+    assert.ok(writes.every((call) => (call.body?.new as {sourceRef: string}).sourceRef === sourceRef));
+  }
+  assert.equal(identities.size, 4, 'Whitespace-distinct references must not be merged by adapter normalization.');
+});
+
+test('manual source references reject empty and oversized values before any daemon request', async (t) => {
+  const f = await fixture(t, standard);
+  for (const sourceRef of ['', 'x'.repeat(181)]) await assert.rejects(f.execute('ao_create_work', {...intakeInput, sourceRef}));
+  assert.equal(f.calls.length, 0);
 });
 
 test('work command filters a mixed command result down to its exact work', async (t) => {

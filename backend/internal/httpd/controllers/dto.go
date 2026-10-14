@@ -49,6 +49,13 @@ type InstructorProjectIDParam struct {
 	ProjectID string `path:"projectId"`
 }
 
+// InstructorWorkspaceScopeQuery is mandatory even though the session display
+// ID appears in the path: display IDs may be reused for a different row.
+type InstructorWorkspaceScopeQuery struct {
+	ProjectID  string `query:"projectId" required:"true" minLength:"1" description:"Expected registered project owning both the work and session."`
+	InstanceID string `query:"instanceId" required:"true" minLength:"1" description:"Immutable current work-member session instance captured from the Instructor members endpoint."`
+}
+
 // InstructorIssueCandidatesQuery optionally previews any exact issue number,
 // including issues outside the bounded first-page backlog observation.
 type InstructorIssueCandidatesQuery struct {

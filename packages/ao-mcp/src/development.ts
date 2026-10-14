@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import * as z from 'zod/v4';
 import {AdapterError, assertProject, defineTool, identifier, record, requireRole, type Access, type ToolDefinition} from './core.js';
-import {DaemonClient, DaemonError, scopedSession, scopedWork} from './daemon.js';
+import {DaemonClient, DaemonError, scopedSession, scopedWork, scopedWorkspacePath} from './daemon.js';
 
 // The daemon remains responsible for symlink confinement, ignored files and
 // optimistic updates. These paths deliberately work identically on Windows/Linux.
@@ -12,7 +12,15 @@ const relativePath = z.string().min(1).max(4096).refine((value) =>
 const fingerprint = z.string().trim().min(1).max(512);
 const scope = z.enum(['combined', 'committed', 'staged', 'unstaged', 'untracked']);
 const sessionInput = {workId: identifier, sessionId: identifier};
+// Policy keys are opaque strings, not resource IDs. Match the daemon's reserved
+// evidence names while preserving spaces, slashes, Unicode and exact spelling.
+const reservedProfileNames = new Set(['task-packet', 'ci', 'ci-failed', 'review-report', 'triage', 'delta', 'delta-changes', 'attribution', 'traceability']);
+const profileName = z.string().min(1).max(512).refine((name) => !reservedProfileNames.has(name), 'Business evidence names cannot be check profiles.');
 const fileFields = ['sessionId', 'path', 'previousPath', 'status', 'additions', 'deletions', 'size', 'binary', 'deleted', 'editable', 'content', 'contentTruncated', 'diff', 'diffTruncated', 'compareBaseSha', 'compareBaseRef', 'compareMode', 'workspaceVersion', 'fileFingerprint'];
+// The existing checks endpoint uses the daemon's ordinary 60-second REST
+// deadline. A background MCP handle does not make that HTTP operation durable.
+const maxCheckSeconds = 45;
+const checkTimeoutMarginSeconds = 10;
 
 export interface CheckJob {
   jobId: string;
@@ -30,8 +38,13 @@ export interface CheckJob {
 interface OwnedCheckJob extends CheckJob {principal: string}
 interface WorkspaceEdit {workId: string; sessionId: string; state: 'running' | 'uncertain'}
 
-function definiteRejection(error: unknown): boolean {
-  return error instanceof DaemonError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
+function definiteWorkspaceRejection(error: unknown): boolean {
+  // These exact endpoint contracts reject before file replacement. A generic
+  // 400/404 may instead come from the refreshed read after a completed write.
+  return error instanceof DaemonError && (
+    error.status === 409 && ['WORKSPACE_FILE_STALE', 'INSTRUCTOR_WORKSPACE_SCOPE_CHANGED', 'INSTRUCTOR_WORKSPACE_BUSY'].includes(error.code)
+    || error.status === 400 && error.code === 'INSTRUCTOR_WORKSPACE_SCOPE_REQUIRED'
+  );
 }
 
 /** Process-local handles; AO's durable work/evidence remains the source of truth. */
@@ -70,7 +83,7 @@ export class CheckJobs {
     const edit: WorkspaceEdit = {workId, sessionId, state: 'running'};
     this.edits.set(id, edit);
     return (error?: unknown) => {
-      if (error === undefined || definiteRejection(error)) this.edits.delete(id);
+      if (error === undefined || definiteWorkspaceRejection(error)) this.edits.delete(id);
       else edit.state = 'uncertain';
     };
   }
@@ -97,8 +110,9 @@ export class CheckJobs {
       job.state = 'completed';
       job.finishedAt = new Date().toISOString();
     }, (error: unknown) => {
-      // A timeout can follow admission. Retain the lock and never retry it.
-      job.state = definiteRejection(error) ? 'failed' : 'uncertain';
+      // Only this exact daemon preflight contract certifies no admission or
+      // effects. Other 400/409 responses can follow already executed profiles.
+      job.state = error instanceof DaemonError && error.status === 400 && error.code === 'INSTRUCTOR_CHECKS_DEADLINE_PREEXECUTION' ? 'failed' : 'uncertain';
       job.error = error instanceof AdapterError
         ? {code: error.code, message: error.message, ...(error instanceof DaemonError ? {status: error.status, requestId: error.requestId} : {})}
         : {code: 'CHECK_JOB_FAILED', message: 'The check request failed; inspect the AO work for authoritative evidence.'};
@@ -117,13 +131,6 @@ function jobsFor(client: DaemonClient): CheckJobs {
   let jobs = daemonCheckJobs.get(key);
   if (!jobs) { jobs = new CheckJobs(); daemonCheckJobs.set(key, jobs); }
   return jobs;
-}
-
-function workspaceURL(sessionId: string, suffix: string, query: Record<string, string | number | undefined> = {}): string {
-  const parameters = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) if (value !== undefined) parameters.set(key, String(value));
-  const search = parameters.toString();
-  return `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/${suffix}${search ? `?${search}` : ''}`;
 }
 
 function workspaceResult(value: unknown, sessionId: string, fields: readonly string[], path?: string): Record<string, unknown> {
@@ -179,42 +186,42 @@ function approvedCheckTimeout(details: Record<string, unknown>, profiles: readon
     }
     seconds += profile.timeoutSeconds;
   }
-  if (seconds > 1800) throw new AdapterError('PROFILE_TIMEOUT_LIMIT', 'Selected check profiles exceed the adapter 30-minute request limit; run smaller approved batches.');
-  return Math.min((seconds + 10) * 1000, 1_800_000);
+  if (seconds > maxCheckSeconds) throw new AdapterError('CHECK_DEADLINE_LIMIT', 'The existing AO REST deadline supports at most 45 seconds of combined configured profile timeouts. Select a smaller approved batch; longer checks require a durable asynchronous daemon API.');
+  return (seconds + checkTimeoutMarginSeconds) * 1000;
 }
 
 export function developmentTools(client: DaemonClient, access: Access, jobs: CheckJobs = jobsFor(client)): ToolDefinition[] {
-  const authorize = async (workId: string, sessionId: string): Promise<void> => {
+  const authorize = async (workId: string, sessionId: string): Promise<Record<string, unknown>> => {
     requireRole(access, 'developer');
-    await scopedSession(client, access, workId, sessionId);
+    return scopedSession(client, access, workId, sessionId);
   };
   return [
     defineTool('ao_workspace_tree', 'List one level of an attached session workspace. Source access requires developer scope.', 'developer', true,
       z.strictObject({...sessionInput, path: relativePath.optional()}), async (input) => {
-        await authorize(input.workId, input.sessionId);
-        return workspaceResult(await client.get(workspaceURL(input.sessionId, 'tree', {path: input.path})), input.sessionId, ['sessionId', 'path', 'entries', 'truncated']);
+        const session = await authorize(input.workId, input.sessionId);
+        return workspaceResult(await client.get(scopedWorkspacePath(input.workId, input.sessionId, session, 'tree', {path: input.path})), input.sessionId, ['sessionId', 'path', 'entries', 'truncated']);
       }),
     defineTool('ao_workspace_search', 'Find workspace paths by substring, with bounded pagination. This is a path search, not a content search.', 'developer', true,
       z.strictObject({...sessionInput, query: z.string().trim().min(1).max(512), cursor: z.string().max(4096).optional(), limit: z.number().int().min(1).max(100).default(50)}), async (input) => {
-        await authorize(input.workId, input.sessionId);
-        return workspaceResult(await client.get(workspaceURL(input.sessionId, 'search', {query: input.query, cursor: input.cursor, limit: input.limit})), input.sessionId, ['sessionId', 'query', 'results', 'nextCursor', 'truncated']);
+        const session = await authorize(input.workId, input.sessionId);
+        return workspaceResult(await client.get(scopedWorkspacePath(input.workId, input.sessionId, session, 'search', {query: input.query, cursor: input.cursor, limit: input.limit})), input.sessionId, ['sessionId', 'query', 'results', 'nextCursor', 'truncated']);
       }),
     defineTool('ao_workspace_read', 'Read a bounded text file and its fingerprint from an attached session workspace. Check contentTruncated before editing.', 'developer', true,
       z.strictObject({...sessionInput, path: relativePath, section: z.enum(['committed', 'staged', 'unstaged', 'untracked']).optional()}), async (input) => {
-        await authorize(input.workId, input.sessionId);
-        return workspaceResult(await client.get(workspaceURL(input.sessionId, 'file', {path: input.path, section: input.section})), input.sessionId, fileFields, input.path);
+        const session = await authorize(input.workId, input.sessionId);
+        return workspaceResult(await client.get(scopedWorkspacePath(input.workId, input.sessionId, session, 'file', {path: input.path, section: input.section})), input.sessionId, fileFields, input.path);
       }),
     defineTool('ao_workspace_diff', 'Read bounded unified patches for explicit workspace paths and an optional captured workspaceVersion.', 'developer', true,
       z.strictObject({...sessionInput, paths: z.array(relativePath).min(1).max(100), scope: scope.default('combined'), contextLines: z.number().int().min(0).max(20).default(3), ignoreWhitespace: z.boolean().default(false), workspaceVersion: z.string().min(1).max(512).optional()}), async ({workId, sessionId, ...input}) => {
-        await authorize(workId, sessionId);
-        return workspaceResult(await client.post(workspaceURL(sessionId, 'diffs'), input), sessionId, ['sessionId', 'workspaceVersion', 'groups']);
+        const session = await authorize(workId, sessionId);
+        return workspaceResult(await client.post(scopedWorkspacePath(workId, sessionId, session, 'diffs'), input), sessionId, ['sessionId', 'workspaceVersion', 'groups']);
       }),
     defineTool('ao_workspace_update', 'Replace an existing UTF-8 text file using the fingerprint from a complete read. Does not create/delete files; stale edits are rejected by AO.', 'developer', false,
       z.strictObject({...sessionInput, path: relativePath, content: z.string().max(256 * 1024).refine((text) => Buffer.byteLength(text, 'utf8') <= 256 * 1024 && !text.includes('\0'), 'Only bounded UTF-8 text content is accepted.'), expectedFileFingerprint: fingerprint}), async ({workId, sessionId, ...input}) => {
-        await authorize(workId, sessionId);
+        const session = await authorize(workId, sessionId);
         const finish = jobs.reserveEdit(workId, sessionId);
         try {
-          const result = workspaceResult(await client.put(workspaceURL(sessionId, 'file'), input), sessionId, fileFields, input.path);
+          const result = workspaceResult(await client.put(scopedWorkspacePath(workId, sessionId, session, 'file'), input), sessionId, fileFields, input.path);
           finish();
           return result;
         } catch (error) {
@@ -222,24 +229,25 @@ export function developmentTools(client: DaemonClient, access: Access, jobs: Che
           throw error;
         }
       }),
-    defineTool('ao_check_profiles', 'Discover runnable pinned check-profile names and timeouts for one scoped work. Commands, environment and policy configuration are never returned.', 'developer', true,
+    defineTool('ao_check_profiles', 'Discover pinned check-profile names, timeouts and availability within the current REST deadline. Commands, environment and policy configuration are never returned.', 'developer', true,
       z.strictObject({workId: identifier}), async ({workId}) => {
         requireRole(access, 'developer');
         const work = record((await scopedWork(client, access, workId)).work);
         const profiles = record(record(work.policy).profiles);
         return {
-          workId, ...scalars(work, ['policyVersion']),
+          workId, ...scalars(work, ['policyVersion']), maxTotalTimeoutSeconds: maxCheckSeconds,
           profiles: Object.entries(profiles).flatMap(([name, candidate]) => {
-            if (!identifier.safeParse(name).success || !candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+            if (!profileName.safeParse(name).success || !candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
             const profile = record(candidate);
             if (!Array.isArray(profile.command) || profile.command.length === 0 || !profile.command.every((part) => typeof part === 'string')
               || typeof profile.timeoutSeconds !== 'number' || !Number.isInteger(profile.timeoutSeconds) || profile.timeoutSeconds <= 0) return [];
-            return [{name, timeoutSeconds: profile.timeoutSeconds}];
+            const available = profile.timeoutSeconds <= maxCheckSeconds;
+            return [{name, timeoutSeconds: profile.timeoutSeconds, available, ...(!available ? {unavailableReason: 'CHECK_DEADLINE_LIMIT'} : {})}];
           }).sort((left, right) => left.name.localeCompare(right.name, 'en')),
         };
       }),
-    defineTool('ao_run_checks', 'Start approved work-policy check profiles asynchronously. Reuse operationId to retrieve the same admission; never supplies argv. Requires a daemon-managed worker and clean committed workspace.', 'developer', false,
-      z.strictObject({...sessionInput, operationId: identifier, profiles: z.array(identifier).min(1).max(16).refine((values) => new Set(values).size === values.length, 'Profile names must be unique.')}), async (input) => {
+    defineTool('ao_run_checks', 'Start approved work-policy check profiles with combined configured timeouts of at most 45 seconds. Returns a pollable handle, not a durable daemon job. Reuse operationId; never supplies argv. Requires a daemon-managed worker and clean committed workspace.', 'developer', false,
+      z.strictObject({...sessionInput, operationId: identifier, profiles: z.array(profileName).min(1).max(16).refine((values) => new Set(values).size === values.length, 'Profile names must be unique.')}), async (input) => {
         await authorize(input.workId, input.sessionId);
         const details = await scopedWork(client, access, input.workId);
         const timeout = approvedCheckTimeout(details, input.profiles);
@@ -249,7 +257,10 @@ export function developmentTools(client: DaemonClient, access: Access, jobs: Che
       z.strictObject({jobId: z.uuid()}), async ({jobId}) => {
         requireRole(access, 'developer');
         const job = jobs.get(access, jobId);
-        await scopedSession(client, access, job.workId, job.sessionId);
+        // Polling reads a principal-owned captured result, not a live workspace.
+        // A worker may exit or be replaced after checks finish; only the work's
+        // current project authorization must still hold.
+        await scopedWork(client, access, job.workId);
         return job;
       }),
   ];

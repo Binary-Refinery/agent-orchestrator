@@ -28,7 +28,14 @@ async function fixture(t: TestContext, override: (request: Request) => Reply | u
       let reply = await override(request);
       if (!reply && request.url.pathname === '/api/v1/instructor/works/work-a') reply = {body: {work: work()}};
       if (!reply && request.url.pathname === '/api/v1/sessions/session-a') reply = {body: {session: {id: 'session-a', projectId: 'project-a'}}};
-      const base = '/api/v1/sessions/session-a/workspace/';
+      if (!reply && request.url.pathname === '/api/v1/instructor/works/work-a/members') reply = {body: {
+        workId: 'work-a', projectId: 'project-a', workRevision: 1, atomic: false,
+        members: ['a', 'b'].map((suffix) => ({id: `member-${suffix}`, kind: 'session', role: 'worker', association: 'current', status: 'running', sessionId: `session-${suffix}`, instanceId: `instance-${suffix}`, openTarget: {kind: 'session', projectId: 'project-a', sessionId: `session-${suffix}`}})),
+      }};
+      const base = '/api/v1/instructor/works/work-a/sessions/session-a/workspace/';
+      if (request.url.pathname.includes('/workspace/') && (request.url.searchParams.get('projectId') !== 'project-a' || request.url.searchParams.get('instanceId') !== 'instance-a')) {
+        reply = {status: 400, body: {code: 'WORKSPACE_SCOPE_REQUIRED', message: 'Fenced workspace scope is required'}};
+      }
       if (!reply && request.url.pathname === `${base}file`) {
         const data = request.body as {path: string; content: string; expectedFileFingerprint: string} | undefined;
         const path = request.method === 'PUT' ? data?.path : request.url.searchParams.get('path');
@@ -90,6 +97,9 @@ test('workspace tools use existing API shapes and preserve pagination/snapshot e
   await tool(tools, 'ao_workspace_diff').execute({...attached, paths: ['src/main.ts'], workspaceVersion: 'snapshot-a'});
   assert.deepEqual(requests.find((request) => request.url.pathname.endsWith('/diffs'))?.body, {paths: ['src/main.ts'], scope: 'combined', contextLines: 3, ignoreWhitespace: false, workspaceVersion: 'snapshot-a'});
   assert(requests.every((request) => request.headers['x-ao-session-id'] === 'trusted-session'));
+  const workspaceRequests = requests.filter((request) => request.url.pathname.includes('/workspace/'));
+  assert(workspaceRequests.every((request) => request.url.pathname.startsWith('/api/v1/instructor/works/work-a/sessions/session-a/workspace/')));
+  assert(workspaceRequests.every((request) => request.url.searchParams.get('projectId') === 'project-a' && request.url.searchParams.get('instanceId') === 'instance-a'));
 });
 
 test('workspace edits require the observed fingerprint and surface daemon stale conflicts', async (t) => {
@@ -193,15 +203,14 @@ test('check handles are principal-owned and status revalidates current project s
   await assert.rejects(tool(developmentTools(client, {...access, projectIds: []}, jobs), 'ao_check_job_status').execute({jobId: job.jobId}), {code: 'OUT_OF_SCOPE'});
 });
 
-test('daemon check errors preserve error envelope and release completed request locks', async (t) => {
+test('daemon check errors preserve error envelope and retain uncertain request locks', async (t) => {
   const {client} = await fixture(t, (request) => request.url.pathname.endsWith('/checks') ? {status: 409, body: {code: 'INSTRUCTOR_CONFLICT', message: 'Work changed', requestId: 'request-check'}} : undefined);
   const tools = developmentTools(client, access, new CheckJobs());
   const job = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'attempt-a', profiles: ['push']}) as CheckJob;
   const result = await finished(tools, job.jobId);
-  assert.equal(result.state, 'failed');
+  assert.equal(result.state, 'uncertain');
   assert.deepEqual(result.error, {code: 'INSTRUCTOR_CONFLICT', message: 'Work changed', status: 409, requestId: 'request-check'});
-  const next = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'attempt-b', profiles: ['push']}) as CheckJob;
-  await finished(tools, next.jobId);
+  await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'attempt-b', profiles: ['push']}), {code: 'CHECKS_BUSY'});
 });
 
 test('checks coordinate across principals and block edits until completion', async (t) => {
@@ -248,8 +257,8 @@ test('check handles are bounded and malformed successful responses remain uncert
 });
 
 test('check profiles above the bounded total timeout cannot be submitted', async (t) => {
-  const {client, requests} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policy: {profiles: {push: {...profile, timeoutSeconds: 1801}}}}}} : undefined);
-  await assert.rejects(tool(developmentTools(client, access, new CheckJobs()), 'ao_run_checks').execute({...attached, operationId: 'attempt-a', profiles: ['push']}), {code: 'PROFILE_TIMEOUT_LIMIT'});
+  const {client, requests} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policy: {profiles: {push: {...profile, timeoutSeconds: 46}}}}}} : undefined);
+  await assert.rejects(tool(developmentTools(client, access, new CheckJobs()), 'ao_run_checks').execute({...attached, operationId: 'attempt-a', profiles: ['push']}), {code: 'CHECK_DEADLINE_LIMIT'});
   assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
 });
 
@@ -327,7 +336,7 @@ test('default check jobs isolate daemon origins and survive client recreation fo
 test('check profile discovery returns only runnable names/timeouts from the scoped pinned policy', async (t) => {
   const {client} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policyVersion: 'pinned-policy', policy: {profiles: {push: {...profile, command: ['secret-command'], environment: {TOKEN: 'secret-token'}}, full: profile, unconfigured: {command: [], timeoutSeconds: 5}}, credentials: 'secret-policy'}}}} : undefined);
   const result = await tool(developmentTools(client, access), 'ao_check_profiles').execute({workId: 'work-a'});
-  assert.deepEqual(result, {workId: 'work-a', policyVersion: 'pinned-policy', profiles: [{name: 'full', timeoutSeconds: 5}, {name: 'push', timeoutSeconds: 5}]});
+  assert.deepEqual(result, {workId: 'work-a', policyVersion: 'pinned-policy', maxTotalTimeoutSeconds: 45, profiles: [{name: 'full', timeoutSeconds: 5, available: true}, {name: 'push', timeoutSeconds: 5, available: true}]});
 });
 
 test('check profile discovery enforces role and current project scope', async (t) => {
@@ -335,4 +344,210 @@ test('check profile discovery enforces role and current project scope', async (t
   await assert.rejects(tool(developmentTools(client, {...access, role: 'observer'}), 'ao_check_profiles').execute({workId: 'work-a'}), {code: 'FORBIDDEN'});
   assert.equal(requests.length, 0);
   await assert.rejects(tool(developmentTools(client, {...access, projectIds: []}), 'ao_check_profiles').execute({workId: 'work-a'}), {code: 'OUT_OF_SCOPE'});
+});
+
+for (const status of [400, 409]) {
+  test(`HTTP ${status} after profile side effects cannot admit another check or edit`, async (t) => {
+    let executions = 0;
+    const {client, requests} = await fixture(t, (request) => {
+      if (!request.url.pathname.endsWith('/checks')) return undefined;
+      // A profile executed before AO detected changed workspace/commit (400)
+      // or a final work revision conflict (409). These are not preflight rejects.
+      executions++;
+      return {status, body: {code: status === 400 ? 'INSTRUCTOR_INVALID' : 'INSTRUCTOR_CONFLICT', message: status === 400 ? 'commit changed during check execution' : 'revision changed after checks', requestId: `after-execution-${status}`}};
+    });
+    const tools = developmentTools(client, access, new CheckJobs());
+    const input = {...attached, operationId: 'first-execution', profiles: ['push']};
+    const first = await tool(tools, 'ao_run_checks').execute(input) as CheckJob;
+    const result = await finished(tools, first.jobId);
+    assert.equal(result.state, 'uncertain');
+    assert.equal(result.error?.status, status);
+    assert.equal(executions, 1);
+    const repeated = await tool(tools, 'ao_run_checks').execute(input) as CheckJob;
+    assert.equal(repeated.jobId, first.jobId);
+    await assert.rejects(tool(tools, 'ao_run_checks').execute({...input, operationId: 'second-execution'}), {code: 'CHECKS_BUSY'});
+    await assert.rejects(tool(tools, 'ao_workspace_update').execute({...attached, path: 'main.ts', content: 'overwrite', expectedFileFingerprint: 'fingerprint-a'}), {code: 'CHECKS_BUSY'});
+    assert.equal(executions, 1);
+    assert(!requests.some((request) => request.method === 'PUT'));
+  });
+}
+
+test('check admission budgets the complete batch and caps the client deadline below daemon REST timeout', async (t) => {
+  const {client, requests} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policy: {profiles: {push: {...profile, timeoutSeconds: 20}, full: {...profile, timeoutSeconds: 25}, extra: {...profile, timeoutSeconds: 1}}}}}} : undefined);
+  const deadlines: (number | undefined)[] = [];
+  class InspectingClient extends DaemonClient {
+    override post<T = unknown>(path: string, body: unknown, timeoutMs?: number): Promise<T> {
+      deadlines.push(timeoutMs);
+      return super.post<T>(path, body, timeoutMs);
+    }
+  }
+  const tools = developmentTools(new InspectingClient({url: client.url.origin}), access, new CheckJobs());
+  await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'too-long', profiles: ['push', 'full', 'extra']}), {code: 'CHECK_DEADLINE_LIMIT'});
+  assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
+  const boundary = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'within-deadline', profiles: ['push', 'full']}) as CheckJob;
+  assert.equal((await finished(tools, boundary.jobId)).state, 'completed');
+  assert.deepEqual(deadlines, [55_000]);
+});
+
+test('profile discovery marks long approved profiles unavailable under the current REST deadline', async (t) => {
+  const {client, requests} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policy: {profiles: {short: profile, full: {...profile, timeoutSeconds: 900}}}}}} : undefined);
+  const tools = developmentTools(client, access, new CheckJobs());
+  assert.deepEqual(await tool(tools, 'ao_check_profiles').execute({workId: 'work-a'}), {workId: 'work-a', maxTotalTimeoutSeconds: 45, profiles: [
+    {name: 'full', timeoutSeconds: 900, available: false, unavailableReason: 'CHECK_DEADLINE_LIMIT'},
+    {name: 'short', timeoutSeconds: 5, available: true},
+  ]});
+  await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'full-profile', profiles: ['full']}), {code: 'CHECK_DEADLINE_LIMIT'});
+  assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
+});
+
+test('missing fenced workspace routes fail closed without falling back to legacy session routes', async (t) => {
+  const {client, requests} = await fixture(t, (request) => {
+    if (request.url.pathname.startsWith('/api/v1/instructor/works/work-a/sessions/session-a/workspace/')) return {status: 404, body: {code: 'ROUTE_NOT_FOUND', message: 'Scoped workspace API is unavailable'}};
+    if (request.url.pathname.startsWith('/api/v1/sessions/session-a/workspace/')) return {body: {sessionId: 'session-a', path: 'main.ts', content: 'legacy unsafe result'}};
+    return undefined;
+  });
+  const tools = developmentTools(client, access, new CheckJobs());
+  const calls: [string, unknown][] = [
+    ['ao_workspace_tree', attached], ['ao_workspace_search', {...attached, query: 'main'}],
+    ['ao_workspace_read', {...attached, path: 'main.ts'}], ['ao_workspace_diff', {...attached, paths: ['main.ts']}],
+    ['ao_workspace_update', {...attached, path: 'main.ts', content: 'new', expectedFileFingerprint: 'fingerprint-a'}],
+  ];
+  for (const [name, input] of calls) await assert.rejects(tool(tools, name).execute(input), {code: 'ROUTE_NOT_FOUND'});
+  const workspaceRequests = requests.filter((request) => request.url.pathname.includes('/workspace/'));
+  assert.equal(workspaceRequests.length, calls.length);
+  assert(workspaceRequests.every((request) => request.url.pathname.startsWith('/api/v1/instructor/works/work-a/sessions/session-a/workspace/')));
+  assert(workspaceRequests.every((request) => request.url.searchParams.get('instanceId') === 'instance-a' && request.url.searchParams.get('projectId') === 'project-a'));
+});
+
+test('historical session membership cannot authorize workspace access', async (t) => {
+  const {client, requests} = await fixture(t, (request) => request.url.pathname.endsWith('/members') ? {body: {workId: 'work-a', projectId: 'project-a', atomic: false, members: [{kind: 'session', sessionId: 'session-a', instanceId: 'old-instance', association: 'historical', openTarget: {kind: 'session', projectId: 'project-a', sessionId: 'session-a'}}]}} : undefined);
+  await assert.rejects(tool(developmentTools(client, access, new CheckJobs()), 'ao_workspace_read').execute({...attached, path: 'main.ts'}), {code: 'OUT_OF_SCOPE'});
+  assert(!requests.some((request) => request.url.pathname.includes('/workspace/')));
+});
+
+test('workspace requests preserve the captured immutable instance and surface fenced rejection', async (t) => {
+  const {client, requests} = await fixture(t, (request) => {
+    if (!request.url.pathname.endsWith('/workspace/file')) return undefined;
+    assert.equal(request.url.searchParams.get('instanceId'), 'instance-a');
+    assert.equal(request.url.searchParams.get('projectId'), 'project-a');
+    return {status: 409, body: {code: 'INSTRUCTOR_SESSION_INSTANCE_CHANGED', message: 'Session was replaced after scope capture', requestId: 'instance-fence'}};
+  });
+  await assert.rejects(tool(developmentTools(client, access, new CheckJobs()), 'ao_workspace_read').execute({...attached, path: 'main.ts'}), (error: unknown) => error instanceof DaemonError && error.code === 'INSTRUCTOR_SESSION_INSTANCE_CHANGED' && error.requestId === 'instance-fence');
+  assert.equal(requests.filter((request) => request.url.pathname.includes('/workspace/')).length, 1);
+});
+
+for (const status of [400, 404]) {
+  test(`HTTP ${status} after workspace replacement keeps edit and check admission locked`, async (t) => {
+    let replacements = 0;
+    const {client, requests} = await fixture(t, (request) => {
+      if (request.method !== 'PUT') return undefined;
+      // Replacement succeeded, then its refreshed read failed after an external
+      // change. A generic 4xx cannot establish that the write did not happen.
+      replacements++;
+      return {status, body: {code: status === 404 ? 'WORKSPACE_FILE_NOT_FOUND' : 'WORKSPACE_GIT_STATE_UNAVAILABLE', message: 'Refreshed workspace read failed after replacement'}};
+    });
+    const tools = developmentTools(client, access, new CheckJobs());
+    const input = {...attached, path: 'main.ts', content: 'written', expectedFileFingerprint: 'fingerprint-a'};
+    await assert.rejects(tool(tools, 'ao_workspace_update').execute(input), (error: unknown) => error instanceof DaemonError && error.status === status);
+    await assert.rejects(tool(tools, 'ao_workspace_update').execute(input), {code: 'CHECKS_BUSY'});
+    await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'after-uncertain-edit', profiles: ['push']}), {code: 'CHECKS_BUSY'});
+    assert.equal(replacements, 1);
+    assert.equal(requests.filter((request) => request.method === 'PUT').length, 1);
+    assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
+  });
+}
+
+test('exact scoped workspace preflight errors permit a fresh attempt after scope is resolved', async (t) => {
+  for (const [status, code] of [[409, 'INSTRUCTOR_WORKSPACE_SCOPE_CHANGED'], [409, 'INSTRUCTOR_WORKSPACE_BUSY'], [400, 'INSTRUCTOR_WORKSPACE_SCOPE_REQUIRED']] as const) {
+    let attempts = 0;
+    const {client} = await fixture(t, (request) => {
+      if (request.method !== 'PUT') return undefined;
+      attempts++;
+      return attempts === 1 ? {status, body: {code, message: 'Preflight rejected before replacement'}} : undefined;
+    });
+    const tools = developmentTools(client, access, new CheckJobs());
+    const input = {...attached, path: 'main.ts', content: 'written', expectedFileFingerprint: 'fingerprint-a'};
+    await assert.rejects(tool(tools, 'ao_workspace_update').execute(input), {code});
+    const result = await tool(tools, 'ao_workspace_update').execute(input) as {content: string};
+    assert.equal(result.content, 'written');
+    assert.equal(attempts, 2);
+  }
+});
+
+test('exact daemon checks deadline preflight permits a smaller batch without replaying rejected admission', async (t) => {
+  let attempts = 0;
+  let executions = 0;
+  const {client} = await fixture(t, (request) => {
+    if (!request.url.pathname.endsWith('/checks')) return undefined;
+    attempts++;
+    if (attempts === 1) return {status: 400, body: {code: 'INSTRUCTOR_CHECKS_DEADLINE_PREEXECUTION', message: 'Configured runtime request deadline is too short; no checks admitted'}};
+    executions++;
+    return {body: work()};
+  });
+  const tools = developmentTools(client, access, new CheckJobs());
+  const input = {...attached, operationId: 'rejected-batch', profiles: ['push', 'full']};
+  const first = await tool(tools, 'ao_run_checks').execute(input) as CheckJob;
+  assert.equal((await finished(tools, first.jobId)).state, 'failed');
+  assert.equal(executions, 0);
+  assert.equal((await tool(tools, 'ao_run_checks').execute(input) as CheckJob).jobId, first.jobId);
+  assert.equal(attempts, 1);
+  const smaller = await tool(tools, 'ao_run_checks').execute({...input, operationId: 'smaller-batch', profiles: ['push']}) as CheckJob;
+  assert.equal((await finished(tools, smaller.jobId)).state, 'completed');
+  assert.equal(executions, 1);
+  assert.equal(attempts, 2);
+});
+
+test('own completed check results remain pollable after the worker is historical, replaced or missing', async (t) => {
+  let membership: 'current' | 'historical' | 'replaced' | 'missing' = 'current';
+  let foreignProject = false;
+  const {client, requests} = await fixture(t, (request) => {
+    if (foreignProject && request.url.pathname === '/api/v1/instructor/works/work-a') return {body: {work: {...work(), projectId: 'outside-project'}}};
+    if (membership !== 'current' && request.url.pathname.endsWith('/members')) return {body: {
+      workId: 'work-a', projectId: 'project-a', atomic: false,
+      members: membership === 'missing' ? [] : [{kind: 'session', sessionId: 'session-a', instanceId: membership === 'replaced' ? 'replacement-instance' : 'instance-a', association: membership === 'historical' ? 'historical' : 'current', openTarget: {kind: 'session', projectId: 'project-a', sessionId: 'session-a'}}],
+    }};
+    if (membership === 'missing' && request.url.pathname === '/api/v1/sessions/session-a') return {status: 404, body: {code: 'SESSION_NOT_FOUND', message: 'Worker has exited'}};
+    return undefined;
+  });
+  const jobs = new CheckJobs();
+  const tools = developmentTools(client, access, jobs);
+  const job = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'finished-worker', profiles: ['push']}) as CheckJob;
+  // Let the background request complete without polling the MCP status tool;
+  // the first user-visible poll occurs only after membership becomes historical.
+  for (let i = 0; i < 50 && jobs.get(access, job.jobId).state === 'running'; i++) await setTimeout(5);
+  assert.equal(jobs.get(access, job.jobId).state, 'completed');
+  const captured = requests.length;
+  for (const state of ['historical', 'replaced', 'missing'] as const) {
+    membership = state;
+    const result = await tool(tools, 'ao_check_job_status').execute({jobId: job.jobId}) as CheckJob;
+    assert.equal(result.state, 'completed');
+    assert.deepEqual((result.result as {evidence: unknown[]}).evidence, work().evidence);
+  }
+  assert(requests.slice(captured).every((request) => request.url.pathname === '/api/v1/instructor/works/work-a'));
+  foreignProject = true;
+  await assert.rejects(tool(tools, 'ao_check_job_status').execute({jobId: job.jobId}), {code: 'OUT_OF_SCOPE'});
+});
+
+test('opaque approved profile names preserve spaces, slashes, Unicode and exact whitespace in discovery and execution', async (t) => {
+  const names = ['unit tests', 'lint/fast', '測試集', ' exact profile ', '__proto__'];
+  const {client, requests} = await fixture(t, (request) => request.url.pathname === '/api/v1/instructor/works/work-a' ? {body: {work: {...work(), policy: {profiles: Object.fromEntries(names.map((name) => [name, profile]))}}}} : undefined);
+  const tools = developmentTools(client, access, new CheckJobs());
+  const discovered = await tool(tools, 'ao_check_profiles').execute({workId: 'work-a'}) as {profiles: {name: string; timeoutSeconds: number; available: boolean}[]};
+  assert.deepEqual(new Set(discovered.profiles.map((entry) => entry.name)), new Set(names));
+  assert(discovered.profiles.every((entry) => entry.timeoutSeconds === 5 && entry.available));
+  await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'unknown-opaque', profiles: ['unit tests ']}), {code: 'PROFILE_NOT_APPROVED'});
+  await assert.rejects(tool(tools, 'ao_run_checks').execute({...attached, operationId: 'unknown-inherited', profiles: ['constructor']}), {code: 'PROFILE_NOT_APPROVED'});
+  assert(!requests.some((request) => request.url.pathname.endsWith('/checks')));
+  const job = await tool(tools, 'ao_run_checks').execute({...attached, operationId: 'opaque-profiles', profiles: names}) as CheckJob;
+  assert.equal((await finished(tools, job.jobId)).state, 'completed');
+  assert.deepEqual(requests.find((request) => request.url.pathname.endsWith('/checks'))?.body, {sessionId: 'session-a', profiles: names});
+});
+
+test('check profile names reject reserved business evidence, empty names and oversized names before I/O', async (t) => {
+  const {client, requests} = await fixture(t);
+  const run = tool(developmentTools(client, access, new CheckJobs()), 'ao_run_checks');
+  for (const name of ['', 'p'.repeat(513), 'task-packet', 'ci', 'ci-failed', 'review-report', 'triage', 'delta', 'delta-changes', 'attribution', 'traceability']) {
+    await assert.rejects(run.execute({...attached, operationId: 'invalid-profile', profiles: [name]}), {name: 'ZodError'});
+  }
+  assert.equal(requests.length, 0);
 });

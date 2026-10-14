@@ -111,8 +111,14 @@ Trace responses distinguish available evidence from missing/unknown provider
 confirmation. No tool produces a verified result merely because a worker
 asserted success.
 
-Source operations use session-workspace-relative paths and the existing daemon
-contracts. An edit requires the `fileFingerprint` obtained from the current
+Source operations use session-workspace-relative paths and incarnation-scoped
+daemon workspace routes. The adapter reads a proven current work member, then
+sends its immutable `instanceId`, work and project to the daemon. The daemon
+validates that binding atomically and holds a lifecycle lease through filesystem
+access. Historical display IDs and legacy associations do not authorize a new
+session that reuses the same ID. Older daemons without these routes fail closed;
+upgrade the daemon together with the adapter. An edit requires the
+`fileFingerprint` obtained from the current
 read, forwarded as `expectedFileFingerprint`. Refresh and reconsider the edit
 after a conflict; do not replace the expected fingerprint blindly.
 
@@ -127,7 +133,8 @@ backslashes, drive prefixes, empty/dot/traversal segments and control characters
 are refused; the daemon retains responsibility for filesystem containment.
 
 Check execution selects existing approved profile names for the attached work
-and session. The tool does not accept shell strings, arbitrary executable paths
+and session. Profile names are opaque, bounded to 512 characters and subject to
+AO's reserved-name rules. The tool does not accept shell strings, arbitrary executable paths
 or new check-profile definitions. Approved checks can execute mutable repository
 code; developer access therefore remains host trusted. A configured profile may
 include a build, but the adapter has no arbitrary build, install, restart or
@@ -153,7 +160,13 @@ executable again. Restart loses its handles, deduplication records and local
 locks; it neither cancels daemon work nor proves execution has finished.
 Reconcile the daemon's durable evidence before a restart or new operation. Each
 request accepts at most 16 unique profiles; their summed configured timeout is
-bounded to 30 minutes. Source updates are limited to 256 KiB of UTF-8 content.
+bounded to 45 seconds to fit the ordinary REST deadline. Discovery marks longer
+profiles unavailable with `CHECK_DEADLINE_LIMIT`. The daemon also checks its
+actual remaining request deadline before execution, reserving five seconds for
+cleanup; a shorter configured deadline can reject an otherwise available
+profile. Long builds require the existing governed worker flow. The adapter's
+request timeout is at most 55 seconds. Source updates are limited to 256 KiB of
+UTF-8 content.
 
 Normal operation uses AO actions, not mouse clicks. MCP does not provide window
 screenshots, renderer inspection or general desktop control. Use Computer Use
@@ -173,6 +186,8 @@ does not automatically repeat mutations.
 
 Manual creation also forwards the supplied snapshot and key, but the existing
 daemon `neu` branch deduplicates by project, `source: manual` and `sourceRef`.
+`sourceRef` is an opaque 1–180-character value: spaces and slashes are retained
+exactly, including leading/trailing spaces.
 It does not provide lifecycle-command snapshot/key fencing for that intake.
 Use a stable, unique `sourceRef` for one intended work and inspect the returned
 work before deciding whether a retry is appropriate. Changing the name or goal

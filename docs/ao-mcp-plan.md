@@ -4,7 +4,7 @@
 
 Let external and embedded AI agents operate AO, inspect real work and controller
 evidence, and repair code in authorized AO workspaces through a provider-neutral
-tool boundary. The first implementation reuses existing daemon contracts. It
+tool boundary. The first implementation reuses AO's daemon services. It
 does not change how AO selects models or providers.
 
 This plan follows the user's requested delivery chain: record the requirements,
@@ -33,9 +33,12 @@ flowchart TB
 
 The standalone package is `packages/ao-mcp`. Its core tool functions can be
 called by an embedded host, but this change does not add a chat UI or integrate
-an embedded model provider. All tool effects pass through the existing daemon
-HTTP API. No direct SQLite access, daemon routes, migrations, frontend API
-generation or daemon network listener is introduced.
+an embedded model provider. All tool effects pass through the loopback daemon
+HTTP API. Five explicit workspace routes add atomic work/project/incarnation
+fencing around existing workspace services, with regenerated OpenAPI and
+frontend types. Check admission also validates the actual request deadline.
+The adapter has no direct SQLite access; no migration or daemon listener change
+is introduced.
 
 Stdio is the default transport. Optional HTTP binds only to `127.0.0.1` and
 requires a bearer credential. It is a private gateway bootstrap boundary, not a
@@ -60,8 +63,8 @@ results and remaining gaps against its exact head.
 | MCP-08 | Preserve lifecycle command snapshot and idempotency fences, and the existing manual-intake identity. | Lifecycle commands require exact work, snapshot and stable key; stale/error results propagate. Manual creation deduplicates by project/source/sourceRef. No automatic mutation retry or key replacement. |
 | MCP-09 | Keep protected human decisions outside agent authority. | No approval, policy override, exception, publication, merge or arbitrary API-call tool; unsupported command actions and approval injection fail. |
 | MCP-10 | Expose real work history, delivery/member/controller facts and actionable daemon failures. | Trace tests preserve the factual evidence and error code/request ID; queue admission is never labelled completion. |
-| MCP-11 | Read and edit authorized session source through existing workspace APIs. | Tree/search/read/diff tests and exact expected-file-fingerprint forwarding; mismatched work/session scope fails. |
-| MCP-12 | Discover and run existing approved check profiles and expose bounded job results. | Discovery returns profile names/timeouts without executable argv; check-job tests cover success, failure, invalid profile/request, limits and polling without issuing a second execution. |
+| MCP-11 | Read and edit authorized session source through incarnation-scoped workspace APIs. | Current member proof and daemon lifecycle lease fence immutable instance/work/project through I/O; reused display IDs and old unfenced routes fail closed. Tree/search/read/diff and exact expected-file-fingerprint forwarding are tested. |
+| MCP-12 | Discover and run existing approved check profiles and expose bounded job results. | Discovery returns names/timeouts without argv, marks profiles exceeding the 45-second adapter budget unavailable; daemon admission reserves the actual deadline plus cleanup. Tests cover effects before HTTP errors, uncertain locks and polling without replay. |
 | MCP-13 | Share the same tool implementation across transports and a possible embedded host. | Both transport tests use the common tool definitions; exported core is independent of model-provider selection. |
 | MCP-14 | Bound input, daemon response size, execution time and retained job output. | Limit/timeout tests fail explicitly; truncation is visible; errors do not turn unknown effects into safe retry claims. |
 | MCP-15 | Document trust and deployment limits accurately. | Stdio and developer execution are described as host trusted; HTTP bearer bootstrap is distinguished from OAuth; no claim of automatic cloud access. |

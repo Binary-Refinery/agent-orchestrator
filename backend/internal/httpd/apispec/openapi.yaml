@@ -3342,6 +3342,475 @@ paths:
       summary: Attach an existing session to a stable work identity
       tags:
       - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/diffs:
+    post:
+      operationId: instructorWorkspaceDiffs
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceDiffRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDiffsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read diffs under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/file:
+    get:
+      operationId: instructorWorkspaceFile
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: Git-state section the file was opened from (see WorkspaceFileSections).
+          staged diffs the index against HEAD; unstaged diffs the worktree against
+          the index; omitted/committed/untracked diff the worktree against the compare
+          base.
+        in: query
+        name: section
+        schema:
+          description: Git-state section the file was opened from (see WorkspaceFileSections).
+            staged diffs the index against HEAD; unstaged diffs the worktree against
+            the index; omitted/committed/untracked diff the worktree against the compare
+            base.
+          enum:
+          - committed
+          - staged
+          - unstaged
+          - untracked
+          type: string
+      - description: Exact commit SHA to read as an immutable committed-scope snapshot.
+        in: query
+        name: commitSha
+        schema:
+          description: Exact commit SHA to read as an immutable committed-scope snapshot.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a file under an immutable work/session incarnation lease
+      tags:
+      - instructor
+    put:
+      operationId: updateInstructorWorkspaceFile
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceFileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Edit a file under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/search:
+    get:
+      operationId: instructorWorkspaceSearch
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Case-insensitive path substring.
+        in: query
+        name: query
+        required: true
+        schema:
+          description: Case-insensitive path substring.
+          type: string
+      - description: Opaque pagination cursor returned by the previous page.
+        in: query
+        name: cursor
+        schema:
+          description: Opaque pagination cursor returned by the previous page.
+          type: string
+      - description: Maximum results. Defaults to 50.
+        in: query
+        name: limit
+        schema:
+          description: Maximum results. Defaults to 50.
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileSearchResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Search paths under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/tree:
+    get:
+      operationId: instructorWorkspaceTree
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Directory path relative to the session workspace root. Empty
+          or omitted lists the root.
+        in: query
+        name: path
+        schema:
+          description: Directory path relative to the session workspace root. Empty
+            or omitted lists the root.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceTreeResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a directory under an immutable work/session incarnation lease
+      tags:
+      - instructor
   /api/v1/link-preview:
     get:
       operationId: getLinkPreview

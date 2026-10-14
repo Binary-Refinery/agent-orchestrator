@@ -165,16 +165,18 @@ type UsageHookRecorder interface {
 // SessionsController owns the session routes. Nil keeps routes registered but
 // returns OpenAPI-backed 501s.
 type SessionsController struct {
-	Svc           SessionService
-	Activity      ActivityRecorder
-	Usage         UsageHookRecorder
-	Attachments   *attachmentstore.Store
-	PreviewServer ManagedPreviewServer
-	Capabilities  SessionCapabilityValidator
+	Svc               SessionService
+	InstructorEnabled bool
+	Activity          ActivityRecorder
+	Usage             UsageHookRecorder
+	Attachments       *attachmentstore.Store
+	PreviewServer     ManagedPreviewServer
+	Capabilities      SessionCapabilityValidator
 }
 
 // Register mounts the session routes on the supplied router.
 func (c *SessionsController) Register(r chi.Router) {
+	c.registerScopedWorkspaces(r)
 	r.Get("/governance/capabilities", c.governanceCapabilities)
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
