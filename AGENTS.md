@@ -6,6 +6,7 @@ Operational guidance for coding agents working in this repository. Keep changes 
 
 - `backend/` — Go rewrite of Agent Orchestrator: Cobra `ao` CLI, loopback HTTP daemon, services, SQLite storage, lifecycle/reaper, runtime/workspace/agent/tracker adapters, terminal mux, and tests.
 - `frontend/` — Electron + React supervisor wired to the daemon via the generated typed client. Treat it as a thin supervisor/UI surface; do not move daemon logic into it.
+- `packages/ao-mcp/` — standalone Node.js MCP adapter over the existing daemon API. Start with `docs/ao-mcp-plan.md` and `docs/ao-mcp.md`; preserve project/profile scope, protected human gates and explicit uncertainty. It adds no daemon listener or direct storage/runtime path.
 - `docs/` — current architecture/status notes. Start here before changing lifecycle, CLI, agents, storage, or daemon behavior.
 - `test/` — external smoke/e2e assets, including the CLI fresh-install container check.
 - `.github/workflows/` — CI definitions. Mirror these commands locally when possible.
@@ -19,6 +20,8 @@ npm run lint                         # backend go test ./... + golangci-lint v2.
 npm run frontend:typecheck           # frontend TypeScript check
 npm run sqlc                         # regenerate backend/internal/storage/sqlite/gen from queries/schema
 npm run api                          # regenerate OpenAPI spec + frontend TS types (see API contract changes below)
+npm --prefix packages/ao-mcp ci       # pinned standalone MCP adapter dependencies
+npm --prefix packages/ao-mcp test     # complete MCP boundary/transport suite; live smoke needs AO_MCP_TEST_DAEMON
 npx @redwoodjs/agent-ci run --all    # local workflow validation; requires Docker socket
 ```
 
