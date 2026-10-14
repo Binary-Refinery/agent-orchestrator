@@ -2069,6 +2069,22 @@ func (w *Workspace) enableWorktreeConfig(ctx context.Context, repo string) error
 		}
 		return fmt.Errorf("gitworktree: inspect repository metadata: %w", err)
 	}
+	// Restored worktrees normally already have this shared setting. Do not
+	// contend with other Git writers merely to write the same value again.
+	readArgs := []string{"-C", repo, "config", "--local", "--bool", "--get", "extensions.worktreeConfig"}
+	out, err := aoprocess.CommandContext(ctx, w.binary, readArgs...).CombinedOutput()
+	if err == nil {
+		if strings.TrimSpace(string(out)) == "true" {
+			return nil
+		}
+	} else {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return fmt.Errorf("gitworktree: read per-worktree config: %w", commandError{
+				args: append([]string{w.binary}, readArgs...), output: string(out), err: err,
+			})
+		}
+	}
 	args := []string{"-C", repo, "config", "extensions.worktreeConfig", "true"}
 	cmd := aoprocess.CommandContext(ctx, w.binary, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
