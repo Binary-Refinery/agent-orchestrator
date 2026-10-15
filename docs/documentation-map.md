@@ -26,6 +26,8 @@ in CI. Fix the prose.
 | [docs/architecture.md](architecture.md)                     | Backend mental model, lifecycle, persistence/CDC, status derivation.         |
 | [docs/instructor.md](instructor.md)                         | Instructor responsibilities, work identity, dispatch and policy boundaries. |
 | [docs/instructor-acceptance.md](instructor-acceptance.md)     | Approved scope versus implemented and verified acceptance.                 |
+| [docs/ao-mcp.md](ao-mcp.md)                                | MCP adapter setup, access profiles, operation and private gateway boundaries. |
+| [docs/ao-mcp-plan.md](ao-mcp-plan.md)                       | MCP requirements, implementation sequence, independent reviews and live acceptance limits. |
 | [Instructor Rulebook](artifaktory/instructor/RULEBOOK.md)    | Consolidated human operating contract; requires executable policy enforcement. |
 | [Instructor policy example](artifaktory/instructor/POLICY.md) | Structured policy fields, model placeholders and example check profiles.   |
 | [docs/backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend.                                  |
@@ -50,6 +52,7 @@ against the contract layer below.
 | `backend/internal/skillassets/using-ao/`                               | The `ao` CLI catalog installed into agent workspaces                    | Hand-written Markdown with YAML frontmatter, embedded in the binary                                                    | `TestEmbeddedSkillFrontmatterIsValidYAML` and sibling tests in `backend/internal/skillassets`                                                                            |
 | `MobileAPIVersion` in `backend/internal/httpd/controllers/identity.go` | Contract version negotiated by the mobile client                        | Go constant                                                                                                            | Bump rule documented in the constant's comment and `docs/adr/0003-unauthenticated-identity-probe.md`                                                                     |
 | `ao <command> --help`                                                  | Authoritative flag list for every CLI command                           | Cobra command definitions in `backend/internal/cli/`                                                                   | Table tests in `backend/internal/cli/*_test.go`                                                                                                                          |
+| `packages/ao-mcp/src/`                                                | Standalone MCP tool schemas, startup configuration, project/profile authorization and transports | TypeScript tool definitions and shared daemon client; existing daemon OpenAPI remains authoritative for AO HTTP | `npm --prefix packages/ao-mcp test` and `npm --prefix packages/ao-mcp run typecheck`; real vendor deployment acceptance is separate |
 
 The CLI's hand-mirrored DTOs (`backend/internal/cli/`) are a deliberate manual
 boundary: they are not generated from `openapi.yaml`, and wire compatibility is

@@ -1,0 +1,32 @@
+{
+  "name": "@aoagents/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project-scoped MCP access to the local AO daemon",
+  "bin": {
+    "ao-mcp": "dist/src/cli.js"
+  },
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-concurrency=2 --test-timeout=30000 dist/test/*.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

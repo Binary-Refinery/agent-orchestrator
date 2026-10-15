@@ -31,6 +31,31 @@ func gitFact(ctx context.Context, path string, args ...string) (string, error) {
 	return strings.TrimSpace(string(b)), e
 }
 
+const checkRequestCleanupMargin = 5 * time.Second
+
+// validateCheckRequestDeadline reserves the complete configured execution
+// budget, not a guess based on previous durations. The HTTP request timeout can
+// be configured below the default, so clients cannot establish this boundary.
+func validateCheckRequestDeadline(ctx context.Context, w domain.InstructorWork, profiles []string) error {
+	needed := checkRequestCleanupMargin
+	for _, name := range profiles {
+		profile, ok := w.Policy.Profiles[name]
+		if !ok || len(profile.Command) == 0 {
+			return invalid(fmt.Sprintf("profile %s has no approved check command", name))
+		}
+		// Pinned policies normally satisfy this validation already. Fail closed
+		// rather than allow a malformed timeout to underflow the admission sum.
+		if profile.TimeoutSeconds < 1 || profile.TimeoutSeconds > 900 {
+			return invalid(fmt.Sprintf("profile %s has an invalid check timeout", name))
+		}
+		needed += time.Duration(profile.TimeoutSeconds) * time.Second
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= needed {
+		return fmt.Errorf("%w: selected profiles require %s plus %s cleanup; use an adequate request deadline or a smaller approved batch", ErrChecksDeadline, needed-checkRequestCleanupMargin, checkRequestCleanupMargin)
+	}
+	return nil
+}
+
 // RunChecks produces daemon-owned evidence only after executing approved argv
 // against the attached producer's clean, immutable commit. Agent assertions
 // never become verified check evidence.
@@ -38,6 +63,9 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	w, err := s.get(ctx, id)
 	if err != nil {
 		return w, err
+	}
+	if len(profiles) == 0 {
+		profiles = []string{"push", "full"}
 	}
 	checkStore, ok := s.deps.Store.(interface {
 		CaptureInstructorCheckProducer(context.Context, string, domain.SessionID) (domain.SessionRecord, domain.InstructorReportAdmission, bool, error)
@@ -57,6 +85,9 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 		return w, invalid("checks cannot execute while work is paused or terminal")
 	}
 	if err := validateWorkExceptions(w, s.now()); err != nil {
+		return w, err
+	}
+	if err := validateCheckRequestDeadline(ctx, w, profiles); err != nil {
 		return w, err
 	}
 	instance := admission.InstanceID
@@ -117,6 +148,12 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	if err != nil || dirty != "" {
 		return w, invalid("checks require a clean worktree to bind evidence to SHA")
 	}
+	// Native producer/workspace validation and Git reads can consume the
+	// request's budget. Recheck before the first durable mutation or admission,
+	// including observing a new worker commit, so this refusal has no effects.
+	if err := validateCheckRequestDeadline(ctx, w, profiles); err != nil {
+		return w, err
+	}
 	if w.SHA != "" && w.SHA != sha {
 		if w.Phase != "implement" && w.Phase != "fix" {
 			return w, invalid("workspace SHA differs from current work SHA")
@@ -135,9 +172,6 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 			return w, readErr
 		}
 	}
-	if len(profiles) == 0 {
-		profiles = []string{"push", "full"}
-	}
 	ctx, finish, err := s.beginManualChecks(ctx, w, producer)
 	if err != nil {
 		return w, err
@@ -151,10 +185,7 @@ func (s *Service) RunChecks(ctx context.Context, id string, producer domain.Sess
 	}()
 	evidence := []domain.InstructorEvidence{}
 	for _, name := range profiles {
-		pf, ok := w.Policy.Profiles[name]
-		if !ok || len(pf.Command) == 0 {
-			return w, invalid(fmt.Sprintf("profile %s has no approved check command", name))
-		}
+		pf := w.Policy.Profiles[name]
 		if err := checkStore.ValidateInstructorCheckProducer(ctx, admission, producerRecord); err != nil {
 			return w, err
 		}

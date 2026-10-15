@@ -123,6 +123,8 @@ func writeInstructorError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTRUCTOR_PUBLICATION_CONSUMED", err.Error(), nil)
 	case errors.Is(err, instructorsvc.ErrEvidencePending):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTRUCTOR_EVIDENCE_PENDING", "Current persisted evidence is being inspected; retry after the inspection completes.", nil)
+	case errors.Is(err, instructorsvc.ErrChecksDeadline):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INSTRUCTOR_CHECKS_DEADLINE_PREEXECUTION", err.Error(), nil)
 	case errors.Is(err, instructorsvc.ErrConflict):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTRUCTOR_CONFLICT", err.Error(), nil)
 	case errors.Is(err, instructorsvc.ErrNotFound):

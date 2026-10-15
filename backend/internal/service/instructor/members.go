@@ -96,7 +96,7 @@ func (s *Service) Members(ctx context.Context, id string) (domain.InstructorMemb
 				}
 				m.Role = l.Role
 				m.Phase = l.Phase
-				if m.RuntimeGeneration == "" {
+				if m.RuntimeGeneration == "" && (!found || instance != binding.InstanceID) {
 					m.RuntimeGeneration = l.RuntimeGeneration
 				}
 				break
@@ -163,9 +163,16 @@ func (s *Service) Members(ctx context.Context, id string) (domain.InstructorMemb
 		return result, err
 	}
 	var coordinator *domain.SessionRecord
+	var stoppedCoordinator *domain.SessionRecord
 	for i := range sessions {
 		r := &sessions[i]
-		if r.Kind != domain.KindOrchestrator || r.IsTerminated || r.IsTaskPreparation || r.Activity.State == domain.ActivityExited {
+		if r.Kind != domain.KindOrchestrator || r.IsTaskPreparation {
+			continue
+		}
+		if r.IsTerminated || r.Activity.State == domain.ActivityExited {
+			if stoppedCoordinator == nil || r.CreatedAt.After(stoppedCoordinator.CreatedAt) || (r.CreatedAt.Equal(stoppedCoordinator.CreatedAt) && r.ID > stoppedCoordinator.ID) {
+				stoppedCoordinator = r
+			}
 			continue
 		}
 		if coordinator == nil || r.CreatedAt.After(coordinator.CreatedAt) || (r.CreatedAt.Equal(coordinator.CreatedAt) && r.ID > coordinator.ID) {
@@ -179,6 +186,15 @@ func (s *Service) Members(ctx context.Context, id string) (domain.InstructorMemb
 		}
 		if found && r.ProjectID == w.ProjectID && r.Kind == domain.KindOrchestrator && !r.IsTerminated && !r.IsTaskPreparation && r.Activity.State != domain.ActivityExited {
 			result.Coordinator.Current = &domain.InstructorMember{ID: "coordinator:" + instance, Kind: "session", Role: "orchestrator", Association: "current", Status: string(r.Activity.State), SessionID: r.ID, InstanceID: instance, RuntimeGeneration: sessionRuntimeGeneration(r), Name: r.DisplayName, CreatedAt: &r.CreatedAt, OpenTarget: &domain.InstructorMemberOpenTarget{Kind: "session", ProjectID: w.ProjectID, SessionID: r.ID}}
+		}
+	}
+	if result.Coordinator.Current == nil && stoppedCoordinator != nil {
+		r, instance, found, e := reader.InstructorSessionForMembership(ctx, stoppedCoordinator.ID)
+		if e != nil {
+			return result, e
+		}
+		if found && r.ProjectID == w.ProjectID && r.Kind == domain.KindOrchestrator && !r.IsTaskPreparation && (r.IsTerminated || r.Activity.State == domain.ActivityExited) {
+			result.Coordinator.Stopped = &domain.InstructorMember{ID: "coordinator:" + instance, Kind: "session", Role: "orchestrator", Association: "historical", Status: "terminated", SessionID: r.ID, InstanceID: instance, RuntimeGeneration: sessionRuntimeGeneration(r), Name: r.DisplayName, CreatedAt: &r.CreatedAt, OpenTarget: &domain.InstructorMemberOpenTarget{Kind: "session", ProjectID: w.ProjectID, SessionID: r.ID}}
 		}
 	}
 

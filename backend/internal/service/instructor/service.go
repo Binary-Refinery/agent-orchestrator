@@ -44,6 +44,10 @@ var ErrDeliveryRetryable = errors.New("native delivery is unavailable before sub
 // ErrEvidencePending holds execution until current source facts have been inspected.
 var ErrEvidencePending = errors.New("current persisted source facts need bounded inspection before execution")
 
+// ErrChecksDeadline certifies that the request was rejected before check
+// admission or execution because its actual remaining deadline was too short.
+var ErrChecksDeadline = errors.New("instructor check request deadline is insufficient before execution")
+
 func invalid(message string) error { return fmt.Errorf("%w: %s", ErrValidation, message) }
 
 // Store persists durable business facts, immutable decisions and the frozen dispatch queue.

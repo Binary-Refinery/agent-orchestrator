@@ -1,0 +1,68 @@
+name: AO MCP
+
+on:
+  pull_request:
+    paths:
+      - "packages/ao-mcp/**"
+      - "backend/**"
+      - ".github/workflows/mcp.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/ao-mcp/**"
+      - "backend/**"
+      - ".github/workflows/mcp.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  mcp:
+    # Use GitHub-hosted capacity without sharing the Tars/Artifaktory runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: windows
+            runner: windows-latest
+    name: MCP (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: packages/ao-mcp/package-lock.json
+      - uses: actions/setup-go@v5
+        if: matrix.os == 'linux'
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install pinned MCP dependencies
+        run: npm ci --prefix packages/ao-mcp
+      - name: Build isolated smoke daemon
+        if: matrix.os == 'linux'
+        env:
+          AO_MCP_TEST_DAEMON: ${{ runner.temp }}/ao-mcp-smoke.exe
+        run: go build -o "$AO_MCP_TEST_DAEMON" ./cmd/ao
+        shell: bash
+        working-directory: backend
+      - name: Typecheck MCP package
+        run: npm run --prefix packages/ao-mcp typecheck
+      - name: Test MCP boundaries, transports and real daemon API
+        env:
+          # The process-isolation smoke is Linux-qualified. Windows runs the
+          # protocol/boundary suite; live Windows AO/client acceptance is open.
+          AO_MCP_TEST_DAEMON: ${{ matrix.os == 'linux' && format('{0}/ao-mcp-smoke.exe', runner.temp) || '' }}
+        run: npm test --prefix packages/ao-mcp

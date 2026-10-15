@@ -3104,6 +3104,185 @@ paths:
       summary: Read incarnation-safe work agents and reviewer surfaces
       tags:
       - instructor
+  /api/v1/instructor/works/{workId}/members/{memberId}/diagnostics:
+    get:
+      operationId: instructorMemberDiagnostics
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: memberId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: projectId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: sessionId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: instanceId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: runtimeGeneration
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorMemberDiagnostics'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read atomically scoped persisted member lifecycle and error facts
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/members/{memberId}/timeline:
+    get:
+      operationId: instructorMemberTimeline
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: memberId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: projectId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: sessionId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: instanceId
+        required: true
+        schema:
+          minLength: 1
+          type: string
+      - in: query
+        name: runtimeGeneration
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: beforeSequence
+        schema:
+          format: int64
+          minimum: 0
+          type: integer
+      - in: query
+        name: limit
+        schema:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorMemberDiagnostics'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a bounded sanitized persisted member timeline
+      tags:
+      - instructor
   /api/v1/instructor/works/{workId}/publication:
     post:
       operationId: executeInstructorPublication
@@ -3340,6 +3519,475 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Service Unavailable
       summary: Attach an existing session to a stable work identity
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/diffs:
+    post:
+      operationId: instructorWorkspaceDiffs
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceDiffRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDiffsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read diffs under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/file:
+    get:
+      operationId: instructorWorkspaceFile
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: Git-state section the file was opened from (see WorkspaceFileSections).
+          staged diffs the index against HEAD; unstaged diffs the worktree against
+          the index; omitted/committed/untracked diff the worktree against the compare
+          base.
+        in: query
+        name: section
+        schema:
+          description: Git-state section the file was opened from (see WorkspaceFileSections).
+            staged diffs the index against HEAD; unstaged diffs the worktree against
+            the index; omitted/committed/untracked diff the worktree against the compare
+            base.
+          enum:
+          - committed
+          - staged
+          - unstaged
+          - untracked
+          type: string
+      - description: Exact commit SHA to read as an immutable committed-scope snapshot.
+        in: query
+        name: commitSha
+        schema:
+          description: Exact commit SHA to read as an immutable committed-scope snapshot.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a file under an immutable work/session incarnation lease
+      tags:
+      - instructor
+    put:
+      operationId: updateInstructorWorkspaceFile
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceFileRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Edit a file under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/search:
+    get:
+      operationId: instructorWorkspaceSearch
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Case-insensitive path substring.
+        in: query
+        name: query
+        required: true
+        schema:
+          description: Case-insensitive path substring.
+          type: string
+      - description: Opaque pagination cursor returned by the previous page.
+        in: query
+        name: cursor
+        schema:
+          description: Opaque pagination cursor returned by the previous page.
+          type: string
+      - description: Maximum results. Defaults to 50.
+        in: query
+        name: limit
+        schema:
+          description: Maximum results. Defaults to 50.
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceFileSearchResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Search paths under an immutable work/session incarnation lease
+      tags:
+      - instructor
+  /api/v1/instructor/works/{workId}/sessions/{sessionId}/workspace/tree:
+    get:
+      operationId: instructorWorkspaceTree
+      parameters:
+      - in: path
+        name: workId
+        required: true
+        schema:
+          type: string
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Expected registered project owning both the work and session.
+        in: query
+        name: projectId
+        required: true
+        schema:
+          description: Expected registered project owning both the work and session.
+          minLength: 1
+          type: string
+      - description: Immutable current work-member session instance captured from
+          the Instructor members endpoint.
+        in: query
+        name: instanceId
+        required: true
+        schema:
+          description: Immutable current work-member session instance captured from
+            the Instructor members endpoint.
+          minLength: 1
+          type: string
+      - description: Directory path relative to the session workspace root. Empty
+          or omitted lists the root.
+        in: query
+        name: path
+        schema:
+          description: Directory path relative to the session workspace root. Empty
+            or omitted lists the root.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceTreeResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read a directory under an immutable work/session incarnation lease
       tags:
       - instructor
   /api/v1/link-preview:
@@ -13352,6 +14000,8 @@ components:
           $ref: '#/components/schemas/InstructorMember'
         key:
           type: string
+        stopped:
+          $ref: '#/components/schemas/InstructorMember'
       required:
       - key
       type: object
@@ -13373,6 +14023,211 @@ components:
       - work
       - events
       - dispatches
+      type: object
+    InstructorDiagnosticItem:
+      properties:
+        activityKind:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          enum:
+          - message
+          - activity
+          type: string
+        redacted:
+          type: boolean
+        revision:
+          format: int64
+          type: integer
+        role:
+          type: string
+        sequence:
+          format: int64
+          type: integer
+        status:
+          type: string
+        streaming:
+          type: boolean
+        text:
+          type: string
+        truncated:
+          type: boolean
+        turnId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - kind
+      - id
+      - sequence
+      - revision
+      - streaming
+      - createdAt
+      - updatedAt
+      - truncated
+      - redacted
+      type: object
+    InstructorDiagnosticReview:
+      properties:
+        controllerError:
+          type: string
+        controllerGeneration:
+          type: string
+        harness:
+          type: string
+        redacted:
+          type: boolean
+        reviewId:
+          type: string
+        reviewRunId:
+          type: string
+        status:
+          type: string
+        truncated:
+          type: boolean
+        verdict:
+          type: string
+      required:
+      - reviewId
+      - reviewRunId
+      - harness
+      - status
+      - verdict
+      - controllerGeneration
+      - truncated
+      - redacted
+      type: object
+    InstructorDiagnosticSession:
+      properties:
+        activityState:
+          type: string
+        controllerError:
+          type: string
+        controllerGeneration:
+          type: string
+        effort:
+          type: string
+        harness:
+          type: string
+        isTerminated:
+          type: boolean
+        mode:
+          type: string
+        model:
+          type: string
+        providerConversationId:
+          type: string
+        provisionError:
+          type: string
+        provisionState:
+          type: string
+        redacted:
+          type: boolean
+        runtimeLaunchId:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - mode
+      - harness
+      - activityState
+      - isTerminated
+      - controllerGeneration
+      - provisionState
+      - truncated
+      - redacted
+      type: object
+    InstructorDiagnosticTimeline:
+      properties:
+        available:
+          type: boolean
+        conversationId:
+          type: string
+        conversationUpdatedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        hasMoreBefore:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/InstructorDiagnosticItem'
+          type: array
+        latestSequence:
+          format: int64
+          type: integer
+        nextBeforeSequence:
+          format: int64
+          type: integer
+        oldestSequence:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        redacted:
+          type: boolean
+        scope:
+          enum:
+          - session
+          - review
+          - project
+          type: string
+        scopeNote:
+          type: string
+        truncated:
+          type: boolean
+        turns:
+          items:
+            $ref: '#/components/schemas/InstructorDiagnosticTurn'
+          type: array
+      required:
+      - available
+      - scope
+      - latestSequence
+      - items
+      - turns
+      - oldestSequence
+      - hasMoreBefore
+      - truncated
+      - redacted
+      type: object
+    InstructorDiagnosticTurn:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        errorMessage:
+          type: string
+        id:
+          type: string
+        redacted:
+          type: boolean
+        requestedAt:
+          format: date-time
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - id
+      - state
+      - requestedAt
+      - truncated
+      - redacted
       type: object
     InstructorDispatch:
       properties:
@@ -13981,6 +14836,59 @@ components:
       - association
       - status
       - name
+      type: object
+    InstructorMemberDiagnostics:
+      properties:
+        atomic:
+          type: boolean
+        capturedAt:
+          format: date-time
+          type: string
+        instanceId:
+          type: string
+        kind:
+          enum:
+          - session
+          - review
+          type: string
+        memberId:
+          type: string
+        persistedOnly:
+          type: boolean
+        projectId:
+          type: string
+        review:
+          $ref: '#/components/schemas/InstructorDiagnosticReview'
+        runtimeGeneration:
+          type: string
+        schema:
+          type: string
+        session:
+          $ref: '#/components/schemas/InstructorDiagnosticSession'
+        sessionId:
+          type: string
+        timeline:
+          $ref: '#/components/schemas/InstructorDiagnosticTimeline'
+        workId:
+          type: string
+        workRevision:
+          format: int64
+          type: integer
+      required:
+      - schema
+      - workId
+      - projectId
+      - workRevision
+      - memberId
+      - kind
+      - sessionId
+      - instanceId
+      - runtimeGeneration
+      - capturedAt
+      - atomic
+      - persistedOnly
+      - session
+      - timeline
       type: object
     InstructorMemberOpenTarget:
       properties:

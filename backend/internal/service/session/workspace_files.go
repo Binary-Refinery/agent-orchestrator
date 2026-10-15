@@ -197,7 +197,7 @@ func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) 
 	}
 	paths := []string{rec.Metadata.WorkspacePath}
 	seen := map[string]struct{}{filepath.Clean(rec.Metadata.WorkspacePath): {}}
-	rows, err := s.store.ListSessionWorktrees(ctx, id)
+	rows, err := s.sessionWorkspaceWorktrees(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("list workspace project rows: %w", err)
 	}
@@ -635,12 +635,21 @@ func gitWorkspaceBlob(ctx context.Context, root, rev, rel string, limit int64) (
 }
 
 func (s *Service) sessionWorkspaceRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
-	rec, ok, err := s.store.GetSession(ctx, id)
-	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, err)
-	}
-	if !ok {
-		return domain.SessionRecord{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	var rec domain.SessionRecord
+	if captured, pinned := ctx.Value(scopedWorkspaceKey{}).(domain.InstructorWorkspaceSnapshot); pinned {
+		if captured.Session.ID != id {
+			return domain.SessionRecord{}, apierr.Conflict("INSTRUCTOR_WORKSPACE_SCOPE_CHANGED", "Workspace operation changed session scope", nil)
+		}
+		rec = captured.Session
+	} else {
+		current, ok, err := s.store.GetSession(ctx, id)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, err)
+		}
+		if !ok {
+			return domain.SessionRecord{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+		}
+		rec = current
 	}
 	if strings.TrimSpace(rec.Metadata.WorkspacePath) == "" {
 		return domain.SessionRecord{}, apierr.NotFound("SESSION_WORKSPACE_NOT_FOUND", "Session workspace not found")
@@ -918,7 +927,7 @@ func gitRevision(ctx context.Context, root, rev string) (string, bool) {
 }
 
 func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) (WorkspaceFiles, error) {
-	rows, err := s.store.ListSessionWorktrees(ctx, rec.ID)
+	rows, err := s.sessionWorkspaceWorktrees(ctx, rec.ID)
 	if err != nil {
 		return WorkspaceFiles{}, fmt.Errorf("list workspace project rows: %w", err)
 	}
@@ -986,7 +995,7 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 }
 
 func (s *Service) resolveWorkspaceProjectFileTarget(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, rel string) (workspaceFileTarget, error) {
-	rows, err := s.store.ListSessionWorktrees(ctx, rec.ID)
+	rows, err := s.sessionWorkspaceWorktrees(ctx, rec.ID)
 	if err != nil {
 		return workspaceFileTarget{}, fmt.Errorf("list workspace project rows: %w", err)
 	}
