@@ -301,7 +301,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	s.mu.RLock()
 	backboneValidator := s.validateBackbone
 	s.mu.RUnlock()
-	if backboneValidator != nil {
+	if backboneValidator != nil && owner.Kind == domain.ConversationOwnerSession {
 		if err := backboneValidator(ctx, cfg.SessionID, cfg.Backbone); err != nil {
 			return nil, err
 		}

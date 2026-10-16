@@ -65,7 +65,7 @@ func (c *Controller) validateBackboneDispatch(ctx context.Context) error {
 	c.mu.Lock()
 	validator := c.validateBackbone
 	c.mu.Unlock()
-	if validator != nil {
+	if validator != nil && c.owner().Kind == domain.ConversationOwnerSession {
 		if err := validator(ctx, c.sessionID, c.backbone); err != nil {
 			return err
 		}
@@ -79,4 +79,16 @@ func (c *Controller) validateBackboneDispatch(ctx context.Context) error {
 	}
 	_, err = backbone.Verify(ctx, c.backboneWorkspace, binding, c.backbone.InstructorRole)
 	return err
+}
+
+func (s *Service) validateBackboneReplacement(ctx context.Context, cfg StartConfig) error {
+	s.mu.RLock()
+	validator := s.validateBackbone
+	s.mu.RUnlock()
+	if validator != nil && conversationOwner(cfg).Kind == domain.ConversationOwnerSession {
+		if err := validator(ctx, cfg.SessionID, cfg.Backbone); err != nil {
+			return err
+		}
+	}
+	return validateBackboneStart(ctx, cfg)
 }

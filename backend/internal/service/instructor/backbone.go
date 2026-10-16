@@ -56,7 +56,7 @@ func policyBackbone(p domain.InstructorPolicy) (*backbone.Binding, error) {
 	return binding, nil
 }
 
-func validateQualification(raw json.RawMessage, role, model, platform, inter string) error {
+func validateQualification(raw json.RawMessage, role, model string) error {
 	var q qualification
 	if len(raw) == 0 {
 		return invalid("OpenCode Backbone execution requires an explicit qualification")
@@ -64,7 +64,7 @@ func validateQualification(raw json.RawMessage, role, model, platform, inter str
 	if err := backbone.DecodeStrict(raw, &q); err != nil {
 		return invalid("invalid OpenCode qualification: " + err.Error())
 	}
-	if q.SchemaVersion != "1" || q.Harness != "opencode" || q.RuntimeVersion != "1.19.0" || q.Model != model || q.Model == "" || q.Role != role || q.Platform != platform || q.Interface != inter || q.ConfigurationContract != "ao-opencode-backbone-v1" || q.Status != "qualified" {
+	if q.SchemaVersion != "1" || q.Harness != "opencode" || q.RuntimeVersion != "1.19.0" || q.Model != model || q.Model == "" || q.Role != role || q.Platform != runtime.GOOS || q.Interface != "chat" || q.ConfigurationContract != "ao-opencode-backbone-v1" || q.Status != "qualified" {
 		return invalid("OpenCode qualification does not match the exact runtime, model, role, platform, interface and configuration contract")
 	}
 	if _, err := time.Parse(time.RFC3339, q.ObservedAt); err != nil {
@@ -112,7 +112,7 @@ func validateBackboneSelection(p domain.InstructorPolicy, name, harness, model s
 	if role.Role != "implementer" {
 		return true, invalid("governed OpenCode currently supports only implementer; read-only OS isolation is unavailable")
 	}
-	return true, validateQualification(role.Qualification, role.Role, model, runtime.GOOS, "chat")
+	return true, validateQualification(role.Qualification, role.Role, model)
 }
 
 // BackbonePreflight identifies governed launches without invoking a provider or
@@ -255,6 +255,9 @@ func (s *Service) ValidateBackboneControllerBinding(ctx context.Context, id doma
 			return invalid("Backbone binding changed; replace controller")
 		}
 		return nil
+	}
+	if w.PolicyVersion != PolicyVersion(w.Policy) {
+		return invalid("pinned work policy hash mismatch")
 	}
 	if binding == nil || binding.PolicyVersion != w.PolicyVersion || binding.InstructorRole != role || binding.Model != rec.Metadata.Model || binding.Effort != rec.Metadata.Effort || !bytes.Equal(binding.Binding, w.Policy.Backbone) {
 		return invalid("Backbone binding changed; replace controller before dispatch")

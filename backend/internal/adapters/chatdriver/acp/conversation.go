@@ -388,6 +388,22 @@ func (c *conversation) ActivateLiveReconnect(ctx context.Context, providerTurnID
 // SendTurn prepares the long-lived ACP prompt request. AO's controller starts it
 // through StartDeferredTurn only after the provider turn id is durable.
 func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
+	if c.backboneModel != "" {
+		if strings.HasPrefix(strings.TrimSpace(msg.Text), "/") {
+			return ports.ChatTurnRef{}, fmt.Errorf("%w: governed OpenCode native slash commands are not qualified", ports.ErrChatConfigOptionInvalid)
+		}
+		for _, item := range msg.Content {
+			if item.Type == "text" && strings.HasPrefix(strings.TrimSpace(item.Text), "/") {
+				return ports.ChatTurnRef{}, fmt.Errorf("%w: governed OpenCode native slash commands are not qualified", ports.ErrChatConfigOptionInvalid)
+			}
+		}
+	}
+
+	if c.proc != nil && c.proc.validateBeforeSend != nil {
+		if err := c.proc.validateBeforeSend(ctx); err != nil {
+			return ports.ChatTurnRef{}, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return ports.ChatTurnRef{}, err
 	}
@@ -432,6 +448,10 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		}
 		return c.validateBackboneSelection()
 	}
+	return c.applyNativeTurnSettings(ctx, settings)
+}
+
+func (c *conversation) applyNativeTurnSettings(ctx context.Context, settings ports.ChatTurnSettings) error {
 	c.mu.Lock()
 	sessionID := c.sessionID
 	modeFor := c.modeFor
@@ -583,6 +603,14 @@ func (c *conversation) validateNativeSelection(wanted SessionOption) error {
 }
 
 func (c *conversation) StartDeferredTurn(providerTurnID string) error {
+	if c.proc != nil && c.proc.validateBeforeSend != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := c.proc.validateBeforeSend(ctx)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -623,6 +651,12 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 	messageID := strings.TrimSpace(turn.clientMessageID)
 	if messageID == "" {
 		messageID = uuid.NewString()
+	}
+	if c.proc != nil && c.proc.validateBeforeSend != nil {
+		if err := c.proc.validateBeforeSend(ctx); err != nil {
+			c.finishPrompt(turn.id, acpsdk.PromptResponse{}, err)
+			return
+		}
 	}
 	resp, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
@@ -746,6 +780,9 @@ func (c *conversation) finishPrompt(
 }
 
 func (c *conversation) Compact(ctx context.Context) (ports.ChatCompactionResult, error) {
+	if c.backboneModel != "" {
+		return ports.ChatCompactionResult{}, fmt.Errorf("%w: governed OpenCode compaction is not qualified", ports.ErrChatConfigOptionInvalid)
+	}
 	if err := ctx.Err(); err != nil {
 		return ports.ChatCompactionResult{}, err
 	}

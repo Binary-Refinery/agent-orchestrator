@@ -229,8 +229,14 @@ func (s *Service) ValidateAgentChange(ctx context.Context, id domain.SessionID, 
 	if err != nil {
 		return err
 	}
-	if len(w.Policy.Backbone) != 0 {
-		return backboneReplacementError()
+	binding, err := policyBackbone(w.Policy)
+	if err != nil {
+		return err
+	}
+	if binding != nil {
+		if _, mapped := binding.Contexts[role]; mapped || selection.Harness == "opencode" {
+			return backboneReplacementError()
+		}
 	}
 	return s.validateRoleSelection(ctx, w, role, selection.Harness, selection.Model, selection.Effort)
 }

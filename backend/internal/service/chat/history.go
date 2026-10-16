@@ -145,6 +145,9 @@ func (s *Service) ForkConversation(ctx context.Context, id domain.SessionID) (st
 	if err != nil {
 		return "", err
 	}
+	if err := controller.validateBackboneDispatch(ctx); err != nil {
+		return "", err
+	}
 	forker, ok := controller.conv.(ports.ChatForker)
 	if !ok {
 		return "", ErrForkUnsupported
@@ -202,6 +205,9 @@ func (s *Service) EditMessage(
 	}
 	source, err := s.Controller(id)
 	if err != nil {
+		return EditMessageResult{}, err
+	}
+	if err := source.validateBackboneDispatch(ctx); err != nil {
 		return EditMessageResult{}, err
 	}
 	if msg.ClientMessageID != "" {
@@ -850,6 +856,9 @@ func (s *Service) activateBranchLocked(ctx context.Context, id domain.SessionID,
 	if err != nil {
 		return "", err
 	}
+	if err := source.validateBackboneDispatch(ctx); err != nil {
+		return "", err
+	}
 	branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, branchID)
 	if err != nil {
 		return "", err
@@ -976,6 +985,9 @@ func (s *Service) branchLaunchConfig(
 }
 
 func (s *Service) prepareBranchControllerEnv(ctx context.Context, cfg StartConfig) (map[string]string, error) {
+	if err := s.validateBackboneReplacement(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("replacement Backbone admission: %w", err)
+	}
 	if cfg.PrepareControllerEnv == nil {
 		return cloneStartConfig(cfg).Env, nil
 	}
@@ -1002,6 +1014,9 @@ func (s *Service) restoreClosedSourceController(
 			source.reportFailedBranchHandoff(ctx)
 		}
 	}()
+	if err := source.validateBackboneDispatch(ctx); err != nil {
+		return fmt.Errorf("source Backbone recovery admission: %w", err)
+	}
 	recoveryCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx), nativeEditHandoffLimit)
 	defer cancel()

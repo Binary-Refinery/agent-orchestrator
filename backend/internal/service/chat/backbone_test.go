@@ -6,10 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/policy/backbone"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -18,6 +15,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/policy/backbone"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 )
 
 // A newly bound work must not adopt an old unbound controller simply because it
@@ -65,6 +67,80 @@ func TestBackboneRebindCancelsQueuedTurnBeforeNativeSend(t *testing.T) {
 	defer h.conv.mu.Unlock()
 	if h.conv.sendCalls != 1 {
 		t.Fatalf("stale native sends=%d", h.conv.sendCalls)
+	}
+}
+
+func TestBackboneRebindRejectsHistoryProviderWork(t *testing.T) {
+	for _, operation := range []string{"edit", "activate", "fork"} {
+		t.Run(operation, func(t *testing.T) {
+			h := newHarness(t)
+			refused := errors.New("work now requires a different Backbone binding")
+			h.svc.SetBackboneValidator(func(context.Context, domain.SessionID, *ports.ChatBackboneConfig) error { return refused })
+			var err error
+			switch operation {
+			case "edit":
+				_, err = h.svc.EditMessage(context.Background(), testSession, "turn", ports.ChatUserMessage{Text: "edited"})
+			case "activate":
+				_, err = h.svc.ActivateBranch(context.Background(), testSession, "branch")
+			case "fork":
+				_, err = h.svc.ForkConversation(context.Background(), testSession)
+			}
+			if !errors.Is(err, refused) {
+				t.Fatalf("history operation did not check current work binding: %v", err)
+			}
+			h.conv.mu.Lock()
+			defer h.conv.mu.Unlock()
+			if h.conv.sendCalls != 0 || h.hostStops.Load() != 0 {
+				t.Fatal("history rejection reached provider work")
+			}
+		})
+	}
+}
+
+func TestBackboneRebindAfterPreparationBlocksDeferredSubmission(t *testing.T) {
+	var changed atomic.Bool
+	var nativeStarts atomic.Int32
+	conv := &deferredConversation{fakeConversation: newFakeConversation(), start: func(string) error {
+		nativeStarts.Add(1)
+		return nil
+	}}
+	conv.onSend = func(string) { changed.Store(true) }
+	h := newHarnessWithConversation(t, conv)
+	h.svc.SetBackboneValidator(func(context.Context, domain.SessionID, *ports.ChatBackboneConfig) error {
+		if changed.Load() {
+			return errors.New("policy rebound after ACP preparation")
+		}
+		return nil
+	})
+	if _, err := h.svc.Send(context.Background(), testSession, ports.ChatUserMessage{Text: "prepared message", ClientMessageID: "deferred-binding"}); !errors.Is(err, ports.ErrSemanticDeliveryRejected) {
+		t.Fatalf("stale deferred submission was not rejected: %v", err)
+	}
+	if nativeStarts.Load() != 0 {
+		t.Fatal("changed binding reached native deferred submission")
+	}
+}
+
+func TestBackboneWorkerBindingDoesNotReplaceIndependentReviewerAuthority(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	now := time.Now().UTC()
+	const reviewID = "backbone-independent-review"
+	if err := st.UpsertReview(ctx, domain.Review{ID: reviewID, SessionID: testSession, ProjectID: testProject, Harness: domain.ReviewerCodex, InterfaceMode: domain.ReviewerInterfaceChat, ReviewerActivityState: domain.ActivityActive, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	conv := newFakeConversation()
+	var nextID atomic.Int32
+	svc := chatsvc.New(chatsvc.Options{Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv}}, Log: slog.New(slog.DiscardHandler), NewID: func() string { return fmt.Sprintf("review-backbone-%d", nextID.Add(1)) }})
+	t.Cleanup(func() { svc.StopAll(context.Background()) })
+	svc.SetBackboneValidator(func(context.Context, domain.SessionID, *ports.ChatBackboneConfig) error {
+		return errors.New("worker requires its OpenCode binding")
+	})
+	owner := domain.ReviewConversationOwner(reviewID)
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{Owner: owner, SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex, WorkspacePath: t.TempDir()}); err != nil {
+		t.Fatalf("independent reviewer inherited worker selection: %v", err)
+	}
+	if _, err := svc.SendForOwner(ctx, owner, ports.ChatUserMessage{Text: "review the approved diff"}); err != nil {
+		t.Fatalf("independent reviewer dispatch inherited worker selection: %v", err)
 	}
 }
 
@@ -144,7 +220,8 @@ func TestBackboneProducerContextReachesActualChatPortAndCannotMutate(t *testing.
 	conv := &backboneConfigConversation{fakeConversation: newFakeConversation()}
 	var captured ports.ChatStartConfig
 	var probes atomic.Int32
-	svc := chatsvc.New(chatsvc.Options{Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv, startCfg: &captured, probe: func() error { probes.Add(1); return errors.New("uncontrolled native probe") }}}, Log: slog.New(slog.DiscardHandler)})
+	var identifiers atomic.Int32
+	svc := chatsvc.New(chatsvc.Options{NewID: func() string { return fmt.Sprintf("backbone-%d", identifiers.Add(1)) }, Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: conv, startCfg: &captured, probe: func() error { probes.Add(1); return errors.New("uncontrolled native probe") }}}, Log: slog.New(slog.DiscardHandler)})
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 	cfg := chatsvc.StartConfig{SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessOpenCode, WorkspacePath: workspace, Model: "test/model", Effort: "high", Permissions: ports.PermissionModeDefault, SystemPrompt: "AO standing prompt\n\n" + verified.Prompt, Backbone: &ports.ChatBackboneConfig{Binding: raw, InstructorRole: "worker", PolicyVersion: strings.Repeat("a", 64), Model: "test/model", Effort: "high"}}
 	if _, err := svc.Start(context.Background(), cfg); err != nil {

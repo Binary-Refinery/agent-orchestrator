@@ -26,6 +26,18 @@ func (g instructorGovernance) ValidateControllerRecovery(ctx context.Context, id
 	if err != nil {
 		return err
 	}
+	if len(work.Policy.Backbone) != 0 {
+		binding, _, err := g.svc.PrepareBackboneController(ctx, id, rec.Metadata.WorkspacePath,
+			domain.NormalizeSessionMode(rec.Mode), rec.Metadata.Model, rec.Metadata.Permissions)
+		if err != nil {
+			return err
+		}
+		if binding != nil {
+			// Native discovery belongs to the controlled ACP boundary after its
+			// static input checks. Other roles retain the ordinary validator.
+			return nil
+		}
+	}
 	role, found := work.Policy.Roles[name]
 	if !found || g.validator == nil {
 		return fmt.Errorf("%w: managed controller role cannot be validated", instructorsvc.ErrValidation)

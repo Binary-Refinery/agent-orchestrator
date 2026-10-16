@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -22,17 +23,27 @@ func validateBackboneStart(harness domain.AgentHarness, binding *ports.ChatBackb
 func (c *conversation) validateBackboneSelection() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	model, mode := false, false
+	model, mode, effort := false, false, c.backboneEffort == ""
 	for _, option := range c.configOptions {
 		if option.ID == "model" {
 			model = option.CurrentReported && option.Current.Select == c.backboneModel
+		}
+		if option.ID == "effort" {
+			effort = option.CurrentReported && option.Current.Select == c.backboneEffort
 		}
 		if option.ID == "mode" {
 			mode = option.CurrentReported && option.Current.Select == "ao-default"
 		}
 	}
-	if !model || !mode {
+	if !model || !mode || !effort {
 		return fmt.Errorf("%w: governed OpenCode did not report the pinned model and primary agent", ports.ErrChatConfigOptionInvalid)
 	}
 	return nil
+}
+
+func (c *conversation) configureBackboneSession(ctx context.Context, settings ports.ChatTurnSettings) error {
+	if err := c.applyNativeTurnSettings(ctx, settings); err != nil {
+		return err
+	}
+	return c.validateBackboneSelection()
 }

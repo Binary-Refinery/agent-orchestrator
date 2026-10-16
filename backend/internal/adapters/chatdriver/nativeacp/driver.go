@@ -55,6 +55,7 @@ type Config struct {
 	VersionProbe VersionProbe
 	// BeforeLaunch validates the final launch inputs before the provider can execute.
 	BeforeLaunch func(context.Context, string, acpdriver.LaunchConfig, map[string]string) error
+	BeforeSend   func(context.Context, acpdriver.LaunchConfig, map[string]string) error
 }
 
 // New creates a Chat driver that launches the exact executable resolved by the
@@ -136,10 +137,15 @@ func buildConfig(plugin Plugin, cfg Config, log *slog.Logger) acpdriver.Config {
 					return acpdriver.Launch{}, err
 				}
 			}
+			var beforeSend func(context.Context) error
+			if cfg.BeforeSend != nil {
+				beforeSend = func(sendCtx context.Context) error { return cfg.BeforeSend(sendCtx, launchCfg, env) }
+			}
 			return acpdriver.Launch{
-				Command: binary,
-				Args:    append([]string(nil), args...),
-				Env:     env,
+				ValidateBeforeSend: beforeSend,
+				Command:            binary,
+				Args:               append([]string(nil), args...),
+				Env:                env,
 			}, nil
 		},
 		SessionMode:            cfg.SessionMode,

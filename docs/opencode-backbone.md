@@ -35,7 +35,9 @@ and its existing digest. A model's claim that it loaded policy is not admission.
 Every OpenCode execution under a bound policy needs its own matching context and
 qualification. A missing entry does not fall back to ordinary OpenCode execution.
 Other harness roles without context entries retain their existing behavior;
-execution of a mapped non-OpenCode role is currently unsupported. A standalone
+execution of a mapped non-OpenCode role is currently unsupported. An unmapped
+child retains its ordinary harness governance and must not be reported as a
+verified Backbone delegation or context chain. A standalone
 project controller needs an explicit durable work before it can use this binding.
 
 AO verifies real Git HEAD, the Task Packet identity/role/head grammar, all selected
@@ -83,6 +85,13 @@ not import ordinary global state or remote organization configuration. Reusing a
 controlled state directory still requires input validation before a fresh process.
 Windows and managed configuration search locations need their actual platform
 checks; XDG variables alone do not prove closure.
+
+The complete standing prompt is carried in an AO-owned, byte-checked
+`runtime.json`. Its controlled environment inherits only the selected provider's
+supported API credential inputs. Native package bootstrap stays offline and
+installed package code is refused. Native slash commands and explicit history
+compaction are outside this initial contract; automatic compaction is disabled
+so it cannot replace the bound context through a separate native agent.
 
 The actual workspace is checked before launch, including asynchronous starts,
 and before queued dispatch. A running controller remains bound to the original

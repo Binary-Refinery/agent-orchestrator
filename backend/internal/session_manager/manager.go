@@ -972,7 +972,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 
 	if mode == domain.SessionModeChat {
 		if m.chat == nil {
-			if modeExplicitlyRequested {
+			if modeExplicitlyRequested || backboneGoverned {
 				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
 			}
 			m.logger.Warn("spawn: default Chat unavailable; falling back to TUI",

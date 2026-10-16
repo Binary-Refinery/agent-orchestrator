@@ -22,7 +22,7 @@ func testQualification(t *testing.T) []byte {
 
 func TestBackboneQualificationRequiresExactAttestedTupleAndCases(t *testing.T) {
 	raw := testQualification(t)
-	if err := validateQualification(raw, "implementer", "test/model", runtime.GOOS, "chat"); err != nil {
+	if err := validateQualification(raw, "implementer", "test/model"); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -38,7 +38,7 @@ func TestBackboneQualificationRequiresExactAttestedTupleAndCases(t *testing.T) {
 			}
 			object[tc.field] = tc.value
 			bad, _ := json.Marshal(object)
-			if err := validateQualification(bad, "implementer", "test/model", runtime.GOOS, "chat"); err == nil {
+			if err := validateQualification(bad, "implementer", "test/model"); err == nil {
 				t.Fatal("mismatched synthetic qualification admitted")
 			}
 		})
@@ -48,7 +48,7 @@ func TestBackboneQualificationRequiresExactAttestedTupleAndCases(t *testing.T) {
 func TestBackboneQualificationRejectsMissingAmbiguousAndNullRecords(t *testing.T) {
 	raw := testQualification(t)
 	for _, data := range [][]byte{nil, []byte(`null`), []byte(`{}`), []byte(strings.Replace(string(raw), `"model":"test/model"`, `"model":"test/model","model":"test/model"`, 1)), []byte(strings.Replace(string(raw), `"model":"test/model"`, `"Model":"test/model"`, 1)), []byte(strings.Replace(string(raw), `"model":"test/model"`, `"model":null`, 1))} {
-		if err := validateQualification(data, "implementer", "test/model", runtime.GOOS, "chat"); err == nil {
+		if err := validateQualification(data, "implementer", "test/model"); err == nil {
 			t.Fatalf("ambiguous qualification admitted: %s", data)
 		}
 	}

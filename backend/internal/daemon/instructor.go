@@ -378,12 +378,19 @@ func (g instructorGovernance) ValidateResume(ctx context.Context, id domain.Sess
 	if err := g.svc.ValidateResume(ctx, id); err != nil {
 		return err
 	}
-	if len(work.Policy.Backbone) != 0 {
-		return nil
-	}
 	session, roleName, _, err := g.managedSessionRole(ctx, work, id)
 	if err != nil {
 		return err
+	}
+	if len(work.Policy.Backbone) != 0 {
+		binding, _, err := g.svc.PrepareBackboneController(ctx, id, session.Metadata.WorkspacePath,
+			domain.NormalizeSessionMode(session.Mode), session.Metadata.Model, session.Metadata.Permissions)
+		if err != nil {
+			return err
+		}
+		if binding != nil {
+			return nil // Controlled ACP owns native discovery after static checks.
+		}
 	}
 	role, found := work.Policy.Roles[roleName]
 	if !found {

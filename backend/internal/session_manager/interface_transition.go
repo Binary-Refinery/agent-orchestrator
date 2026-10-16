@@ -169,8 +169,10 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, ErrTerminated
 	}
 
-	if _, _, err := m.prepareBackboneController(ctx, id, rec.Metadata.WorkspacePath, target, rec.Metadata.Model, rec.Metadata.Permissions); err != nil {
+	if binding, _, err := m.prepareBackboneController(ctx, id, rec.Metadata.WorkspacePath, target, rec.Metadata.Model, rec.Metadata.Permissions); err != nil {
 		return domain.SessionInterfaceTransition{}, err
+	} else if binding != nil {
+		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: governed OpenCode requires a fresh controlled replacement instead of interface handoff", ErrInterfaceHandoffUnsupported)
 	}
 	source := domain.NormalizeSessionMode(rec.Mode)
 	if target == source {
