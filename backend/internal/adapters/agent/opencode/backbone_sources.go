@@ -309,7 +309,8 @@ func ValidateBackboneSources(ctx context.Context, workspace string, env map[stri
 		if err != nil {
 			return fmt.Errorf("OpenCode Backbone: cannot verify managed preference locations")
 		}
-		for _, dir := range []string{"/Library/Managed Preferences", filepath.Join("/Library/Managed Preferences", current.Username)} {
+		managedPreferences := "/Library/Managed Preferences"
+		for _, dir := range []string{managedPreferences, filepath.Join(managedPreferences, current.Username)} {
 			if err := backboneAbsent(filepath.Join(dir, "ai.opencode.managed.plist")); err != nil {
 				return err
 			}
