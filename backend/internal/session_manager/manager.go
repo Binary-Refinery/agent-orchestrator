@@ -959,6 +959,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 	// if it is unavailable for this harness or installation, fall back to TUI.
 	modeExplicitlyRequested := cfg.RequestedMode.Valid()
 	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
+	preflightCfg := cfg
+	preflightCfg.AgentConfig = agentConfig
+	backboneGoverned, err := m.backbonePreflight(ctx, preflightCfg, project, mode)
+	if err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %w", ErrInstructorLaunchBlocked, err)
+	}
+	if backboneGoverned {
+		cfg.AgentConfig = agentConfig
+		cfg.AgentConfigResolved = true
+	}
+
 	if mode == domain.SessionModeChat {
 		if m.chat == nil {
 			if modeExplicitlyRequested {
@@ -967,7 +978,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 			m.logger.Warn("spawn: default Chat unavailable; falling back to TUI",
 				"harness", cfg.Harness, "error", ports.ErrChatUnsupported)
 			mode = domain.SessionModeTUI
-		} else if err := m.chat.PreflightChat(ctx, cfg.Harness, agentConfig.Permissions); err != nil {
+		} else if err := func() error {
+			if backboneGoverned {
+				return nil
+			}
+			return m.chat.PreflightChat(ctx, cfg.Harness, agentConfig.Permissions)
+		}(); err != nil {
 			fallbackAllowed := errors.Is(err, ports.ErrChatUnsupported) ||
 				errors.Is(err, ports.ErrChatDriverUnavailable) ||
 				errors.Is(err, ports.ErrChatDriverIncompatible) ||
@@ -980,7 +996,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 				"harness", cfg.Harness, "error", err)
 			mode = domain.SessionModeTUI
 		}
-		if mode == domain.SessionModeChat {
+		if mode == domain.SessionModeChat && !backboneGoverned {
 			resolved, err := m.resolveAgentConfig(ctx, cfg, project.Config)
 			if err != nil {
 				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
@@ -1026,7 +1042,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (result doma
 	// dispatch alike, an omitted effort uses max only if the exact configured
 	// model advertises that native variant. Unknown choices fail closed.
 	var floorAudit *opencodeeffort.AuditEntry
-	if floorEnabled := opencodeeffort.Enabled(); floorEnabled {
+	if floorEnabled := opencodeeffort.Enabled(); floorEnabled && !backboneGoverned {
 		automation := cfg.AutomationRunID != nil
 		raised, out, audit, err := m.applyOpenCodeEffortFloor(ctx, cfg, agentConfig, automation)
 		if err != nil {

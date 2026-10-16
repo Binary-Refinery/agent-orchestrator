@@ -130,3 +130,30 @@ Root owns remote preservation checkpoints and PR publication. A pending-state
 workbranch checkpoint is not acceptance or activation. Before PR handover follow
 `.agents/skills/pr-description/SKILL.md`, verify category diff counts, remote tree,
 visible `@codex review` and actual CI/review outcomes. No auto-merge.
+
+## Native state isolation clarification (2026-10-16)
+
+Pinned source inspection found that native bootstrap can load remote organization
+and well-known authentication configuration before ordinary config readback. The
+fixed ACP contract therefore supplies stable per-session AO-owned
+XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_CACHE_HOME below AO's data
+directory, including fresh process resume. These are launch inputs, never an
+alternative authority. Validate their real paths, ownership scope and discovered
+native bootstrap sources before invoking the exact binary. Reject unsafe or
+unbound state rather than copying the user's existing native database/config.
+Ordinary provider API credential environment may be inherited; never include its
+values in diagnostics or qualification evidence. The same full environment is
+used for native readback and the launched process. Actual Windows path/global
+configuration behavior still needs Windows evidence; unsupported managed config
+locations fail closed. This isolation does not claim OS process confinement or
+permit adoption of a live host. Explicit model and native effort remain pinned
+by the existing Instructor policy; initial controlled ACP configuration must
+establish them, then reject changes for the life of the process.
+The implementation must also bind native HOME/USERPROFILE and Windows managed
+configuration semantics: XDG variables alone are not proof that a Windows/global
+source is absent. Check every pinned native search location or supply a supported
+isolated home; reject global/ancestor AGENTS, Claude instructions and skill trees
+not in the approved receipt. Credential environment is limited to the selected
+provider's existing API credential inputs; inherited native config/permission,
+plugin, model or organization overrides are rejected. Resume may reuse only the
+same previously controlled state directory with a new validated process.

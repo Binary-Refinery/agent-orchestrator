@@ -168,6 +168,10 @@ func (m *Manager) StartInterfaceTransition(
 	if rec.IsTerminated {
 		return domain.SessionInterfaceTransition{}, ErrTerminated
 	}
+
+	if _, _, err := m.prepareBackboneController(ctx, id, rec.Metadata.WorkspacePath, target, rec.Metadata.Model, rec.Metadata.Permissions); err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
 	source := domain.NormalizeSessionMode(rec.Mode)
 	if target == source {
 		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: session %s is already in %s mode",

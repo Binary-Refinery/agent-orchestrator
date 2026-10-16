@@ -82,6 +82,8 @@ type nestedMessageState struct {
 }
 
 type conversation struct {
+	backboneModel   string
+	backboneEffort  string
 	conn            *acpsdk.ClientSideConnection
 	legacyWire      *legacyACPTransport
 	proc            *process
@@ -424,6 +426,12 @@ func (c *conversation) DiscardDeferredTurn(providerTurnID string) {
 }
 
 func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.ChatTurnSettings) error {
+	if c.backboneModel != "" {
+		if (settings.Model != "" && settings.Model != c.backboneModel) || (settings.Effort != "" && settings.Effort != c.backboneEffort) || ports.NormalizePermissionMode(settings.Approval) != ports.PermissionModeDefault {
+			return fmt.Errorf("%w: governed OpenCode settings require provider replacement", ports.ErrChatConfigOptionInvalid)
+		}
+		return c.validateBackboneSelection()
+	}
 	c.mu.Lock()
 	sessionID := c.sessionID
 	modeFor := c.modeFor

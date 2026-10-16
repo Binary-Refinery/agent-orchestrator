@@ -96,6 +96,14 @@ func (m *Manager) RunBackgroundTask(
 	if rec.IsTerminated {
 		return "", fmt.Errorf("session %s is terminated", id)
 	}
+	binding, _, bindErr := m.prepareBackboneController(ctx, id, rec.Metadata.WorkspacePath, domain.NormalizeSessionMode(rec.Mode), rec.Metadata.Model, rec.Metadata.Permissions)
+	if bindErr != nil {
+		return "", bindErr
+	}
+	if binding != nil {
+		return "", fmt.Errorf("governed OpenCode background inference requires its qualified controller")
+	}
+
 	releaseHarness, err := m.beginHarnessUse(rec.Harness)
 	if err != nil {
 		return "", err
@@ -216,6 +224,14 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		agentConfig = applySpawnAgentConfig(effectiveAgentConfig(in.cfg.Harness, in.cfg.Kind, in.project.Config), in.cfg.AgentConfig)
 	}
 
+	backboneBinding, backbonePrompt, err := m.prepareBackboneController(ctx, id, in.workspace.Path, domain.SessionModeChat, agentConfig.Model, agentConfig.Permissions)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false, in.promptQueued)
+		return domain.SessionRecord{}, wrapSpawnStage(id, ErrChatController, err)
+	}
+	if backboneBinding != nil {
+		in.systemPrompt += "\n\n" + backbonePrompt
+	}
 	var diffBaseSHA, diffBaseRef string
 	if in.projectKind == domain.ProjectKindSingleRepo {
 		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
@@ -244,6 +260,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		Effort:                  agentConfig.Effort,
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            in.systemPrompt,
+		Backbone:                backboneBinding,
 		AdditionalDirectories:   workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
 		ExpectedControllerOwner: in.record.ControllerOwner(),
 		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
@@ -460,9 +477,18 @@ func (m *Manager) resumeChatController(
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
 	}
-	agentConfig, err = m.validateRestoredAgentConfig(ctx, rec, agentConfig)
+
+	backboneBinding, backbonePrompt, err := m.prepareBackboneController(ctx, rec.ID, ws.Path, domain.SessionModeChat, agentConfig.Model, agentConfig.Permissions)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("%s %s: native model configuration: %w", operation, rec.ID, err)
+		return RestoreResult{}, err
+	}
+	if backboneBinding != nil {
+		systemPrompt += "\n\n" + backbonePrompt
+	} else {
+		agentConfig, err = m.validateRestoredAgentConfig(ctx, rec, agentConfig)
+		if err != nil {
+			return RestoreResult{}, fmt.Errorf("%s %s: native model configuration: %w", operation, rec.ID, err)
+		}
 	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
@@ -499,6 +525,7 @@ func (m *Manager) resumeChatController(
 		Effort:                  agentConfig.Effort,
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            systemPrompt,
+		Backbone:                backboneBinding,
 		AdditionalDirectories:   additionalDirectories,
 		ExpectedControllerOwner: rec.ControllerOwner(),
 		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {

@@ -45,3 +45,5 @@ Persist durable facts, derive display status:
 - session table: `activity_state`, `is_terminated`, identity, metadata
 - PR tables: PR/CI/review facts
 - derived read model: `service.Session` computes display status from session + PR facts
+
+- [Controlled OpenCode Backbone integration](opencode-backbone.md) — optional pinned context, explicit qualification and fresh ACP admission.

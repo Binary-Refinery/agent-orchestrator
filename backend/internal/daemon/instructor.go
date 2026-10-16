@@ -378,6 +378,9 @@ func (g instructorGovernance) ValidateResume(ctx context.Context, id domain.Sess
 	if err := g.svc.ValidateResume(ctx, id); err != nil {
 		return err
 	}
+	if len(work.Policy.Backbone) != 0 {
+		return nil
+	}
 	session, roleName, _, err := g.managedSessionRole(ctx, work, id)
 	if err != nil {
 		return err
@@ -765,4 +768,16 @@ func (d instructorDelivery) Cancel(ctx context.Context, dispatch domain.Instruct
 		return fmt.Errorf("%w: native pane submission cannot be proved cancelled", instructorsvc.ErrDeliveryUncertain)
 	}
 	return d.Reconcile(ctx, dispatch, false, "")
+}
+
+// BackbonePreflight keeps candidate native discovery behind the operator binding.
+func (g instructorGovernance) BackbonePreflight(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord, mode domain.SessionMode) (bool, error) {
+	role := cfg.WorkRole
+	if role == "" {
+		role = string(cfg.Kind)
+	}
+	return g.svc.BackbonePreflight(ctx, instructorsvc.SpawnInput{WorkID: cfg.WorkID, ParentSessionID: cfg.ParentSessionID, Role: role, Harness: string(cfg.Harness), Model: cfg.AgentConfig.Model, Effort: cfg.AgentConfig.Effort}, project, mode, cfg.AgentConfig.Permissions)
+}
+func (g instructorGovernance) PrepareBackboneController(ctx context.Context, id domain.SessionID, workspace string, mode domain.SessionMode, model string, permissions ports.PermissionMode) (*ports.ChatBackboneConfig, string, error) {
+	return g.svc.PrepareBackboneController(ctx, id, workspace, mode, model, permissions)
 }

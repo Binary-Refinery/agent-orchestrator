@@ -319,6 +319,7 @@ func (s *Service) EditMessage(
 					err = prepareErr
 				} else {
 					provider, err = driver.Resume(operationCtx, ports.ChatResumeConfig{
+						Backbone:  cfg.Backbone,
 						SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
 						DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: launchEnv,
 						Model: cfg.Model, Effort: cfg.Effort,
@@ -359,6 +360,7 @@ func (s *Service) EditMessage(
 				err = prepareErr
 			} else {
 				provider, err = driver.Start(operationCtx, ports.ChatStartConfig{
+					Backbone:  cfg.Backbone,
 					SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 					Env: launchEnv, Model: cfg.Model, Effort: cfg.Effort,
 					Permissions:  cfg.Permissions,
@@ -431,6 +433,10 @@ func (s *Service) EditMessage(
 	conversation := source.conversation
 	conversation.ActiveBranchID = branchID
 	replacement := newController(id, source.owner(), conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
+	replacement.backbone = cloneBackbone(cfg.Backbone)
+	replacement.backboneWorkspace = cfg.WorkspacePath
+	replacement.validateBackbone = s.validateBackbone
+	replacement.validateSemanticDispatch = s.validateSemanticDispatch
 	if err := s.store.CreateAndActivateConversationBranch(
 		operationCtx, id, branch, generation, s.now(),
 	); err != nil {
@@ -900,6 +906,7 @@ func (s *Service) activateBranchLocked(ctx context.Context, id domain.SessionID,
 		return "", err
 	}
 	provider, err := driver.Resume(operationCtx, ports.ChatResumeConfig{
+		Backbone:  cfg.Backbone,
 		SessionID: cfg.SessionID, ProviderConversationID: branch.ProviderConversationID,
 		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: launchEnv,
 		Model: cfg.Model, Effort: cfg.Effort,
@@ -922,6 +929,10 @@ func (s *Service) activateBranchLocked(ctx context.Context, id domain.SessionID,
 	conversation := source.conversation
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(id, source.owner(), conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
+	replacement.backbone = cloneBackbone(cfg.Backbone)
+	replacement.backboneWorkspace = cfg.WorkspacePath
+	replacement.validateBackbone = s.validateBackbone
+	replacement.validateSemanticDispatch = s.validateSemanticDispatch
 	if err := s.store.ActivateConversationBranch(operationCtx, id, conversation.ID, branch.ID,
 		branch.ProviderConversationID, generation, s.now()); err != nil {
 		_ = cleanupUnpublishedConversation(provider, true)
@@ -1005,6 +1016,7 @@ func (s *Service) restoreClosedSourceController(
 		return fmt.Errorf("rotate source browser capability after failed native edit: %w", err)
 	}
 	provider, err := driver.Resume(recoveryCtx, ports.ChatResumeConfig{
+		Backbone:  cfg.Backbone,
 		SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
 		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: launchEnv,
 		Model: cfg.Model, Effort: cfg.Effort,
@@ -1021,6 +1033,10 @@ func (s *Service) restoreClosedSourceController(
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(
 		id, source.owner(), conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
+	replacement.backbone = cloneBackbone(cfg.Backbone)
+	replacement.backboneWorkspace = cfg.WorkspacePath
+	replacement.validateBackbone = s.validateBackbone
+	replacement.validateSemanticDispatch = s.validateSemanticDispatch
 	if err := s.store.ActivateConversationBranch(recoveryCtx, id, conversation.ID, branch.ID,
 		providerConversationID, generation, s.now()); err != nil {
 		_ = provider.Close()

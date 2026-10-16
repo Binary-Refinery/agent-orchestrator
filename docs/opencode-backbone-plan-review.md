@@ -70,3 +70,46 @@ runtime, remote CI, qualification or model test was performed. Exact new source
 behavior, platform path handling and generated API consistency remain required
 implementation checks and independent Full-review coverage. No previously blocked
 dynamic reproduction was retried.
+
+## Limited clarification review: native state isolation
+
+Date: 2026-10-16. This follow-up reviews only the appended native state isolation
+clarification, against the previously approved contract. The frozen updated plan
+SHA-256 is `458647f41d6a982f2b66c78a9dcad1a41505da38de5613a2ce3744f24c0e7e2b`.
+The packet remains `85c10817af006fa665afa5e543746c510cabf3869b1627712c2f16a11062ebe7`.
+Both hashes were rechecked before recording this conclusion.
+
+**NO CONFIRMED IN-SCOPE FINDINGS. The clarification is approved for implementation.**
+It makes the already approved fixed native-input closure concrete; it does not
+expand authority, activate governed execution, change operator qualification, or
+permit live-controller adoption.
+
+Static inspection of the supplied OpenCode 1.19.0 source snapshot shows that
+`Config.loadInstanceState` reads well-known authentication configuration before
+global/project configuration, and active account organization configuration after
+the inline overlay. A later `debug config` result cannot prevent earlier bootstrap
+effects. The supplied Global module derives data/config/state/cache paths from
+`xdg-basedir`, but derives home separately from `OPENCODE_TEST_HOME` or
+`os.homedir()`. Config search also includes the home `.opencode` directory.
+Managed configuration separately uses `/etc/opencode`, Windows `ProgramData`, or
+macOS system and managed-preference locations. Instruction discovery has distinct
+global, home and ancestor sources. These observations support isolating and
+validating the complete effective input set before the first native process.
+
+The clarification preserves the required boundaries: per-session state below
+AO-owned data, validated real paths, identical effective probe/launch environment,
+no copying existing native auth/database/config, explicit HOME/USERPROFILE and
+managed-location handling, and refusal of unbound sources. Only selected-provider
+API credential inputs may be inherited, without disclosure in diagnostics.
+Fresh-process resume may use the same controlled state only after its bootstrap
+inputs are revalidated; AO ownership alone is not evidence that persisted native
+state is safe. Unsupported sources fail closed. Native model and effort remain
+policy-pinned and immutable during the process.
+
+Coverage: read the appended plan and local supplied `config.ts`, `instruction.ts`,
+`flag.ts`, Global, config-path and managed-config source modules. No implementation
+file was changed; no native binary, network endpoint or adversarial reproduction
+was run. This conclusion does not certify source-download provenance, Windows
+environment behavior, directory ownership enforcement, credential filtering,
+resume safety or probe/launch equivalence in the eventual implementation. Those
+remain fresh deterministic/native checks and independent Full-review obligations.
