@@ -60,6 +60,9 @@ func PolicyVersion(p domain.InstructorPolicy) string {
 
 // ValidatePolicy checks the executable schema and bounded role/profile contracts.
 func ValidatePolicy(p domain.InstructorPolicy) error {
+	if _, err := policyBackbone(p); err != nil {
+		return err
+	}
 	if p.Schema != 1 {
 		return invalid("unsupported instructor policy schema")
 	}

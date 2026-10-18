@@ -382,6 +382,16 @@ func (g instructorGovernance) ValidateResume(ctx context.Context, id domain.Sess
 	if err != nil {
 		return err
 	}
+	if len(work.Policy.Backbone) != 0 {
+		binding, _, err := g.svc.PrepareBackboneController(ctx, id, session.Metadata.WorkspacePath,
+			domain.NormalizeSessionMode(session.Mode), session.Metadata.Model, session.Metadata.Permissions)
+		if err != nil {
+			return err
+		}
+		if binding != nil {
+			return nil // Controlled ACP owns native discovery after static checks.
+		}
+	}
 	role, found := work.Policy.Roles[roleName]
 	if !found {
 		return errors.New("managed session role is not in its pinned policy")
@@ -765,4 +775,16 @@ func (d instructorDelivery) Cancel(ctx context.Context, dispatch domain.Instruct
 		return fmt.Errorf("%w: native pane submission cannot be proved cancelled", instructorsvc.ErrDeliveryUncertain)
 	}
 	return d.Reconcile(ctx, dispatch, false, "")
+}
+
+// BackbonePreflight keeps candidate native discovery behind the operator binding.
+func (g instructorGovernance) BackbonePreflight(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord, mode domain.SessionMode) (bool, error) {
+	role := cfg.WorkRole
+	if role == "" {
+		role = string(cfg.Kind)
+	}
+	return g.svc.BackbonePreflight(ctx, instructorsvc.SpawnInput{WorkID: cfg.WorkID, ParentSessionID: cfg.ParentSessionID, Role: role, Harness: string(cfg.Harness), Model: cfg.AgentConfig.Model, Effort: cfg.AgentConfig.Effort}, project, mode, cfg.AgentConfig.Permissions)
+}
+func (g instructorGovernance) PrepareBackboneController(ctx context.Context, id domain.SessionID, workspace string, mode domain.SessionMode, model string, permissions ports.PermissionMode) (*ports.ChatBackboneConfig, string, error) {
+	return g.svc.PrepareBackboneController(ctx, id, workspace, mode, model, permissions)
 }

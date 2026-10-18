@@ -54,6 +54,7 @@ type Service struct {
 	observeAgentConfig       func(context.Context, domain.SessionID, string, string, string) error
 	validateAgentConfig      func(context.Context, domain.SessionID, string, string) error
 	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
+	validateBackbone         func(context.Context, domain.SessionID, *ports.ChatBackboneConfig) error
 	executionBudget          ports.ManagedExecutionBudgetGuard
 	stopProviderHost         func(context.Context, domain.SessionID) error
 	reports                  *reportsvc.Coordinator
@@ -241,6 +242,7 @@ func notifyControllerReady(
 
 func cloneStartConfig(cfg StartConfig) StartConfig {
 	cloned := cfg
+	cloned.Backbone = cloneBackbone(cfg.Backbone)
 	cloned.Env = make(map[string]string, len(cfg.Env))
 	for key, value := range cfg.Env {
 		cloned.Env[key] = value
@@ -288,9 +290,21 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 // conversation: presenting unrelated history as continuous is worse than an error
 // the user can act on.
 func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, error) {
+	cfg.Backbone = cloneBackbone(cfg.Backbone)
 	owner := conversationOwner(cfg)
 	if owner.Kind == domain.ConversationOwnerReview {
 		cfg.ReadOnly = true
+	}
+	if err := validateBackboneStart(ctx, cfg); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	backboneValidator := s.validateBackbone
+	s.mu.RUnlock()
+	if backboneValidator != nil && owner.Kind == domain.ConversationOwnerSession {
+		if err := backboneValidator(ctx, cfg.SessionID, cfg.Backbone); err != nil {
+			return nil, err
+		}
 	}
 	gate := s.controllerGate(owner)
 	if err := gate.lock(ctx); err != nil {
@@ -382,6 +396,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	s.mu.RUnlock()
 	if existing != nil {
 		if existing.State() != ports.ChatControllerStopped {
+			if cfg.Backbone != nil || existing.backbone != nil {
+				return nil, fmt.Errorf("governed OpenCode cannot adopt an existing controller")
+			}
 			return existing, nil
 		}
 		// A stopped event can reach the UI before the projector finishes its final
@@ -453,7 +470,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 
 	var caps ports.ChatCapabilities
-	if cfg.ProviderConversationID == "" {
+	if cfg.ProviderConversationID == "" && cfg.Backbone == nil {
 		caps, err = s.driverCapabilities(ctx, cfg.Harness, driver)
 		if err != nil {
 			return nil, err
@@ -598,6 +615,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// Conversation settings are durable user choices. Restore the selected
 	// model when rebuilding a controller after a daemon restart; the caller's
 	// session default must not silently replace it.
+	if cfg.Backbone != nil && cfg.ProviderConversationID != "" && (conversation.Settings.Model != cfg.Model || conversation.Settings.ReasoningEffort != cfg.Effort || ports.NormalizePermissionMode(conversation.Settings.ApprovalMode) != ports.PermissionModeDefault || conversation.Settings.OpenCodeMode != "") {
+		return nil, fmt.Errorf("stored governed OpenCode configuration changed; fresh controlled replacement required")
+	}
 	if cfg.ProviderConversationID != "" && !cfg.PinModelSettings && conversation.Settings.Model != "" {
 		cfg.Model = conversation.Settings.Model
 	}
@@ -615,8 +635,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cfg.Permissions = conversation.Settings.ApprovalMode
 	}
 	if cfg.ProviderConversationID == "" {
-		if err := capabilityAdmissionError(cfg.Harness, caps, cfg.Permissions); err != nil {
-			return nil, err
+		if cfg.Backbone == nil {
+			if err := capabilityAdmissionError(cfg.Harness, caps, cfg.Permissions); err != nil {
+				return nil, err
+			}
 		}
 		conversation.Settings.Model = cfg.Model
 		conversation.Settings.ReasoningEffort = cfg.Effort
@@ -651,6 +673,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	hostID := providerHostID(cfg)
 	if cfg.ProviderConversationID != "" {
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
+			Backbone:               cfg.Backbone,
 			SessionID:              hostID,
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
@@ -669,6 +692,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
+			Backbone:              cfg.Backbone,
 			ProviderIDsScoped:     providerBoundaryID != "" || activeBranch.ProviderIDsScoped,
 			SessionID:             hostID,
 			DataDir:               cfg.DataDir,
@@ -710,6 +734,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, errors.Join(fmt.Errorf("%w: native-history handoff cannot adopt an existing live provider; a fresh observation is required",
 			ports.ErrChatRecoveryInconclusive), cleanupErr)
 	}
+	if cfg.Backbone != nil && liveReconnect {
+		cleanupErr := cleanupUnpublishedConversation(conv, false)
+		return nil, errors.Join(fmt.Errorf("%w: governed OpenCode cannot adopt a live provider", ports.ErrChatRecoveryInconclusive), cleanupErr)
+	}
 	if cfg.HistoryMode == ports.ChatHistoryContinuity && liveReconnect &&
 		(conversation.SessionID != cfg.SessionID || activeBranch.SessionID != cfg.SessionID ||
 			activeBranch.ProviderConversationID != cfg.ProviderConversationID || providerBoundaryID != "") {
@@ -725,7 +753,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, err
 		}
 	}
-	if cfg.ProviderConversationID != "" {
+	if cfg.ProviderConversationID != "" || cfg.Backbone != nil {
 		// Resume owns live-host adoption before installation/auth discovery. A
 		// desktop update can move a binary while its old process is still running.
 		// Admit using what this connection actually negotiated, not a fresh probe.
@@ -821,6 +849,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cfg.SessionID, owner, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	s.mu.RLock()
 	controller.validateSemanticDispatch = s.validateSemanticDispatch
+	controller.backbone = cloneBackbone(cfg.Backbone)
+	controller.backboneWorkspace = cfg.WorkspacePath
+	controller.validateBackbone = s.validateBackbone
 	controller.executionBudget = s.executionBudget
 	s.mu.RUnlock()
 	var commitProviderHistory func(context.Context) error
@@ -1926,6 +1957,9 @@ func (s *Service) SetConfigOption(
 	if err != nil {
 		return nil, err
 	}
+	if err := controller.backboneImmutable(); err != nil {
+		return nil, err
+	}
 	configurer, ok := controller.conv.(ports.ChatConfigOptionController)
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
@@ -2202,6 +2236,9 @@ func (s *Service) SetTurnSettings(
 	}
 	controller.configMu.Lock()
 	defer controller.configMu.Unlock()
+	if err := controller.backboneImmutable(); err != nil {
+		return domain.ConversationSettings{}, err
+	}
 	// The turn-settings endpoint does not own provider session mode choices.
 	previous := controller.Settings()
 	settings.OpenCodeMode = previous.OpenCodeMode

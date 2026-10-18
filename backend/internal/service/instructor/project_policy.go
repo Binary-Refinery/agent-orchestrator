@@ -132,7 +132,27 @@ func (s *Service) resolveProjectSelections(ctx context.Context, project domain.P
 		if !exists || role.SelectionSource != "project" {
 			continue
 		}
-		resolved, err := s.ResolveProjectRole(ctx, project, name, role)
+		var resolved domain.InstructorRole
+		var err error
+		selection := projectRoleSelection(project.Config, name)
+		if governed, bindErr := validateBackboneSelection(p, name, selection.Harness, selection.Model); governed || bindErr != nil {
+			if bindErr != nil {
+				return p, bindErr
+			}
+			if selection.Harness == "" || selection.Model == "" || selection.Effort == "" {
+				return p, invalid(fmt.Sprintf("project %s role %s needs an explicit harness, model and native effort in project settings", project.ID, name))
+			}
+			if err = validateSelectionConstraint(role, selection); err == nil {
+				resolved = role
+				resolved.Harness, resolved.Model = selection.Harness, selection.Model
+				resolved.EffortByModel = maps.Clone(role.EffortByModel)
+				if resolved.Effort == "configured" {
+					resolved.Effort = selection.Effort
+				}
+			}
+		} else {
+			resolved, err = s.ResolveProjectRole(ctx, project, name, role)
+		}
 		if err != nil {
 			return p, err
 		}
@@ -254,6 +274,12 @@ func (s *Service) ValidateResolvedPolicy(ctx context.Context, id domain.ProjectI
 		if err := validateSelectionConstraint(role, selection); err != nil {
 			return invalid(fmt.Sprintf("project %s role %s: %v", id, name, err))
 		}
+		if governed, bindErr := validateBackboneSelection(p, name, selection.Harness, selection.Model); governed || bindErr != nil {
+			if bindErr != nil {
+				return bindErr
+			}
+			continue
+		}
 		if err := s.validateNativeSelection(ctx, id, name, role, selection); err != nil {
 			return err
 		}
@@ -297,6 +323,12 @@ func (s *Service) validateProjectSelections(ctx context.Context, project domain.
 		}
 		if err := validateSelectionConstraint(role, selection); err != nil {
 			return invalid(fmt.Sprintf("project %s role %s: %v; use project-sourced selection or choose a permitted value", project.ID, name, err))
+		}
+		if len(p.Backbone) != 0 && selection.Harness == "opencode" && selection.Model != "" {
+			if _, err := validateBackboneSelection(p, name, selection.Harness, selection.Model); err != nil {
+				return err
+			}
+			continue
 		}
 		if validateNative && selection.Harness != "" && strings.TrimSpace(selection.Model) != "" && strings.TrimSpace(selection.Effort) != "" {
 			if err := s.validateNativeSelection(ctx, domain.ProjectID(project.ID), name, role, selection); err != nil {

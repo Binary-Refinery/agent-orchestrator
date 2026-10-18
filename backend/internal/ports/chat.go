@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -273,8 +274,20 @@ func MissingCapabilitiesForPermissions(caps ChatCapabilities, permissions Permis
 	return out
 }
 
+// ChatBackboneConfig carries the pinned Instructor authority into the native
+// boundary. It is never inferred from process environment or workspace content.
+// Services pass a snapshot and adapters revalidate it before native bootstrap.
+type ChatBackboneConfig struct {
+	Binding        json.RawMessage
+	InstructorRole string
+	PolicyVersion  string
+	Model          string
+	Effort         string
+}
+
 // ChatStartConfig is what a driver needs to open a new provider conversation.
 type ChatStartConfig struct {
+	Backbone  *ChatBackboneConfig
 	SessionID domain.SessionID
 	// DataDir is AO's state root. Provider bindings may write process-scoped
 	// configuration beneath it, but must never use the worktree or an OS-default
@@ -323,6 +336,7 @@ type ChatStartConfig struct {
 
 // ChatResumeConfig reattaches to a provider conversation after a restart.
 type ChatResumeConfig struct {
+	Backbone *ChatBackboneConfig
 	// See ChatStartConfig.ProviderIDsScoped.
 	ProviderIDsScoped      bool
 	SessionID              domain.SessionID

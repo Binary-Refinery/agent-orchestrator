@@ -563,6 +563,7 @@ func Run() error {
 		instructorSvc.SetPlanner(instructorNativePlanner{drivers: chatDrivers, dataDir: cfg.StateDir, projects: store})
 		concreteManager.SetInstructorGovernance(instructorBridge)
 		chatSvc.SetAgentConfigValidator(instructorBridge.ValidateChatAgentConfig)
+		chatSvc.SetBackboneValidator(instructorSvc.ValidateBackboneControllerBinding)
 		chatSvc.SetAgentConfigObserver(instructorBridge.ObserveChatAgentConfig)
 		chatSvc.SetExecutionBudgetGuard(instructorBridge)
 		chatSvc.SetSemanticDispatchValidator(func(ctx context.Context, target domain.SessionID, key string) error {

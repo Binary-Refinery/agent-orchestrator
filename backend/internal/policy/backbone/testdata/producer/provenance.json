@@ -1,0 +1,16 @@
+{
+  "producer": "actual Copier plus installed quality-guard resolve/verify",
+  "qualification": "none; data-only interoperability fixture",
+  "source_navigation_sha256": "47dba9cf922a547fdba8676b7b9f2ef668777bb453481203496e870614865a8e",
+  "workspace_revision": "c77601c5fcd96188ddeca71b3cc9429a2d692a51",
+  "request": "/workspace/scratch/6e019b0851cc/engineering-backbone/artifacts/opencode/ao-producer/request.json",
+  "receipt": "/workspace/scratch/6e019b0851cc/engineering-backbone/artifacts/opencode/ao-producer/context.json",
+  "document_count": 33,
+  "document_bytes": 178293,
+  "adapter_sha256": "c469f3b004a73ffc48f26129c6b6239beeed74b9807a521472ef596712738d71",
+  "resolve_exit_code": 0,
+  "verify_exit_code": 0,
+  "source_base_revision": "96df5365d83c7d1c9f4f5bf6a9280b458d8f1c20",
+  "source_state": "Reconstructed worktree snapshot; source_base_revision is not a claim that all producer changes were committed.",
+  "installed_guard_sha256": "c8b81e2db17c4c65ce74e282d9565d4c738e90232217ae57815103dd453429fb"
+}

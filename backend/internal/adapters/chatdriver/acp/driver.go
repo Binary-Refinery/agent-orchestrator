@@ -28,20 +28,23 @@ const handshakeTimeout = 60 * time.Second
 // protocol bridge or the exact user-installed provider executable resolved by
 // the existing agent plugin.
 type Launch struct {
-	Command string
-	Args    []string
-	Env     map[string]string
+	ValidateBeforeSend func(context.Context) error
+	Command            string
+	Args               []string
+	Env                map[string]string
 }
 
 // LaunchConfig is the resolved AO session context a provider binding may use to
 // construct its process. It intentionally contains no install mechanism: binary
 // ownership stays with the existing agent plugin.
 type LaunchConfig struct {
+	Backbone        *ports.ChatBackboneConfig
 	SessionID       domain.SessionID
 	DataDir         string
 	WorkspacePath   string
 	Env             map[string]string
 	Model           string
+	Effort          string
 	ReadOnly        bool
 	Permissions     ports.PermissionMode
 	SystemPrompt    string
@@ -196,6 +199,9 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 // Start creates a new ACP session in the AO worktree.
 func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
 	totalStarted := time.Now()
+	if err := validateBackboneStart(d.cfg.Harness, cfg.Backbone, cfg.Model, cfg.Effort, cfg.Permissions, cfg.MCPServers, cfg.AdditionalDirectories); err != nil {
+		return nil, err
+	}
 	if cfg.ReadOnly {
 		return nil, fmt.Errorf("%w: %s ACP does not provide an enforceable read-only sandbox", ports.ErrChatConfigOptionInvalid, d.cfg.Harness)
 	}
@@ -210,9 +216,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		}
 	}
 	launchCfg := LaunchConfig{
+		Backbone:  cfg.Backbone,
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env:   cfg.Env,
-		Model: cfg.Model, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Model: cfg.Model, Effort: cfg.Effort, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	connectStarted := time.Now()
@@ -272,7 +279,11 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		conv.legacyWire.modelState(), resp.Modes,
 	)
 	settingsStarted := time.Now()
-	err = conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
+	if cfg.Backbone != nil {
+		err = conv.configureBackboneSession(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
+	} else {
+		err = conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
+	}
 	d.logStartStage(cfg.SessionID, "initial_settings", settingsStarted, err)
 	if err != nil {
 		// Initial model and permission mode may have been applied via launch-time
@@ -307,6 +318,9 @@ func (d *Driver) logStartStage(sessionID domain.SessionID, stage string, started
 // transcript; resume-only agents recover context but explicitly report that no
 // typed history replay is available.
 func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
+	if err := validateBackboneStart(d.cfg.Harness, cfg.Backbone, cfg.Model, cfg.Effort, cfg.Permissions, cfg.MCPServers, cfg.AdditionalDirectories); err != nil {
+		return nil, err
+	}
 	if cfg.ReadOnly {
 		return nil, fmt.Errorf("%w: %s ACP does not provide an enforceable read-only sandbox", ports.ErrChatConfigOptionInvalid, d.cfg.Harness)
 	}
@@ -324,9 +338,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		}
 	}
 	launchCfg := LaunchConfig{
+		Backbone:  cfg.Backbone,
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env:   cfg.Env,
-		Model: cfg.Model, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Model: cfg.Model, Effort: cfg.Effort, ReadOnly: cfg.ReadOnly, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, live, err := d.connect(ctx, launchCfg, cfg.PrepareEnv)
@@ -440,7 +455,13 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		cfg.Permissions, d.cfg.ValidateTurnSettings, configOptions,
 		conv.legacyWire.modelState(), modes,
 	)
-	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
+	var settingsErr error
+	if cfg.Backbone != nil {
+		settingsErr = conv.configureBackboneSession(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
+	} else {
+		settingsErr = conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
+	}
+	if err := settingsErr; err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) || (d.cfg.RequireSessionOptions && (cfg.Model != "" || cfg.Effort != "")) {
 			conv.discard()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
@@ -474,9 +495,20 @@ func (d *Driver) initialize(
 	cfg LaunchConfig,
 	proc *process,
 ) (*conversation, acpsdk.InitializeResponse, *persistenthost.ACPState, error) {
+	if cfg.Backbone != nil && proc.reconnected {
+		if proc.stop != nil {
+			_ = proc.stop()
+		}
+		return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf("%w: governed OpenCode requires a fresh controlled provider process", ports.ErrChatRecoveryInconclusive)
+	}
 	conv := newConversation(
 		proc, d.log, cfg.ProviderScopeID, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases,
 	)
+	if cfg.Backbone != nil {
+
+		conv.backboneModel = cfg.Backbone.Model
+		conv.backboneEffort = cfg.Backbone.Effort
+	}
 	conv.onAuthRejected = d.cfg.OnAuthRejected
 	conv.requireSessionOptions = d.cfg.RequireSessionOptions
 	conv.promptResponseFailure = d.cfg.PromptResponseFailure
@@ -563,6 +595,7 @@ func (d *Driver) connectProcess(
 	// changes to those take effect only when the provider is explicitly replaced.
 	owner, _ := json.Marshal([]string{filepath.Clean(cfg.WorkspacePath), string(d.cfg.Harness), cfg.ProviderScopeID})
 	identity := fmt.Sprintf("%x", sha256.Sum256(owner))
+	var validateBeforeSend func(context.Context) error
 	hostConfig := persistenthost.Config{
 		SessionID: string(cfg.SessionID), DataDir: cfg.DataDir, Workdir: cfg.WorkspacePath,
 		Protocol: persistenthost.ProtocolACP, OwnershipFingerprint: identity,
@@ -580,6 +613,7 @@ func (d *Driver) connectProcess(
 			if err != nil {
 				return persistenthost.PreparedProvider{}, err
 			}
+			validateBeforeSend = launch.ValidateBeforeSend
 			if launch.Command == "" {
 				return persistenthost.PreparedProvider{}, fmt.Errorf("%w: ACP launch command is empty", ports.ErrChatDriverUnavailable)
 			}
@@ -601,7 +635,8 @@ func (d *Driver) connectProcess(
 	}
 	gate := newGatedReader(transport.Stdout, !transport.Reconnected)
 	proc := &process{
-		stdin: transport.Stdin, stdout: gate, gate: gate,
+		validateBeforeSend: validateBeforeSend,
+		stdin:              transport.Stdin, stdout: gate, gate: gate,
 		reconnected: transport.Reconnected, acpState: transport.ACPState,
 	}
 	proc.stop = persistentStop(gate, transport.Stdin)
