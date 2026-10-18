@@ -139,6 +139,9 @@ func (s *Service) resolveProjectSelections(ctx context.Context, project domain.P
 			if bindErr != nil {
 				return p, bindErr
 			}
+			if selection.Harness == "" || selection.Model == "" || selection.Effort == "" {
+				return p, invalid(fmt.Sprintf("project %s role %s needs an explicit harness, model and native effort in project settings", project.ID, name))
+			}
 			if err = validateSelectionConstraint(role, selection); err == nil {
 				resolved = role
 				resolved.Harness, resolved.Model = selection.Harness, selection.Model
