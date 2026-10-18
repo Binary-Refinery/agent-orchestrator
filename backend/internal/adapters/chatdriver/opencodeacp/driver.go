@@ -10,13 +10,10 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"reflect"
-
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	acpdriver "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/nativeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/policy/backbone"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -31,88 +28,16 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 		RequireSessionOptions: true,
 		PermissionPolicy:      permissionPolicy,
 		ValidateTurnSettings:  validateTurnSettings,
-		BeforeLaunch:          verifyBackboneLaunch,
-		BeforeSend:            verifyBackboneSend,
 	}, log)
 }
 
-func configure(ctx context.Context, cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
-	if cfg.Backbone != nil {
-		verified, err := verifiedBackbone(ctx, cfg)
-		if err != nil {
-			return nil, nil, err
-		}
-		env, err := opencode.PrepareBackboneEnvironment(cfg.DataDir, string(cfg.SessionID), cfg.Backbone, cfg.Env)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := opencode.ValidateBackboneSources(ctx, cfg.WorkspacePath, env, verified); err != nil {
-			return nil, nil, err
-		}
-		content, err := opencode.PrepareBackboneACPConfigContent(verified.Documents["opencode.json"], verified.Documents[".opencode/agents/backbone-implementer.md"], verified.Documents, cfg.SystemPrompt, cfg.Model, cfg.Effort, env["XDG_DATA_HOME"], cfg.WorkspacePath)
-		if err != nil {
-			return nil, nil, err
-		}
-		configPath, err := opencode.WriteBackboneConfig(env, content)
-		if err != nil {
-			return nil, nil, err
-		}
-		env["OPENCODE_CONFIG"] = configPath
-		env["OPENCODE_CONFIG_CONTENT"] = ""
-		return []string{"acp"}, env, nil
-	}
+func configure(_ context.Context, cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 	content, err := opencode.PrepareACPConfigContent(
 		cfg.Env["OPENCODE_CONFIG_CONTENT"], cfg.SystemPrompt, cfg.Permissions)
 	if err != nil {
 		return nil, nil, err
 	}
 	return []string{"acp"}, map[string]string{"OPENCODE_CONFIG_CONTENT": content}, nil
-}
-
-func verifiedBackbone(ctx context.Context, cfg acpdriver.LaunchConfig) (*backbone.VerifiedContext, error) {
-	if cfg.Backbone == nil || cfg.Model != cfg.Backbone.Model || cfg.Effort != cfg.Backbone.Effort || ports.NormalizePermissionMode(cfg.Permissions) != ports.PermissionModeDefault {
-		return nil, fmt.Errorf("%w: governed OpenCode launch selection mismatch", ports.ErrChatConfigOptionInvalid)
-	}
-	binding, err := backbone.ValidateBinding(cfg.Backbone.Binding, nil)
-	if err != nil {
-		return nil, err
-	}
-	verified, err := backbone.Verify(ctx, cfg.WorkspacePath, binding, cfg.Backbone.InstructorRole)
-	if err != nil {
-		return nil, err
-	}
-	if verified.Context.Role != "implementer" || verified.Prompt == "" || !strings.HasSuffix(cfg.SystemPrompt, verified.Prompt) {
-		return nil, fmt.Errorf("%w: governed OpenCode standing context mismatch", ports.ErrChatConfigOptionInvalid)
-	}
-	return verified, nil
-}
-
-func verifyBackboneLaunch(ctx context.Context, binary string, cfg acpdriver.LaunchConfig, env map[string]string) error {
-	if cfg.Backbone == nil {
-		return nil
-	}
-	_, expected, err := configure(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(expected, env) {
-		return fmt.Errorf("%w: governed OpenCode launch environment changed", ports.ErrChatConfigOptionInvalid)
-	}
-
-	verified, err := verifiedBackbone(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	content, err := opencode.PrepareBackboneACPConfigContent(verified.Documents["opencode.json"], verified.Documents[".opencode/agents/backbone-implementer.md"], verified.Documents, cfg.SystemPrompt, cfg.Model, cfg.Effort, env["XDG_DATA_HOME"], cfg.WorkspacePath)
-	if err != nil {
-		return err
-	}
-	return opencode.VerifyBackboneNative(ctx, opencode.BackboneNativeConfig{
-		Binary: binary, WorkspacePath: cfg.WorkspacePath, Env: env, Content: content, SystemPrompt: cfg.SystemPrompt, Model: cfg.Model, Effort: cfg.Effort,
-		ValidateSources: func(checkCtx context.Context) error {
-			return verifyBackboneSend(checkCtx, cfg, env)
-		},
-	})
 }
 
 func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
@@ -170,22 +95,4 @@ func permissionPolicy(
 		}
 	}
 	return "", false
-}
-
-func verifyBackboneSend(ctx context.Context, cfg acpdriver.LaunchConfig, env map[string]string) error {
-	if cfg.Backbone == nil {
-		return nil
-	}
-	verified, err := verifiedBackbone(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	content, err := opencode.PrepareBackboneACPConfigContent(verified.Documents["opencode.json"], verified.Documents[".opencode/agents/backbone-implementer.md"], verified.Documents, cfg.SystemPrompt, cfg.Model, cfg.Effort, env["XDG_DATA_HOME"], cfg.WorkspacePath)
-	if err != nil {
-		return err
-	}
-	if err := opencode.CheckBackboneConfig(env, content); err != nil {
-		return err
-	}
-	return opencode.ValidateBackboneSources(ctx, cfg.WorkspacePath, env, verified)
 }

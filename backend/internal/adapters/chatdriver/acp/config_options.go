@@ -15,9 +15,6 @@ import (
 // A copy leaves the conversation as the only writer while HTTP reads race with
 // provider notifications and model-dependent catalog rebuilds.
 func (c *conversation) ListConfigOptions(ctx context.Context) ([]ports.ChatConfigOption, error) {
-	if c.backboneModel != "" {
-		return nil, fmt.Errorf("%w: governed OpenCode configuration requires provider replacement", ports.ErrChatConfigOptionInvalid)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

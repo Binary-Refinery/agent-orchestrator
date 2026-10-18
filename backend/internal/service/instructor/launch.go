@@ -188,9 +188,6 @@ func (s *Service) validateRoleSelection(ctx context.Context, w domain.Instructor
 	} else if role.Effort != "configured" && role.Effort != effort {
 		return invalid("launch effort does not match pinned role")
 	}
-	if governed, err := validateBackboneSelection(w.Policy, name, harness, model); governed || err != nil {
-		return err
-	}
 	if s.deps.RoleValidator == nil {
 		return invalid("native model capability validator unavailable")
 	}
@@ -228,15 +225,6 @@ func (s *Service) ValidateAgentChange(ctx context.Context, id domain.SessionID, 
 	role, _, err := s.validateManagedExecutionAuthority(ctx, w, id)
 	if err != nil {
 		return err
-	}
-	binding, err := policyBackbone(w.Policy)
-	if err != nil {
-		return err
-	}
-	if binding != nil {
-		if _, mapped := binding.Contexts[role]; mapped || selection.Harness == "opencode" {
-			return backboneReplacementError()
-		}
 	}
 	return s.validateRoleSelection(ctx, w, role, selection.Harness, selection.Model, selection.Effort)
 }
@@ -305,9 +293,6 @@ func (s *Service) validateManagedSessionSelection(ctx context.Context, w domain.
 			return invalid("managed native session identity is missing or belongs to another project")
 		}
 		session = &record
-	}
-	if err := s.validateBackboneSession(ctx, w, role, *session); err != nil {
-		return err
 	}
 	// A historical requested/sent launch never authorizes today's persisted
 	// selection under a replacement policy. The launch remains immutable audit.

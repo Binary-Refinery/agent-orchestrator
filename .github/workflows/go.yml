@@ -104,12 +104,6 @@ jobs:
       - name: Test OpenCode configured model and native effort
         run: go test -race -count=1 -timeout=10m -run '^Test(OpenCode|ResolveOpenCode|RestoredNativeEffortIsPinnedAndRevalidated)' ./internal/adapters/agent/modelcatalog ./internal/session_manager
 
-      - name: Test complete Backbone verifier boundaries
-        run: go test -race -count=1 -timeout=10m -v ./internal/policy/backbone
-
-      - name: Test Backbone governed OpenCode boundaries
-        run: go test -race -count=1 -timeout=10m -run 'Backbone' ./internal/service/instructor ./internal/service/chat ./internal/session_manager ./internal/adapters/agent/opencode ./internal/adapters/chatdriver/opencodeacp ./internal/adapters/chatdriver/nativeacp ./internal/adapters/chatdriver/acp
-
       - name: Test Windows background agent commands have no console
         run: go test -race -count=1 -run '^TestBackgroundCommandHasNoConsole$' ./internal/adapters/agent/pi ./internal/adapters/agent/omp ./internal/adapters/agent/primeagent
       - name: Test Windows mobile tunnel subprocesses

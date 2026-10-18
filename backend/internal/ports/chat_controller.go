@@ -28,7 +28,6 @@ func (mode ChatHistoryMode) RequiresNativeHistory() bool {
 
 // ChatControllerStart is the resolved launch contract shared by the coordinator and Chat service.
 type ChatControllerStart struct {
-	Backbone  *ChatBackboneConfig
 	SessionID domain.SessionID
 	// Owner distinguishes worker and review conversations that share a worker
 	// session. Empty preserves the existing worker-session owner.

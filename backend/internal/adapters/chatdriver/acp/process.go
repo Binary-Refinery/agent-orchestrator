@@ -14,14 +14,13 @@ import (
 )
 
 type process struct {
-	validateBeforeSend func(context.Context) error
-	stdin              io.WriteCloser
-	stdout             io.Reader
-	stop               func() error
-	terminate          func() error
-	reconnected        bool
-	gate               *gatedReader
-	acpState           *persistenthost.ACPState
+	stdin       io.WriteCloser
+	stdout      io.Reader
+	stop        func() error
+	terminate   func() error
+	reconnected bool
+	gate        *gatedReader
+	acpState    *persistenthost.ACPState
 }
 
 type gatedReader struct {

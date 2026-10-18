@@ -354,7 +354,3 @@ concurrent work revision change returns a conflict for retry. Current and retain
 historical navigation targets name existing AO session/review surfaces only.
 Requested, sent and confirmed native configuration stay distinct. Confirmation
 from an earlier controller generation cannot confirm a restored controller.
-
-## Optional Backbone context for OpenCode
-
-A work may pin an optional `policy.backbone` context and explicit operator qualification. Initial controlled execution supports fresh OpenCode 1.19.0 ACP Chat implementers with default permissions. Missing or stale context, TUI, live-host adoption and configuration changes fail closed. No binding or qualification is seeded. See [the adoption and runtime contract](opencode-backbone.md); existing unbound policy hashes and behavior remain unchanged.

@@ -53,9 +53,6 @@ type Config struct {
 	ValidateTurnSettings   acpdriver.TurnSettingsValidator
 	// VersionProbe optionally gates admission on a minimum binary version.
 	VersionProbe VersionProbe
-	// BeforeLaunch validates the final launch inputs before the provider can execute.
-	BeforeLaunch func(context.Context, string, acpdriver.LaunchConfig, map[string]string) error
-	BeforeSend   func(context.Context, acpdriver.LaunchConfig, map[string]string) error
 }
 
 // New creates a Chat driver that launches the exact executable resolved by the
@@ -132,20 +129,10 @@ func buildConfig(plugin Plugin, cfg Config, log *slog.Logger) acpdriver.Config {
 			for key, value := range overrides {
 				env[key] = value
 			}
-			if cfg.BeforeLaunch != nil {
-				if err := cfg.BeforeLaunch(ctx, binary, launchCfg, env); err != nil {
-					return acpdriver.Launch{}, err
-				}
-			}
-			var beforeSend func(context.Context) error
-			if cfg.BeforeSend != nil {
-				beforeSend = func(sendCtx context.Context) error { return cfg.BeforeSend(sendCtx, launchCfg, env) }
-			}
 			return acpdriver.Launch{
-				ValidateBeforeSend: beforeSend,
-				Command:            binary,
-				Args:               append([]string(nil), args...),
-				Env:                env,
+				Command: binary,
+				Args:    append([]string(nil), args...),
+				Env:     env,
 			}, nil
 		},
 		SessionMode:            cfg.SessionMode,

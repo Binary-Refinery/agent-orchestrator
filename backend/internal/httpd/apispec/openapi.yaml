@@ -15077,7 +15077,6 @@ components:
       properties:
         attribution:
           $ref: '#/components/schemas/InstructorAttribution'
-        backbone: {}
         budgets:
           $ref: '#/components/schemas/InstructorBudgets'
         closeoutRequires:

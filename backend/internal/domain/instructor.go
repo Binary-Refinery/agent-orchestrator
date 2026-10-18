@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -224,8 +223,6 @@ type InstructorEvidence struct {
 
 // InstructorPolicy pins role choices, workflow prerequisites and executable check profiles.
 type InstructorPolicy struct {
-	// Backbone is the exact optional operator-approved context binding. Absence preserves legacy policy hashes.
-	Backbone             json.RawMessage              `json:"backbone,omitempty"`
 	Schema               int                          `json:"schema"`
 	Version              string                       `json:"version"`
 	InitialPhase         string                       `json:"initialPhase"`

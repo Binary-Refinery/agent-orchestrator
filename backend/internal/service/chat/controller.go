@@ -236,9 +236,6 @@ type Controller struct {
 	// failed bookkeeping, even if provider termination cannot be confirmed.
 	configFailure            error
 	validateSemanticDispatch func(context.Context, domain.SessionID, string) error
-	validateBackbone         func(context.Context, domain.SessionID, *ports.ChatBackboneConfig) error
-	backbone                 *ports.ChatBackboneConfig
-	backboneWorkspace        string
 	executionBudget          ports.ManagedExecutionBudgetGuard
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
@@ -1651,9 +1648,6 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
-	if err := c.backboneImmutable(); err != nil {
-		return err
-	}
 	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
 		return fmt.Errorf("record conversation settings: %w", err)
 	}
@@ -1732,14 +1726,6 @@ func (c *Controller) dispatch(
 		return domain.ConversationTurn{}, configFailure
 	}
 	msg.Settings = c.turnSettings()
-	if err := c.validateBackboneDispatch(ctx); err != nil {
-		reason := "Backbone controller admission changed; replace the controlled process"
-		if settleErr := c.store.SettleTurnByID(ctx, turnID, domain.TurnStateCancelled, reason, c.now()); settleErr != nil {
-			return domain.ConversationTurn{}, settleErr
-		}
-		return domain.ConversationTurn{}, fmt.Errorf("%w: %s: %w", ports.ErrSemanticDeliveryRejected, reason, err)
-	}
-
 	if semanticValidator != nil {
 		if err := semanticValidator(ctx, c.sessionID, msg.ClientMessageID); err != nil {
 			if errors.Is(err, ports.ErrSemanticDeliveryDeferred) {
@@ -1849,19 +1835,6 @@ func (c *Controller) dispatch(
 	// provider-id binding above must exist before the first streamed update can be
 	// projected. Eager drivers do not implement this optional interface.
 	if deferred, ok := c.conv.(ports.ChatDeferredTurnStarter); ok {
-		// The durable provider-id write may yield long enough for a work rebind.
-		// Recheck the immutable controller immediately before native submission.
-		if err := c.validateBackboneDispatch(ctx); err != nil {
-			deferred.DiscardDeferredTurn(ref.ProviderTurnID)
-			c.mu.Lock()
-			c.pendingTurnID = ""
-			c.mu.Unlock()
-			reason := "Backbone controller admission changed before native submission"
-			if settleErr := c.store.SettleTurnByID(ctx, turnID, domain.TurnStateCancelled, reason, c.now()); settleErr != nil {
-				return domain.ConversationTurn{}, settleErr
-			}
-			return domain.ConversationTurn{}, fmt.Errorf("%w: %s: %w", ports.ErrSemanticDeliveryRejected, reason, err)
-		}
 		if err := deferred.StartDeferredTurn(ref.ProviderTurnID); err != nil {
 			c.mu.Lock()
 			c.pendingTurnID = ""

@@ -5043,7 +5043,6 @@ export interface components {
         };
         InstructorPolicy: {
             attribution: components["schemas"]["InstructorAttribution"];
-            backbone?: unknown;
             budgets?: components["schemas"]["InstructorBudgets"];
             closeoutRequires: string[];
             commands?: components["schemas"]["InstructorCommandSpec"][];
