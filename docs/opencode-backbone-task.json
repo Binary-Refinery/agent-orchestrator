@@ -15,7 +15,8 @@
     "AGENTS.md",
     "docs/opencode-backbone-plan.md",
     "Engineering Backbone plans/opencode-governance.md",
-    "Pinned OpenCode 1.19.0 source 733b2c627e5aec39cb33cc22373bdce33053ef2c"
+    "Pinned OpenCode 1.19.0 source 733b2c627e5aec39cb33cc22373bdce33053ef2c",
+    "User continuation 2026-10-18; same paired PR scope"
   ],
   "scope": {
     "include": [
@@ -50,57 +51,134 @@
       "id": "AC-1",
       "description": "Optional pinned policy binding preserves absent-policy bytes and existing unmanaged behavior.",
       "verification": "hybrid",
-      "status": "pending",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-2",
       "description": "Bounded data-only verifier rejects stale, malformed or incomplete context and validates a real producer fixture.",
       "verification": "hybrid",
-      "status": "pending",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-3",
       "description": "Explicit complete qualification gates fresh ACP implementer/default mode; TUI, live adoption and unsupported isolation fail closed.",
       "verification": "hybrid",
-      "status": "pending",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-4",
       "description": "Actual generated AO prompt/permission/model/native inputs obey the approved binding before probing and dispatch.",
       "verification": "hybrid",
-      "status": "pending",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-5",
       "description": "Launch, async, resume, recovery, config mutation and queued-child admission preserve existing incarnation fences.",
       "verification": "hybrid",
-      "status": "pending",
-      "evidence": []
+      "status": "pass",
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-6",
       "description": "All canonical native inputs are bound by receipt or pinned raw Git blob; unsafe or unbound sources are rejected.",
       "verification": "hybrid",
       "status": "pending",
-      "evidence": []
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-7",
       "description": "Fresh complete CI commands, two independent Full reviews, separate triage and required Delta complete with honest platform gaps.",
       "verification": "hybrid",
       "status": "pending",
-      "evidence": []
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md",
+        "docs/opencode-backbone-backend-checks.md",
+        "docs/opencode-backbone-auxiliary-checks.md",
+        "docs/opencode-backbone-quality-audit.md"
+      ]
     },
     {
       "id": "AC-8",
       "description": "PR tree, category counts, visible Codex request and actual remote checks/reviews verified without merge or activation.",
       "verification": "hybrid",
       "status": "pending",
-      "evidence": []
+      "evidence": [
+        "docs/opencode-backbone-publication-state.md",
+        "docs/opencode-backbone-resumed-full-behavior.md",
+        "docs/opencode-backbone-resumed-full-security.md",
+        "docs/opencode-backbone-resumed-repair-checks.md",
+        "docs/opencode-backbone-resumed-delta-security.md",
+        "docs/opencode-backbone-resumed-triage.md"
+      ]
     }
   ],
   "validation": {

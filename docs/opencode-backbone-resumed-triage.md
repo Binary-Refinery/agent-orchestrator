@@ -171,3 +171,91 @@ smoke is separate producer evidence. Operator model qualification, independently
 verified provider snapshot identity and OS process confinement are not established.
 No qualified seed is introduced, and no merge, release, deployment, settings
 change or downstream activation is authorized by this triage.
+
+## Separate repair closure — 2026-10-18
+
+Triager: `ao_resumed_triage`, again separate from the repair author, validation
+owner and Delta reviewer. This entry is appended after reading the final check
+and Delta reports and the updated Task/publication metadata. The complete
+pre-repair text above is preserved byte-for-byte; its SHA-256 is
+`d1e4779623993fa2180a9e8c105f21e1846f44de8366abd79101a9ffcec95b5d`.
+
+**Both confirmed findings are closed at their repaired code/selection boundaries.
+The locally checked change may proceed to PR publication and visible Codex review.**
+Actual Windows execution, required remote CI and the resulting review still need
+inspection; they are not certified by this local closure. Root remains the sole
+publisher. No merge or activation authority is added.
+
+### Final source and evidence binding
+
+The independently tested repair is local commit
+`f478fc100e854634f369655d067c752ea639819c`, tree
+`57dd202ec151a674f39237148bcb628b1b43db2e`. Root recorded its exact remote-tree
+equivalent as `03ea7ac6e80e84e675bdc2cc576a3dbf063436db`.
+The final evidence checkpoint reviewed by Delta is
+`53f23301347c52b61bc676942af6b06589414024`, tree
+`cca674a371f65a543809941e1ab1a973d8463424`, with root-recorded remote equivalent
+`43792ec05c71a0bf99c695b8f0622cca7bef2522`. This triager verified the local
+HEAD/tree and source equivalence; root owns the remote verification.
+
+| Final record independently read and hashed | SHA-256 |
+| --- | --- |
+| Author repair | `6fdf4d49c30e91145577147149a16722f7d2f59b74b0e84879e415dbee031940` |
+| Independent repair checks | `77ff1cee2e8fa5b5b4e21ee2c4ce1529b486353604387108a6f65a91e01dc55a` |
+| Independent Delta security review | `6f3fe417c0be2af27310e8b08ab5117373b59a84c155dfa3347b4cc901ee26a8` |
+| Updated Task before closure | `15081b548c23bfa2c1599fc3cec073977a61495b2c528ec7a288fb213491796f` |
+| Updated publication state before closure | `a05f90704cfc8c7e4ccf3840f9d3b20f663d8929740fedc98fbd7e273e951577` |
+
+I independently inspected the three-path product/test/workflow repair and
+rechecked its file hashes against the quality report. Comparing the current
+checkout with the tested repair found no differences outside `docs/`; only
+report/acceptance metadata has advanced. The final Delta independently confirms
+the same scope and no new direct-regression finding. No test, product edit,
+commit or remote write was performed by this triager.
+
+### Closure decisions
+
+| Finding | Final disposition | Verified closure basis |
+| --- | --- | --- |
+| `REC-AO-BEH-002` | Repaired and independently verified; closed | The three-line governed guard restores explicit harness/model/effort before accepting selection, including fixed/maximum effort. Unbound/draft/constraint/native paths are unchanged. All six missing-effort registration negatives and three valid governed positives pass with the required persistence and zero-native-validator assertions. The original unchanged external diagnostic also passes after repair. |
+| `REC-AO-SEC-001` | Selector repaired and independently verified; closed | The separate unfiltered verbose Windows verifier step selects the complete package; only that package moved out of the prior filtered command. Complete parsed-workflow comparison preserves all other behavior. The independent local command executes all ten top-level verifier tests with explicit symlink/case/size passes. Actual Windows execution remains separately pending. |
+
+The independent checker ran the complete Instructor race package on the frozen
+repair: 179 top-level tests and 447 total pass events, zero failures/skips/race
+warnings, 200.013 seconds wall. The complete verifier race package passed ten
+top-level tests and 42 total pass events, zero failures/skips/race warnings,
+2.558 seconds wall. The unchanged external registration overlay passed in
+4.354 seconds wall. I inspected the relevant raw log outcomes and rechecked
+their hashes against the finalized quality/Delta reports; these are the
+checker's executions, not fresh executions by this triager.
+
+Full backend build and vet both exited zero. Full golangci-lint 2.13.2 exited
+zero with `0 issues.`. Their current raw log hashes and exact command/source/exit
+records were independently checked. Formatting, actionlint, diff checks and the
+parsed-workflow/source comparison also satisfy the pre-repair requirements.
+The final Delta independently rechecked these results and both repairs.
+
+### Acceptance and required follow-through
+
+The updated Task accurately records AC-1 through AC-5 as checked implementation
+outcomes. AC-6 remains pending actual Windows boundary execution; AC-7 remains
+pending complete remote CI and platform accounting; AC-8 remains pending PR
+publication, exact head/tree/category verification and visible Codex outcome.
+The Task stays active with a null head revision at this pre-publication stage.
+These states permit publication to obtain the outstanding evidence; they do not
+claim completed remote gates. Any new concrete remote finding requires its own
+triage and bounded correction before being marked resolved.
+
+Root must inspect actual Windows results for all ten verifier tests and the
+symlink/case/size subtests. Any symlink capability skip must remain an explicit
+gap. No AO native Windows readback binary is provisioned by this workflow.
+The paired Backbone smoke, historical Linux native readback, operator model
+qualification, provider snapshot verification and OS confinement remain distinct.
+No real-model qualification or OS confinement is established here.
+
+The historical complete local backend race failure and recorded frontend/cloud/
+browser/desktop gaps retain their original dates and source attribution. Fresh
+complete affected-package and full build/vet/lint passes do not erase that
+history or constitute a new full-repository race pass. Actual head-bound CI and
+Codex results belong in the PR conversation. This closure authorizes neither
+merge, release, deployment, settings changes nor downstream activation.

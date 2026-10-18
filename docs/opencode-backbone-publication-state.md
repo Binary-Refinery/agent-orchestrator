@@ -17,6 +17,7 @@ work resumed.
 | Recovered Full-review source | `dcd187616f8b92cd668e75184fd5d697ac40fc66` | `dcd187616f8b92cd668e75184fd5d697ac40fc66` | `166946128c6104a640edac5c301660067feb6ebc` |
 | Fresh Full reports and separate triage | `9bb8edd5f330229624d3552ae73d1463eabbac5b` | `2a5529c85526dea140ad714d035d209e7947b8a6` | `93093bb91254435cf034949c9424a05bbaf7d9dd` |
 | Two bounded source repairs | `f478fc100e854634f369655d067c752ea639819c` | `03ea7ac6e80e84e675bdc2cc576a3dbf063436db` | `57dd202ec151a674f39237148bcb628b1b43db2e` |
+| Final repair evidence reviewed by Delta | `53f23301347c52b61bc676942af6b06589414024` | `43792ec05c71a0bf99c695b8f0622cca7bef2522` | `cca674a371f65a543809941e1ab1a973d8463424` |
 
 Base: `6b1ba43f1df9415c1ec937876ce54c86aa37484e`. Branch:
 `feat/opencode-backbone-governance`. The repair changes only the explicit
@@ -44,6 +45,29 @@ recovered source. Separate triage confirmed `REC-AO-SEC-001` and
 and complete affected-package validation; the independent Delta and closure
 must be read alongside the checks. No stale Full report bytes or fictional
 complete-suite rerun are presented as evidence.
+
+Fresh independent validation on the frozen repair passed the complete Instructor
+race package (179 top-level tests, 447 pass events), the complete verifier race
+package (ten top-level groups, 42 pass events), the unchanged external regression
+overlay, full backend build, vet and lint (zero issues), formatting, actionlint
+and diff checks. Both complete affected packages have zero skips, failures or
+race warnings. The independent check report has SHA-256
+`77ff1cee2e8fa5b5b4e21ee2c4ce1529b486353604387108a6f65a91e01dc55a`.
+
+The independent Delta on the final repair evidence checkpoint confirmed both
+repairs without a new direct-regression finding. Its report has SHA-256
+`6f3fe417c0be2af27310e8b08ab5117373b59a84c155dfa3347b4cc901ee26a8`.
+Separate closure is appended to the existing triage record, preserving its
+pre-repair assessment. Subsequent publication metadata changes no tested product,
+test or workflow input.
+
+Task AC-1 through AC-5 record the checked implementation outcomes as pass.
+AC-6 remains pending actual Windows path-boundary execution; AC-7 remains pending
+complete remote CI with honest platform accounting; AC-8 remains pending actual
+PR publication, exact tree/category verification, and the visible Codex result.
+The Task stays active and its head revision remains null at this pre-publication
+checkpoint. Final head-bound follow-through belongs in the PR conversation;
+these historical pending statuses must not be mistaken for final CI outcomes.
 
 Actual Windows CI must expose all ten verifier groups and the symlink/case/size
 subtest results. An explicit capability skip remains a gap. This workflow does
